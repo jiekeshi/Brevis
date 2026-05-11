@@ -27,16 +27,64 @@ const types = @import("types.zig");
 const codec = @import("codec.zig");
 const lowlevel = @import("lowlevel.zig");
 const discovered = @import("discovered_macros.zig");
+const built_in = @import("built_in_macros.zig");
+
+/// All macros visible to A* and to realize. Built-in ones come first
+/// (low indices stay stable across re-training of discovered macros).
+pub fn allMacros() []const discovered.Macro {
+    // For MVP we use a comptime-known concatenation. If sizes get large
+    // we'll switch to a thread-local cache.
+    const total = built_in.BUILT_IN.len + discovered.DISCOVERED.len;
+    if (total == 0) return &.{};
+    const buf_ptr = &macros_cache;
+    if (!macros_cache_inited) {
+        var i: usize = 0;
+        for (built_in.BUILT_IN) |m| {
+            buf_ptr[i] = m;
+            i += 1;
+        }
+        for (discovered.DISCOVERED) |m| {
+            buf_ptr[i] = m;
+            i += 1;
+        }
+        macros_cache_len = i;
+        macros_cache_inited = true;
+    }
+    return buf_ptr[0..macros_cache_len];
+}
+var macros_cache: [256]discovered.Macro = undefined;
+var macros_cache_len: usize = 0;
+var macros_cache_inited: bool = false;
 
 const Allocator = types.Allocator;
 const Stream = types.Stream;
 
 // =================== program tree representation ===================
 
+pub const TerminalSide = union(enum) {
+    huffman: struct { table: codec.HuffmanTable, count: usize, bits_per_elem: u8 },
+    rans: struct { table: codec.RansTable, count: usize, bits_per_elem: u8 },
+    raw: struct { count: usize, bits_per_elem: u8 },
+
+    pub fn deinit(self: *TerminalSide, alloc: Allocator) void {
+        switch (self.*) {
+            .huffman => |*h| h.table.deinit(alloc),
+            .rans => |*r| r.table.deinit(alloc),
+            .raw => {},
+        }
+    }
+};
+
 pub const PNode = union(enum) {
+    /// Terminal: encodes a stream into bytes. Search-time it's a placeholder
+    /// (side_info = .raw, payload = empty); after `realize()` it carries the
+    /// actual encoder table and the encoded bytes.
     terminal: struct {
         kind: lowlevel.OpKind, // huffman | rans | raw
         bits: u64,
+        side_info: TerminalSide = .{ .raw = .{ .count = 0, .bits_per_elem = 0 } },
+        payload: []u8 = &.{},
+        payload_owned: bool = false,
     },
     chain: struct {
         op: lowlevel.LowOp,
@@ -47,8 +95,8 @@ pub const PNode = union(enum) {
         hi: *PNode,
         lo: *PNode,
     },
-    /// A discovered macro applied to the input. Stored as opaque atomic step
-    /// (the runtime knows how to execute it via `discovered.DISCOVERED`).
+    /// A discovered macro applied to the input. Atomic at search time;
+    /// `realize()` expands it into chain/split/terminal subtree.
     macro: struct {
         macro_idx: u32,
         bits: u64,
@@ -56,7 +104,10 @@ pub const PNode = union(enum) {
 
     pub fn deinit(self: *PNode, alloc: Allocator) void {
         switch (self.*) {
-            .terminal => {},
+            .terminal => |*t| {
+                t.side_info.deinit(alloc);
+                if (t.payload_owned and t.payload.len > 0) alloc.free(t.payload);
+            },
             .macro => {},
             .chain => |c| {
                 c.next.deinit(alloc);
@@ -74,7 +125,7 @@ pub const PNode = union(enum) {
     pub fn clone(self: *const PNode, alloc: Allocator) Allocator.Error!*PNode {
         const n = try alloc.create(PNode);
         n.* = switch (self.*) {
-            .terminal => |t| .{ .terminal = t },
+            .terminal => |t| .{ .terminal = .{ .kind = t.kind, .bits = t.bits } },
             .macro => |m| .{ .macro = m },
             .chain => |c| .{ .chain = .{ .op = c.op, .next = try c.next.clone(alloc) } },
             .split => |s| .{ .split = .{
@@ -89,7 +140,7 @@ pub const PNode = union(enum) {
     pub fn pretty(self: *const PNode, alloc: Allocator) Allocator.Error![]u8 {
         return switch (self.*) {
             .terminal => |t| std.fmt.allocPrint(alloc, "{s}", .{lowlevelOpName(t.kind)}),
-            .macro => |m| std.fmt.allocPrint(alloc, "MACRO[{s}]", .{discovered.DISCOVERED[m.macro_idx].name}),
+            .macro => |m| std.fmt.allocPrint(alloc, "MACRO[{s}]", .{allMacros()[m.macro_idx].name}),
             .chain => |c| blk: {
                 const inner = try c.next.pretty(alloc);
                 defer alloc.free(inner);
@@ -309,7 +360,7 @@ pub fn bestForStream(
     // Try each discovered macro (as an atomic action — the macro body
     // already encodes a multi-step program). Macros only apply if they're
     // calibrated for this stream's bpe (or any-bpe = 0).
-    for (discovered.DISCOVERED, 0..) |macro, m_idx| {
+    for (allMacros(), 0..) |macro, m_idx| {
         if (macro.input_bpe != 0 and macro.input_bpe != input.bits_per_elem) continue;
         const c = applyMacroCost(alloc, macro, 0, input) catch continue;
         if (c < local.cost) {
@@ -390,4 +441,139 @@ pub fn bestForStream(
 pub fn synthesize(alloc: Allocator, input: Stream, opts: Opts) !Best {
     var nodes: u64 = 0;
     return bestForStream(alloc, input, opts.max_depth, std.math.maxInt(u64), &nodes, opts.max_nodes_explored);
+}
+
+// =================== realize: actually run the encoder, fill side_info + payload ===================
+//
+// Walks the program tree top-down. For terminals, builds the actual encoder
+// table (Huffman / rANS) and produces real encoded bytes. For non-terminals,
+// runs `lowlevel.forward` and recurses on the output stream(s). For macros,
+// expands the macro body inline into chain/split/terminal nodes so that
+// decompress doesn't need to know about macros.
+pub fn realize(alloc: Allocator, node: *PNode, input: Stream) !void {
+    // First, expand any .macro by replacing this node with the realized
+    // sub-program. We do this before processing other variants.
+    if (node.* == .macro) {
+        const m_idx = node.macro.macro_idx;
+        const ms = allMacros();
+        if (m_idx >= ms.len) return error.BadMacroIndex;
+        const m = ms[m_idx];
+        // Build a chain/split tree from the flat MacroNode array.
+        const expanded = try buildPNodeFromMacro(alloc, m, 0);
+        defer alloc.destroy(expanded);
+        // Splice expanded.* into node.*.
+        node.* = expanded.*;
+        // (alloc.destroy(expanded) only frees the wrapper; the children inside
+        // were assigned by buildPNodeFromMacro and now belong to `node`.)
+    }
+
+    switch (node.*) {
+        .terminal => |*t| switch (t.kind) {
+            .huffman => {
+                const table = try codec.huffmanBuild(alloc, input);
+                const payload = codec.huffmanEncode(alloc, input, table) catch |e| {
+                    var tt = table;
+                    tt.deinit(alloc);
+                    return e;
+                };
+                t.side_info = .{ .huffman = .{ .table = table, .count = input.count, .bits_per_elem = input.bits_per_elem } };
+                t.payload = payload;
+                t.payload_owned = true;
+                t.bits = @as(u64, payload.len) * 8;
+            },
+            .rans => {
+                const table = try codec.ransBuild(alloc, input);
+                const payload = codec.ransEncode(alloc, input, table) catch |e| {
+                    var tt = table;
+                    tt.deinit(alloc);
+                    return e;
+                };
+                t.side_info = .{ .rans = .{ .table = table, .count = input.count, .bits_per_elem = input.bits_per_elem } };
+                t.payload = payload;
+                t.payload_owned = true;
+                t.bits = @as(u64, payload.len) * 8;
+            },
+            .raw => {
+                const payload = try alloc.alloc(u8, input.data.len);
+                @memcpy(payload, input.data);
+                t.side_info = .{ .raw = .{ .count = input.count, .bits_per_elem = input.bits_per_elem } };
+                t.payload = payload;
+                t.payload_owned = true;
+                t.bits = @as(u64, payload.len) * 8;
+            },
+            else => unreachable,
+        },
+        .chain => |c| {
+            const r = try lowlevel.forward(alloc, c.op, input);
+            switch (r) {
+                .one => |out| {
+                    defer alloc.free(out.data);
+                    try realize(alloc, c.next, out);
+                },
+                .two => unreachable,
+            }
+        },
+        .split => |s| {
+            const r = try lowlevel.forward(alloc, s.op, input);
+            switch (r) {
+                .one => unreachable,
+                .two => |outs| {
+                    defer alloc.free(outs[0].data);
+                    defer alloc.free(outs[1].data);
+                    try realize(alloc, s.hi, outs[0]);
+                    try realize(alloc, s.lo, outs[1]);
+                },
+            }
+        },
+        .macro => unreachable, // handled at the top
+    }
+}
+
+fn buildPNodeFromMacro(alloc: Allocator, m: discovered.Macro, idx: u32) Allocator.Error!*PNode {
+    const node = try alloc.create(PNode);
+    const mn = m.nodes[idx];
+    if (mn.is_terminal) {
+        node.* = .{ .terminal = .{ .kind = mn.op_kind, .bits = 0 } };
+    } else {
+        const op: lowlevel.LowOp = .{ .kind = mn.op_kind, .params = .{ .raw = mn.params_raw } };
+        if (mn.op_kind == .split_field) {
+            if (mn.child_hi < 0 or mn.child_lo < 0) return error.OutOfMemory;
+            const hi = try buildPNodeFromMacro(alloc, m, @intCast(mn.child_hi));
+            const lo = try buildPNodeFromMacro(alloc, m, @intCast(mn.child_lo));
+            node.* = .{ .split = .{ .op = op, .hi = hi, .lo = lo } };
+        } else {
+            if (mn.child_hi < 0) return error.OutOfMemory;
+            const next = try buildPNodeFromMacro(alloc, m, @intCast(mn.child_hi));
+            node.* = .{ .chain = .{ .op = op, .next = next } };
+        }
+    }
+    return node;
+}
+
+// =================== decompress: reverse the realized program tree ===================
+pub fn decompress(alloc: Allocator, node: *const PNode) !Stream {
+    return switch (node.*) {
+        .terminal => |t| switch (t.side_info) {
+            .huffman => |h| codec.huffmanDecode(alloc, t.payload, h.table, h.count, h.bits_per_elem),
+            .rans => |r| codec.ransDecode(alloc, t.payload, r.table, r.count, r.bits_per_elem),
+            .raw => |i| blk: {
+                const buf = try alloc.alloc(u8, t.payload.len);
+                @memcpy(buf, t.payload);
+                break :blk types.Stream{ .data = buf, .count = i.count, .bits_per_elem = i.bits_per_elem };
+            },
+        },
+        .chain => |c| blk: {
+            const inner = try decompress(alloc, c.next);
+            defer alloc.free(inner.data);
+            break :blk lowlevel.inverseOne(alloc, c.op, inner);
+        },
+        .split => |s| blk: {
+            const hi = try decompress(alloc, s.hi);
+            defer alloc.free(hi.data);
+            const lo = try decompress(alloc, s.lo);
+            defer alloc.free(lo.data);
+            break :blk lowlevel.inverseTwo(alloc, s.op, hi, lo);
+        },
+        .macro => unreachable, // realize() expands macros before decompress can run
+    };
 }
