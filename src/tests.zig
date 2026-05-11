@@ -1,15 +1,11 @@
 const std = @import("std");
 const types = @import("types.zig");
 const codec = @import("codec.zig");
-const ops = @import("ops.zig");
-const program = @import("program.zig");
-const search = @import("search.zig");
-const prior = @import("prior.zig");
-const archive = @import("archive.zig");
 const safetensors = @import("safetensors.zig");
 const baseline = @import("baseline.zig");
 const lowlevel = @import("lowlevel.zig");
 const astar = @import("astar.zig");
+const pnode_archive = @import("pnode_archive.zig");
 
 fn makeFp16Tensor(alloc: std.mem.Allocator, n: usize, seed: u64) !types.TensorView {
     const buf = try alloc.alloc(u8, n * 2);
@@ -24,6 +20,30 @@ fn makeFp16Tensor(alloc: std.mem.Allocator, n: usize, seed: u64) !types.TensorVi
     shape[0] = n;
     return .{ .data = buf, .shape = shape, .dtype = .f16, .owns_data = true, .owns_shape = true };
 }
+
+fn randomStream(alloc: std.mem.Allocator, count: usize, bpe: u8, seed: u64) !types.Stream {
+    const elem_bytes: usize = switch (types.roundUpToPow2(bpe)) {
+        8 => 1,
+        16 => 2,
+        32 => 4,
+        else => unreachable,
+    };
+    const buf = try alloc.alloc(u8, count * elem_bytes);
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const r = prng.random();
+    const mask: u32 = if (bpe >= 32) 0xFFFFFFFF else (@as(u32, 1) << @intCast(bpe)) - 1;
+    const s: types.Stream = .{ .data = buf, .count = count, .bits_per_elem = bpe };
+    for (0..count) |i| s.setU32(i, r.int(u32) & mask);
+    return s;
+}
+
+fn streamsEqual(a: types.Stream, b: types.Stream) bool {
+    if (a.count != b.count or a.bits_per_elem != b.bits_per_elem) return false;
+    for (0..a.count) |i| if (a.getU32(i) != b.getU32(i)) return false;
+    return true;
+}
+
+// ============== codec ==============
 
 test "stream get/set roundtrip 8-bit" {
     const alloc = std.testing.allocator;
@@ -76,248 +96,7 @@ test "rans roundtrip" {
     try std.testing.expect(std.mem.eql(u8, data, dec.data));
 }
 
-test "split_float forward/inverse" {
-    const alloc = std.testing.allocator;
-    var t = try makeFp16Tensor(alloc, 200, 1);
-    defer t.deinit(alloc);
-
-    const r = try ops.splitFloatForward(alloc, t);
-    var sign = r.sign;
-    var exp = r.exp;
-    var mant = r.mant;
-    defer sign.deinit(alloc);
-    defer exp.deinit(alloc);
-    defer mant.deinit(alloc);
-
-    var back = try ops.splitFloatInverse(alloc, sign, exp, mant, r.info);
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, t.data, back.data));
-}
-
-test "delta_encode forward/inverse" {
-    const alloc = std.testing.allocator;
-    const buf = try alloc.alloc(u8, 100);
-    defer alloc.free(buf);
-    for (buf, 0..) |*b, i| b.* = @intCast(i & 0xFF);
-    const s: types.Stream = .{ .data = buf, .count = 100, .bits_per_elem = 8 };
-    const r = try ops.deltaEncodeForward(alloc, s);
-    var d = r.out;
-    defer d.deinit(alloc);
-    var back = try ops.deltaEncodeInverse(alloc, d, r.info);
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, buf, back.data));
-}
-
-test "bitplane_split forward/inverse" {
-    const alloc = std.testing.allocator;
-    const buf = try alloc.alloc(u8, 50);
-    defer alloc.free(buf);
-    var prng: std.Random.DefaultPrng = .init(3);
-    const rnd = prng.random();
-    for (buf) |*b| b.* = rnd.intRangeLessThan(u8, 0, 32);
-    const s: types.Stream = .{ .data = buf, .count = 50, .bits_per_elem = 5 };
-    const r = try ops.bitplaneSplitForward(alloc, s);
-    defer alloc.free(r.planes);
-    defer for (r.planes) |*pl| {
-        var pp = pl.*;
-        pp.deinit(alloc);
-    };
-    var back = try ops.bitplaneSplitInverse(alloc, r.planes, r.info, 5);
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, buf, back.data));
-}
-
-test "tensor_xor roundtrip" {
-    const alloc = std.testing.allocator;
-    var t = try makeFp16Tensor(alloc, 64, 1);
-    defer t.deinit(alloc);
-    var b = try makeFp16Tensor(alloc, 64, 2);
-    defer b.deinit(alloc);
-
-    const r = try ops.tensorXorForward(alloc, t, b);
-    var residual = r.residual;
-    defer residual.deinit(alloc);
-
-    var back = try ops.tensorXorInverse(alloc, residual, b, r.info);
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, t.data, back.data));
-}
-
-test "program: split + huffman roundtrip" {
-    const alloc = std.testing.allocator;
-    var t = try makeFp16Tensor(alloc, 256, 4);
-    defer t.deinit(alloc);
-
-    const kids = try alloc.alloc(program.Node, 3);
-    kids[0] = .{ .op = .huffman };
-    kids[1] = .{ .op = .huffman };
-    kids[2] = .{ .op = .huffman };
-    var node: program.Node = .{ .op = .split_float, .children = kids };
-    defer node.deinit(alloc);
-
-    try program.compressTensor(alloc, &node, t, &.{});
-    var back = try program.decompressTensor(alloc, &node, &.{});
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, t.data, back.data));
-}
-
-test "program: split + bitplane(exp) + huffman roundtrip" {
-    const alloc = std.testing.allocator;
-    var t = try makeFp16Tensor(alloc, 200, 5);
-    defer t.deinit(alloc);
-
-    // exp has 5 bits → bitplane gives 5 planes
-    const exp_planes = try alloc.alloc(program.Node, 5);
-    for (exp_planes) |*p| p.* = .{ .op = .huffman };
-    const exp_node_kids = try alloc.alloc(program.Node, 1);
-    exp_node_kids[0] = .{ .op = .bitplane_split, .children = exp_planes };
-
-    const kids = try alloc.alloc(program.Node, 3);
-    kids[0] = .{ .op = .huffman };
-    kids[1] = .{ .op = .bitplane_split, .children = exp_planes };
-    kids[2] = .{ .op = .huffman };
-    // Avoid double-free: reuse exp_planes only once
-    alloc.free(exp_node_kids);
-
-    var node: program.Node = .{ .op = .split_float, .children = kids };
-    defer node.deinit(alloc);
-
-    try program.compressTensor(alloc, &node, t, &.{});
-    var back = try program.decompressTensor(alloc, &node, &.{});
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, t.data, back.data));
-}
-
-test "program: split + delta(exp) + rans roundtrip" {
-    const alloc = std.testing.allocator;
-    var t = try makeFp16Tensor(alloc, 300, 6);
-    defer t.deinit(alloc);
-
-    const delta_kid = try alloc.alloc(program.Node, 1);
-    delta_kid[0] = .{ .op = .rans };
-
-    const kids = try alloc.alloc(program.Node, 3);
-    kids[0] = .{ .op = .rans };
-    kids[1] = .{ .op = .delta_encode, .children = delta_kid };
-    kids[2] = .{ .op = .rans };
-    var node: program.Node = .{ .op = .split_float, .children = kids };
-    defer node.deinit(alloc);
-
-    try program.compressTensor(alloc, &node, t, &.{});
-    var back = try program.decompressTensor(alloc, &node, &.{});
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, t.data, back.data));
-}
-
-test "search: synthesize fp16 tensor with verified roundtrip" {
-    const alloc = std.testing.allocator;
-    var t = try makeFp16Tensor(alloc, 65536, 11);
-    defer t.deinit(alloc);
-    var res = try search.synthesize(alloc, t, &.{}, .{ .verbose = false });
-    defer res.deinit(alloc);
-    try std.testing.expect(res.verified);
-    try std.testing.expect(res.compression_ratio > 1.0);
-
-    // Decompress from serialized form to be safe
-    const program_bytes = try program.serializeProgram(alloc, &res.program);
-    defer alloc.free(program_bytes);
-    var node2 = try program.deserializeProgram(alloc, program_bytes);
-    defer node2.deinit(alloc);
-    try program.distributePayloadBytes(&node2, res.payload);
-    var back = try program.decompressTensor(alloc, &node2, &.{});
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, t.data, back.data));
-}
-
-test "search: tensor_xor improves ratio when base is similar" {
-    const alloc = std.testing.allocator;
-    var t = try makeFp16Tensor(alloc, 16384, 17);
-    defer t.deinit(alloc);
-
-    // Build a "base" that's t with a few bytes flipped — should highly correlate.
-    const base_buf = try alloc.alloc(u8, t.data.len);
-    @memcpy(base_buf, t.data);
-    var prng: std.Random.DefaultPrng = .init(99);
-    const r = prng.random();
-    for (0..32) |_| {
-        const i = r.intRangeLessThan(usize, 0, base_buf.len);
-        base_buf[i] ^= 0x01;
-    }
-    const base_shape = try alloc.alloc(u64, 1);
-    base_shape[0] = 16384;
-    var base: types.TensorView = .{
-        .data = base_buf,
-        .shape = base_shape,
-        .dtype = .f16,
-        .owns_data = true,
-        .owns_shape = true,
-    };
-    defer base.deinit(alloc);
-
-    var res_no_base = try search.synthesize(alloc, t, &.{}, .{});
-    defer res_no_base.deinit(alloc);
-    var res_with_base = try search.synthesize(alloc, t, &.{base}, .{});
-    defer res_with_base.deinit(alloc);
-
-    // With a near-identical base, tensor_xor should give a much better ratio.
-    try std.testing.expect(res_with_base.compression_ratio > res_no_base.compression_ratio * 1.5);
-}
-
-test "archive: 3-tensor roundtrip with shared codebooks" {
-    const alloc = std.testing.allocator;
-    var t1 = try makeFp16Tensor(alloc, 4096, 21);
-    defer t1.deinit(alloc);
-    var t2 = try makeFp16Tensor(alloc, 4096, 22);
-    defer t2.deinit(alloc);
-    var t3 = try makeFp16Tensor(alloc, 4096, 23);
-    defer t3.deinit(alloc);
-
-    var r1 = try search.synthesize(alloc, t1, &.{}, .{});
-    defer r1.deinit(alloc);
-    var r2 = try search.synthesize(alloc, t2, &.{}, .{});
-    defer r2.deinit(alloc);
-    var r3 = try search.synthesize(alloc, t3, &.{}, .{});
-    defer r3.deinit(alloc);
-
-    const jobs = [_]archive.TensorJob{
-        .{ .name = "w1", .program = &r1.program, .payload = r1.payload },
-        .{ .name = "w2", .program = &r2.program, .payload = r2.payload },
-        .{ .name = "w3", .program = &r3.program, .payload = r3.payload },
-    };
-    const bytes = try archive.buildArchiveBytes(alloc, &jobs);
-    defer alloc.free(bytes);
-
-    var parsed = try archive.parseArchive(alloc, bytes);
-    defer parsed.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 3), parsed.tensors.len);
-
-    for (parsed.tensors, [_]types.TensorView{ t1, t2, t3 }) |*pt, orig| {
-        var back = try program.decompressTensor(alloc, &pt.program, &.{});
-        defer back.deinit(alloc);
-        try std.testing.expect(std.mem.eql(u8, orig.data, back.data));
-    }
-}
-
-// =================== Low-level primitive reversibility (property tests) ===================
-
-fn randomStream(alloc: std.mem.Allocator, count: usize, bpe: u8, seed: u64) !types.Stream {
-    const elem_bytes: usize = switch (types.roundUpToPow2(bpe)) {
-        8 => 1, 16 => 2, 32 => 4, else => unreachable,
-    };
-    const buf = try alloc.alloc(u8, count * elem_bytes);
-    var prng: std.Random.DefaultPrng = .init(seed);
-    const r = prng.random();
-    const mask: u32 = if (bpe >= 32) 0xFFFFFFFF else (@as(u32, 1) << @intCast(bpe)) - 1;
-    const s: types.Stream = .{ .data = buf, .count = count, .bits_per_elem = bpe };
-    for (0..count) |i| s.setU32(i, r.int(u32) & mask);
-    return s;
-}
-
-fn streamsEqual(a: types.Stream, b: types.Stream) bool {
-    if (a.count != b.count or a.bits_per_elem != b.bits_per_elem) return false;
-    for (0..a.count) |i| if (a.getU32(i) != b.getU32(i)) return false;
-    return true;
-}
+// ============== low-level primitives reversibility ==============
 
 test "lowlevel: xor_const is self-inverse" {
     const alloc = std.testing.allocator;
@@ -362,7 +141,6 @@ test "lowlevel: bit_swap_pair self-inverse" {
     const alloc = std.testing.allocator;
     const s = try randomStream(alloc, 50, 8, 4);
     defer alloc.free(s.data);
-    // Swap bit 1 and bit 5.
     const op: lowlevel.LowOp = .{ .kind = .bit_swap_pair, .params = .{ .raw = (5 << 5) | 1 } };
     const r = try lowlevel.forward(alloc, op, s);
     const fwd = r.one;
@@ -463,7 +241,6 @@ test "lowlevel: gray_code / inv_gray_code inverse pair" {
     const back = try lowlevel.inverseOne(alloc, op, fwd);
     defer alloc.free(back.data);
     try std.testing.expect(streamsEqual(s, back));
-    // Also verify inv_gray_code(gray_code(x)) = x via op chain
     const op_inv: lowlevel.LowOp = .{ .kind = .inv_gray_code };
     const r2 = try lowlevel.forward(alloc, op_inv, fwd);
     const back2 = r2.one;
@@ -475,7 +252,6 @@ test "lowlevel: split_field reproduces fp16 sign extraction" {
     const alloc = std.testing.allocator;
     const s = try randomStream(alloc, 64, 16, 7);
     defer alloc.free(s.data);
-    // Extract bit 15 (sign) of 16-bit elements: start=15, n_bits=1, k=16.
     const params: lowlevel.Params = .{ .raw = 15 | (1 << 8) | (16 << 16) };
     const op: lowlevel.LowOp = .{ .kind = .split_field, .params = params };
     const r = try lowlevel.forward(alloc, op, s);
@@ -490,9 +266,37 @@ test "lowlevel: split_field reproduces fp16 sign extraction" {
     try std.testing.expect(streamsEqual(s, back));
 }
 
+// ============== unified A* + realize + decompress ==============
+
+test "astar: realize + decompress roundtrip on a fp16 sign-pattern stream" {
+    const alloc = std.testing.allocator;
+    const n: usize = 1024;
+    const buf = try alloc.alloc(u8, n * 2);
+    defer alloc.free(buf);
+    var prng: std.Random.DefaultPrng = .init(43);
+    const r = prng.random();
+    for (0..n) |i| {
+        const v: u16 = if (r.float(f32) < 0.5)
+            r.intRangeLessThan(u16, 0, 0x4000)
+        else
+            r.intRangeLessThan(u16, 0x8000, 0xC000);
+        std.mem.writeInt(u16, buf[i * 2 ..][0..2], v, .little);
+    }
+    const s: types.Stream = .{ .data = buf, .count = n, .bits_per_elem = 16 };
+
+    var best = try astar.synthesize(alloc, s, .{ .max_depth = 3, .max_nodes_explored = 50_000 });
+    defer best.deinit(alloc);
+    try std.testing.expect(best.program != null);
+
+    try astar.realize(alloc, best.program.?, s);
+    const back = try astar.decompress(alloc, best.program.?);
+    defer alloc.free(back.data);
+    try std.testing.expectEqual(n, back.count);
+    try std.testing.expect(std.mem.eql(u8, buf, back.data));
+}
+
 test "astar: synthesize a fp16 sign stream finds something better than raw" {
     const alloc = std.testing.allocator;
-    // Build a 16-bit stream that mimics fp16 sign+exp pattern: mostly 0, occasional flipped sign.
     const n: usize = 1024;
     const buf = try alloc.alloc(u8, n * 2);
     defer alloc.free(buf);
@@ -500,20 +304,64 @@ test "astar: synthesize a fp16 sign stream finds something better than raw" {
     const r = prng.random();
     for (0..n) |i| {
         const v: u16 = if (r.float(f32) < 0.5)
-            r.intRangeLessThan(u16, 0, 0x4000) // small positive
+            r.intRangeLessThan(u16, 0, 0x4000)
         else
-            r.intRangeLessThan(u16, 0x8000, 0xC000); // small negative
+            r.intRangeLessThan(u16, 0x8000, 0xC000);
         std.mem.writeInt(u16, buf[i * 2 ..][0..2], v, .little);
     }
     const s: types.Stream = .{ .data = buf, .count = n, .bits_per_elem = 16 };
-
     var best = try astar.synthesize(alloc, s, .{ .max_depth = 3, .max_nodes_explored = 50_000 });
     defer best.deinit(alloc);
-
     try std.testing.expect(best.program != null);
-    // Raw cost is n * 16 = 16384 bits. A* should find at least entropy-coded ≤ raw.
     try std.testing.expect(best.cost <= n * 16);
 }
+
+test "pnode_archive: 2-tensor v2 archive roundtrip bit-exact" {
+    const alloc = std.testing.allocator;
+    var t1 = try makeFp16Tensor(alloc, 256, 31);
+    defer t1.deinit(alloc);
+    var t2 = try makeFp16Tensor(alloc, 1024, 32);
+    defer t2.deinit(alloc);
+
+    // Synthesize + realize each.
+    const stream1: types.Stream = .{ .data = t1.data, .count = 256, .bits_per_elem = 16 };
+    const stream2: types.Stream = .{ .data = t2.data, .count = 1024, .bits_per_elem = 16 };
+    var best1 = try astar.synthesize(alloc, stream1, .{ .max_depth = 1, .max_nodes_explored = 20_000 });
+    var best2 = try astar.synthesize(alloc, stream2, .{ .max_depth = 1, .max_nodes_explored = 20_000 });
+    try astar.realize(alloc, best1.program.?, stream1);
+    try astar.realize(alloc, best2.program.?, stream2);
+
+    const jobs = [_]pnode_archive.TensorJob{
+        .{ .name = "alpha", .dtype = t1.dtype, .shape = t1.shape, .program = best1.program.? },
+        .{ .name = "beta", .dtype = t2.dtype, .shape = t2.shape, .program = best2.program.? },
+    };
+    const bytes = try pnode_archive.buildArchiveBytes(alloc, &jobs);
+    defer alloc.free(bytes);
+    // Don't deinit best1/best2 — their programs are now owned by the archive
+    // (via the same pointer). But we DO need to free wrapping Best struct.
+    best1.program = null;
+    best2.program = null;
+    best1.deinit(alloc);
+    best2.deinit(alloc);
+
+    var parsed = try pnode_archive.parseArchive(alloc, bytes);
+    defer parsed.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 2), parsed.tensors.len);
+
+    for (parsed.tensors) |*pt| {
+        const stream = try astar.decompress(alloc, pt.program);
+        defer alloc.free(stream.data);
+        const orig: []const u8 = if (std.mem.eql(u8, pt.name, "alpha")) t1.data else t2.data;
+        try std.testing.expect(std.mem.eql(u8, orig, stream.data));
+    }
+    // Free programs that were freshly built during synthesize.
+    best1.program = jobs[0].program;
+    best2.program = jobs[1].program;
+    best1.deinit(alloc);
+    best2.deinit(alloc);
+}
+
+// ============== misc ==============
 
 test "baseline: gzip beats raw on highly compressible data" {
     const alloc = std.testing.allocator;
@@ -521,9 +369,8 @@ test "baseline: gzip beats raw on highly compressible data" {
     defer alloc.free(buf);
     @memset(buf, 0);
     for (0..100) |i| buf[i * 1000] = @intCast(i & 0xFF);
-
     const sz = try baseline.gzipSize(alloc, buf);
-    try std.testing.expect(sz < buf.len / 10); // mostly-zeros → big win
+    try std.testing.expect(sz < buf.len / 10);
 }
 
 test "safetensors: in-memory write/read roundtrip" {
@@ -533,7 +380,6 @@ test "safetensors: in-memory write/read roundtrip" {
     var t2 = try makeFp16Tensor(alloc, 1024, 32);
     defer t2.deinit(alloc);
 
-    // Use the writer to produce bytes by writing to a temp file, then read back.
     var threaded: std.Io.Threaded = .init(alloc, .{});
     defer threaded.deinit();
     const io: std.Io = threaded.io();
@@ -561,31 +407,4 @@ test "safetensors: in-memory write/read roundtrip" {
         }
     }
     try std.testing.expect(found_alpha and found_beta);
-}
-
-test "program serialization roundtrip" {
-    const alloc = std.testing.allocator;
-    var t = try makeFp16Tensor(alloc, 128, 7);
-    defer t.deinit(alloc);
-
-    const kids = try alloc.alloc(program.Node, 3);
-    kids[0] = .{ .op = .huffman };
-    kids[1] = .{ .op = .rans };
-    kids[2] = .{ .op = .raw };
-    var node: program.Node = .{ .op = .split_float, .children = kids };
-    defer node.deinit(alloc);
-
-    try program.compressTensor(alloc, &node, t, &.{});
-    const program_bytes = try program.serializeProgram(alloc, &node);
-    defer alloc.free(program_bytes);
-    const payload_bytes = try program.collectPayloadBytes(alloc, &node);
-    defer alloc.free(payload_bytes);
-
-    var node2 = try program.deserializeProgram(alloc, program_bytes);
-    defer node2.deinit(alloc);
-    try program.distributePayloadBytes(&node2, payload_bytes);
-
-    var back = try program.decompressTensor(alloc, &node2, &.{});
-    defer back.deinit(alloc);
-    try std.testing.expect(std.mem.eql(u8, t.data, back.data));
 }
