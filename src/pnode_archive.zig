@@ -210,7 +210,6 @@ fn internTablesInPNode(map: *TableMap, node: *const astar.PNode) !void {
             try internTablesInPNode(map, s.hi);
             try internTablesInPNode(map, s.lo);
         },
-        .macro => unreachable, // realize() must expand macros before archive build
     }
 }
 
@@ -254,7 +253,6 @@ fn writePNode(alloc: Allocator, out: *std.ArrayList(u8), node: *const astar.PNod
             try writePNode(alloc, out, s.hi, map);
             try writePNode(alloc, out, s.lo, map);
         },
-        .macro => unreachable,
     }
 }
 

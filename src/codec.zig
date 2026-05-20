@@ -522,6 +522,13 @@ pub fn ransBuild(alloc: Allocator, stream: Stream) !RansTable {
     for (hist.pairs, 0..) |p, k| syms[k] = p.sym;
 
     // Quantize frequencies to RANS_PROB_SCALE.
+    // rANS precision: total of quantized frequencies must equal RANS_PROB_SCALE
+    // (2^14). With n_unique symbols ≥ RANS_PROB_SCALE we can't satisfy this
+    // even at 1 slot per symbol → refuse so search can pick another encoding.
+    if (n >= RANS_PROB_SCALE) {
+        alloc.free(syms);
+        return error.AlphabetTooLargeForRans;
+    }
     const raw_total: f64 = @floatFromInt(stream.count);
     const info = try alloc.alloc(RansSymbol, n);
     var quantized_total: u32 = 0;
@@ -532,17 +539,33 @@ pub fn ransBuild(alloc: Allocator, stream: Stream) !RansTable {
         info[ii] = .{ .freq = q, .cum = 0 };
         quantized_total += q;
     }
-    // Adjust the largest frequency to make the total exactly RANS_PROB_SCALE.
-    var max_idx: usize = 0;
-    for (info, 0..) |x, ii| if (x.freq > info[max_idx].freq) {
-        max_idx = ii;
-    };
+    // Adjust to make the total exactly RANS_PROB_SCALE. Reduce/grow the
+    // largest entry; if the overflow exceeds the largest entry−1, spread the
+    // reduction across multiple high-count entries so we never underflow.
     if (quantized_total > RANS_PROB_SCALE) {
-        const over = quantized_total - RANS_PROB_SCALE;
-        info[max_idx].freq -= over;
+        var over: u32 = quantized_total - RANS_PROB_SCALE;
+        // Build an order from largest to smallest freq, reduce greedily.
+        while (over > 0) {
+            var max_idx: usize = 0;
+            for (info, 0..) |x, ii| if (x.freq > info[max_idx].freq) {
+                max_idx = ii;
+            };
+            if (info[max_idx].freq <= 1) {
+                // No more room to reduce — should be unreachable since
+                // n ≤ RANS_PROB_SCALE means sum ≥ n ≥ over+RANS_PROB_SCALE
+                // ... actually we should always have room. Defensive break.
+                break;
+            }
+            const take: u32 = @min(over, info[max_idx].freq - 1);
+            info[max_idx].freq -= take;
+            over -= take;
+        }
     } else if (quantized_total < RANS_PROB_SCALE) {
-        const under = RANS_PROB_SCALE - quantized_total;
-        info[max_idx].freq += under;
+        var max_idx: usize = 0;
+        for (info, 0..) |x, ii| if (x.freq > info[max_idx].freq) {
+            max_idx = ii;
+        };
+        info[max_idx].freq += RANS_PROB_SCALE - quantized_total;
     }
 
     // Cumulative.

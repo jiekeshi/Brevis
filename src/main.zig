@@ -1,24 +1,31 @@
-//! brevis — unified low-level program-synthesis compressor.
+//! brevis — Euphony-style program-synthesis compressor.
+//!
+//! Pipeline:
+//!   compress   = for each tensor: astar.synthesize(stream, PHOG) → realize → archive
+//!   decompress = parse archive → for each tensor: astar.decompress
+//!   verify     = decompress + bit-compare against original safetensors
+//!   train      = run synth with current PHOG on each training tensor →
+//!                walk results → update PHOG counts → dump to file
+//!   bench      = compress without writing archive
 //!
 //! Subcommands:
-//!   brevis compress     <model.safetensors>  <out.brv>
-//!   brevis decompress   <model.brv>          <out.safetensors>
-//!   brevis verify       <model.brv>          <orig.safetensors>
-//!   brevis bench        <model.safetensors>     [synthesize, no archive write]
-//!   brevis baseline     <model.safetensors>     [compare brevis vs gzip vs zstd]
+//!   brevis compress   <model.safetensors>  <out.brv>
+//!   brevis decompress <model.brv>          <out.safetensors>
+//!   brevis verify     <model.brv>          <orig.safetensors>
+//!   brevis bench      <model.safetensors>
+//!   brevis baseline   <model.safetensors>     [vs gzip / zstd]
+//!   brevis train      <model.safetensors>  <out.phog>
 //!   brevis demo
 //!   brevis make-fixture <out.safetensors>
-//!   brevis train        <model.safetensors>  <out.json>     [B&B + macro mining]
 
 const std = @import("std");
 const types = @import("types.zig");
-const codec = @import("codec.zig");
 const safetensors = @import("safetensors.zig");
 const baseline_mod = @import("baseline.zig");
-const lowlevel = @import("lowlevel.zig");
-const lowlevel_training = @import("lowlevel_training.zig");
 const astar = @import("astar.zig");
 const pnode_archive = @import("pnode_archive.zig");
+const phog_mod = @import("phog.zig");
+const grammar = @import("grammar.zig");
 
 pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
@@ -79,7 +86,7 @@ pub fn main(init: std.process.Init) !void {
 
 fn usageExit(err: *std.Io.Writer) !void {
     try err.writeAll(
-        \\brevis 0.2.0 — unified low-level program-synthesis compressor
+        \\brevis 0.3.0 — Euphony-style program synthesis compressor
         \\
         \\Usage:
         \\  brevis compress     <model.safetensors>  <out.brv>
@@ -89,23 +96,14 @@ fn usageExit(err: *std.Io.Writer) !void {
         \\  brevis baseline     <model.safetensors>     [vs gzip / zstd]
         \\  brevis demo
         \\  brevis make-fixture <out.safetensors>
-        \\  brevis train        <model.safetensors>  <out.json>
+        \\  brevis train        <model.safetensors>  <out.phog>
         \\
     );
     try err.flush();
     std.process.exit(2);
 }
 
-// ============== compress (parallel, low-level via astar + macros) ==============
-
-fn countPayloadBits(node: *const astar.PNode) u64 {
-    return switch (node.*) {
-        .terminal => |t| @as(u64, t.payload.len) * 8,
-        .chain => |c| countPayloadBits(c.next),
-        .split => |s| countPayloadBits(s.hi) + countPayloadBits(s.lo),
-        .macro => 0,
-    };
-}
+// ============== shared synthesize-all (parallel) ==============
 
 const SynthOut = struct {
     prog: ?*astar.PNode = null,
@@ -113,13 +111,14 @@ const SynthOut = struct {
     shape: []const u64 = &.{},
     name: []const u8 = &.{},
     raw_bits: u64 = 0,
-    payload_bits: u64 = 0,
+    cost_bits: u64 = 0,
 };
 
 const SynthWorker = struct {
     next: std.atomic.Value(usize),
     tensors: []const safetensors.Tensor,
     outs: []SynthOut,
+    phog: *const phog_mod.PHOG,
 
     fn run(self: *@This()) void {
         const wa = std.heap.smp_allocator;
@@ -127,36 +126,39 @@ const SynthWorker = struct {
             const i = self.next.fetchAdd(1, .acq_rel);
             if (i >= self.tensors.len) return;
             const t = self.tensors[i];
-            if (!t.view.dtype.isFloat16Like()) continue;
-            const count: usize = @divExact(t.view.data.len, 2);
+            // Supported dtypes: fp16/bf16 (16-bit) and u8 (8-bit).
+            const bpe: u8 = switch (t.view.dtype) {
+                .f16, .bf16, .u16 => 16,
+                .u8 => 8,
+                else => continue,
+            };
+            const elem_bytes: usize = @divExact(bpe, 8);
+            const count = @divExact(t.view.data.len, elem_bytes);
             const stream: types.Stream = .{
                 .data = t.view.data,
                 .count = count,
-                .bits_per_elem = 16,
+                .bits_per_elem = bpe,
                 .owns_data = false,
             };
-            // depth 1 + built-in macros = O(1)-ish per tensor (the macros are
-            // atomic actions that already encode 3-deep structure).
-            var best = astar.synthesize(wa, stream, .{
-                .max_depth = 1,
-                .max_nodes_explored = 20_000,
+            var best = astar.synthesize(wa, stream, self.phog.*, .{
+                .max_pops = 50_000,
+                .realize_top_k = 16,
             }) catch continue;
             const prog = best.program orelse continue;
             best.program = null;
-            astar.realize(wa, prog, stream) catch continue;
             self.outs[i] = .{
                 .prog = prog,
                 .dtype = t.view.dtype,
                 .shape = t.view.shape,
                 .name = t.name,
                 .raw_bits = @as(u64, t.view.data.len) * 8,
-                .payload_bits = countPayloadBits(prog),
+                .cost_bits = best.cost_bits,
             };
         }
     }
 };
 
-fn synthesizeAll(work_alloc: std.mem.Allocator, io: std.Io, tensors: []const safetensors.Tensor) ![]SynthOut {
+fn synthesizeAll(work_alloc: std.mem.Allocator, tensors: []const safetensors.Tensor, phog: *const phog_mod.PHOG) ![]SynthOut {
     const n_threads = std.Thread.getCpuCount() catch 8;
     const outs = try work_alloc.alloc(SynthOut, tensors.len);
     for (outs) |*o| o.* = .{};
@@ -164,12 +166,12 @@ fn synthesizeAll(work_alloc: std.mem.Allocator, io: std.Io, tensors: []const saf
         .next = .init(0),
         .tensors = tensors,
         .outs = outs,
+        .phog = phog,
     };
     const threads = try work_alloc.alloc(std.Thread, n_threads);
     defer work_alloc.free(threads);
     for (threads) |*th| th.* = try std.Thread.spawn(.{}, SynthWorker.run, .{&worker});
     for (threads) |th| th.join();
-    _ = io;
     return outs;
 }
 
@@ -181,15 +183,31 @@ fn freeOuts(work_alloc: std.mem.Allocator, outs: []SynthOut) void {
     work_alloc.free(outs);
 }
 
+// ============== load PHOG (from default file or empty uniform) ==============
+
+fn loadDefaultPhog(io: std.Io) phog_mod.PHOG {
+    // Try a couple of default paths; fall back to uniform Laplace.
+    const candidates = [_][]const u8{ "brevis.phog", ".brevis.phog" };
+    for (candidates) |path| {
+        if (loadPhogFromFile(io, path)) |p| return p else |_| {}
+    }
+    var p = phog_mod.PHOG.empty();
+    p.computeFixpoint();
+    return p;
+}
+
+// ============== compress ==============
+
 fn cmdCompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path: []const u8) !void {
     const wa = std.heap.smp_allocator;
     var loaded = try safetensors.loadFromPath(wa, io, in_path);
     defer loaded.deinitMmap(wa, io);
+    const phog = loadDefaultPhog(io);
     const t_start = std.Io.Timestamp.now(io, .awake);
     try out.print("compress: {d} tensors\n", .{loaded.tensors.len});
     try out.flush();
 
-    const outs = try synthesizeAll(wa, io, loaded.tensors);
+    const outs = try synthesizeAll(wa, loaded.tensors, &phog);
     defer freeOuts(wa, outs);
 
     var jobs: std.ArrayList(pnode_archive.TensorJob) = .empty;
@@ -205,7 +223,7 @@ fn cmdCompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path: [
             .program = o.prog.?,
         });
         total_raw += o.raw_bits;
-        total_bits += o.payload_bits;
+        total_bits += o.cost_bits;
     }
 
     const bytes = try pnode_archive.buildArchiveBytes(wa, jobs.items);
@@ -317,17 +335,18 @@ fn cmdVerify(io: std.Io, out: *std.Io.Writer, brv_path: []const u8, orig_path: [
     if (fail > 0) std.process.exit(1);
 }
 
-// ============== bench (synthesize without writing archive) ==============
+// ============== bench ==============
 
 fn cmdBench(io: std.Io, out: *std.Io.Writer, in_path: []const u8) !void {
     const wa = std.heap.smp_allocator;
     var loaded = try safetensors.loadFromPath(wa, io, in_path);
     defer loaded.deinitMmap(wa, io);
+    const phog = loadDefaultPhog(io);
     try out.print("=== brevis bench: {s} ({d} tensors) ===\n", .{ in_path, loaded.tensors.len });
     try out.flush();
 
     const t_start = std.Io.Timestamp.now(io, .awake);
-    const outs = try synthesizeAll(wa, io, loaded.tensors);
+    const outs = try synthesizeAll(wa, loaded.tensors, &phog);
     defer freeOuts(wa, outs);
     const elapsed = t_start.durationTo(.now(io, .awake)).toMilliseconds();
 
@@ -336,7 +355,7 @@ fn cmdBench(io: std.Io, out: *std.Io.Writer, in_path: []const u8) !void {
     for (outs) |o| {
         if (o.prog == null) continue;
         total_raw += o.raw_bits;
-        total_bits += o.payload_bits;
+        total_bits += o.cost_bits;
     }
     if (total_raw > 0) {
         const ratio: f64 = @as(f64, @floatFromInt(total_raw)) / @as(f64, @floatFromInt(total_bits));
@@ -344,7 +363,7 @@ fn cmdBench(io: std.Io, out: *std.Io.Writer, in_path: []const u8) !void {
     }
 }
 
-// ============== baseline (vs gzip / zstd) ==============
+// ============== baseline ==============
 
 fn cmdBaseline(io: std.Io, out: *std.Io.Writer, in_path: []const u8) !void {
     const wa = std.heap.smp_allocator;
@@ -363,8 +382,8 @@ fn cmdBaseline(io: std.Io, out: *std.Io.Writer, in_path: []const u8) !void {
 
     try out.print("=== brevis baseline: {s} ({d} tensors, {d} bytes raw) ===\n\n", .{ in_path, loaded.tensors.len, raw_total });
 
-    // brevis (synth + archive)
-    const outs = try synthesizeAll(wa, io, loaded.tensors);
+    const phog = loadDefaultPhog(io);
+    const outs = try synthesizeAll(wa, loaded.tensors, &phog);
     defer freeOuts(wa, outs);
     var jobs: std.ArrayList(pnode_archive.TensorJob) = .empty;
     defer jobs.deinit(wa);
@@ -391,86 +410,107 @@ fn cmdBaseline(io: std.Io, out: *std.Io.Writer, in_path: []const u8) !void {
     try out.print("gzip -9                {d:>13}       {d:.3}x  (DEFLATE)\n", .{ gz_size, f.ratio(raw_total, gz_size) });
     if (zstd_3) |z| try out.print("zstd -3                {d:>13}       {d:.3}x  (zstd default)\n", .{ z, f.ratio(raw_total, z) });
     if (zstd_19) |z| try out.print("zstd -19               {d:>13}       {d:.3}x  (zstd best)\n", .{ z, f.ratio(raw_total, z) });
-    try out.print("brevis (.brv archive)  {d:>13}       {d:.3}x  (low-level synth + macros)\n", .{ brevis_bytes.len, f.ratio(raw_total, brevis_bytes.len) });
+    try out.print("brevis (.brv archive)  {d:>13}       {d:.3}x  (Euphony A* + PHOG)\n", .{ brevis_bytes.len, f.ratio(raw_total, brevis_bytes.len) });
 }
 
-// ============== train (low-level B&B + macro mining) ==============
+// ============== train: observe (ctx, op) pairs from best programs ==============
 
 fn cmdTrain(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path: []const u8) !void {
     const wa = std.heap.smp_allocator;
     var loaded = try safetensors.loadFromPath(wa, io, in_path);
     defer loaded.deinitMmap(wa, io);
 
-    var picked: std.ArrayList(types.TensorView) = .empty;
-    defer picked.deinit(wa);
-    for (loaded.tensors) |t| {
-        if (!t.view.dtype.isFloat16Like()) continue;
-        try picked.append(wa, t.view);
-    }
-    try out.print("train: {d} tensors picked, subsampling to 5K elem for B&B\n", .{picked.items.len});
+    var phog = phog_mod.PHOG.empty();
+    phog.computeFixpoint();
+
+    try out.print("train: {d} tensors, 3 rounds of synth → observe → fixpoint\n", .{loaded.tensors.len});
     try out.flush();
 
-    const t_start = std.Io.Timestamp.now(io, .awake);
-    var result = try lowlevel_training.trainOnTensors(wa, picked.items, .{
-        .max_depth = 4,
-        .max_nodes_explored = 30_000,
-        .macro_def_cost = 5,
-        .min_count_for_promotion = 2,
-        .subsample_elements = 5_000,
-    });
-    defer result.deinit();
-    const elapsed = t_start.durationTo(.now(io, .awake)).toMilliseconds();
-    try out.print("training done in {d}ms wall\n", .{elapsed});
-    try out.print("  n_tensors processed: {d}\n", .{result.counters.n_tensors});
-    try out.print("  unique subtrees: {d}\n", .{result.counters.subtree_counts.count()});
-    try out.print("  promoted macros: {d}\n", .{result.promoted.len});
-    try out.flush();
+    const round_count: u32 = 10;
+    var round: u32 = 0;
+    while (round < round_count) : (round += 1) {
+        const t_start = std.Io.Timestamp.now(io, .awake);
+        const outs = try synthesizeAll(wa, loaded.tensors, &phog);
+        defer freeOuts(wa, outs);
+        var n_observed: u32 = 0;
+        var raw_total: u64 = 0;
+        var bit_total: u64 = 0;
+        for (outs) |o| {
+            if (o.prog) |p| {
+                astar.observeProgram(p, null, 0, &phog);
+                n_observed += 1;
+                raw_total += o.raw_bits;
+                bit_total += o.cost_bits;
+            }
+        }
+        phog.computeFixpoint();
+        const elapsed = t_start.durationTo(.now(io, .awake)).toMilliseconds();
+        const ratio: f64 = if (bit_total > 0)
+            @as(f64, @floatFromInt(raw_total)) / @as(f64, @floatFromInt(bit_total))
+        else
+            0.0;
+        try out.print("  round {d}: {d} programs, ratio {d:.3}x, h(S)={d:.2} bits, {d}ms\n", .{ round + 1, n_observed, ratio, phog.neg_log_h_S, elapsed });
+        try out.flush();
+    }
 
     const cwd = std.Io.Dir.cwd();
     const f = try cwd.createFile(io, out_path, .{});
     defer f.close(io);
     var wb: [4096]u8 = undefined;
     var wf = f.writer(io, &wb);
-    try lowlevel_training.dumpReport(wa, &result, &wf.interface);
-    try out.print("wrote report → {s}\n", .{out_path});
-    try out.print("\nNext step: python3 tools/emit_macros.py {s} src/discovered_macros.zig && zig build -Doptimize=ReleaseFast\n", .{out_path});
+    const w = &wf.interface;
+    try w.writeAll(std.mem.asBytes(&phog.counts));
+    try w.writeAll(std.mem.asBytes(&phog.row_totals));
+    try w.flush();
+    try out.print("wrote trained PHOG → {s}\n", .{out_path});
 }
 
-// ============== demo (synthetic data) ==============
+fn loadPhogFromFile(io: std.Io, path: []const u8) !phog_mod.PHOG {
+    const wa = std.heap.smp_allocator;
+    const cwd = std.Io.Dir.cwd();
+    const f = try cwd.openFile(io, path, .{});
+    defer f.close(io);
+    var p = phog_mod.PHOG.empty();
+    var rb: [4096]u8 = undefined;
+    var rdr = f.reader(io, &rb);
+    _ = try rdr.interface.readSliceAll(std.mem.asBytes(&p.counts));
+    _ = try rdr.interface.readSliceAll(std.mem.asBytes(&p.row_totals));
+    p.computeFixpoint();
+    _ = wa;
+    return p;
+}
+
+// ============== demo ==============
 
 fn cmdDemo(out: *std.Io.Writer) !void {
     const wa = std.heap.smp_allocator;
+    var phog = phog_mod.PHOG.empty();
+    phog.computeFixpoint();
     try out.writeAll("=== brevis demo: synthetic Transformer-like tensors ===\n\n");
-    try runOne(wa, out, "attention_proj", 512 * 512, 0.02, 0, false);
-    try runOne(wa, out, "layernorm_gamma", 4096, 0.01, 1, true);
-    try runOne(wa, out, "embedding", 1024 * 512, 0.05, 2, false);
+    try runOne(wa, out, "attention_proj", 512 * 512, 0.02, 0, false, &phog);
+    try runOne(wa, out, "layernorm_gamma", 4096, 0.01, 1, true, &phog);
 }
 
-fn runOne(wa: std.mem.Allocator, out: *std.Io.Writer, name: []const u8, n: usize, sigma: f32, seed: u64, near_one: bool) !void {
+fn runOne(wa: std.mem.Allocator, out: *std.Io.Writer, name: []const u8, n: usize, sigma: f32, seed: u64, near_one: bool, phog: *const phog_mod.PHOG) !void {
     const buf = try wa.alloc(u8, n * 2);
     defer wa.free(buf);
     var prng: std.Random.DefaultPrng = .init(seed);
     const r = prng.random();
     for (0..n) |i| {
-        const v: f16 = if (near_one)
-            @floatCast(1.0 + r.floatNorm(f32) * sigma)
-        else
-            @floatCast(r.floatNorm(f32) * sigma);
+        const v: f16 = if (near_one) @floatCast(1.0 + r.floatNorm(f32) * sigma) else @floatCast(r.floatNorm(f32) * sigma);
         const u: u16 = @bitCast(v);
         std.mem.writeInt(u16, buf[i * 2 ..][0..2], u, .little);
     }
     const stream: types.Stream = .{ .data = buf, .count = n, .bits_per_elem = 16 };
-    var best = try astar.synthesize(wa, stream, .{ .max_depth = 1, .max_nodes_explored = 20_000 });
+    var best = try astar.synthesize(wa, stream, phog.*, .{ .max_pops = 8_000, .realize_top_k = 4 });
     defer best.deinit(wa);
-    if (best.program) |prog| {
-        try astar.realize(wa, prog, stream);
-        const pb = countPayloadBits(prog);
-        const ratio: f64 = @as(f64, @floatFromInt(stream.data.len * 8)) / @as(f64, @floatFromInt(pb));
+    if (best.program) |_| {
+        const ratio: f64 = @as(f64, @floatFromInt(stream.data.len * 8)) / @as(f64, @floatFromInt(best.cost_bits));
         try out.print("{s:<24} n={d:<8}  ratio={d:.3}x\n", .{ name, n, ratio });
     }
 }
 
-// ============== make-fixture (generate synthetic safetensors) ==============
+// ============== make-fixture ==============
 
 fn cmdMakeFixture(io: std.Io, out: *std.Io.Writer, path: []const u8) !void {
     const wa = std.heap.smp_allocator;
@@ -479,11 +519,10 @@ fn cmdMakeFixture(io: std.Io, out: *std.Io.Writer, path: []const u8) !void {
         for (views.items) |*v| v.deinit(wa);
         views.deinit(wa);
     }
-    try views.append(wa, try makeFp16Synthetic(wa, 512, 512, 0.02, 0, false));
-    try views.append(wa, try makeFp16Synthetic(wa, 4096, 1, 0.01, 1, true));
-    try views.append(wa, try makeFp16Synthetic(wa, 1024, 512, 0.05, 2, false));
-    try views.append(wa, try makeFp16Synthetic(wa, 768, 768, 0.02, 3, false));
-    const names = [_][]const u8{ "attn_proj.weight", "norm_1.gamma", "embed.weight", "ffn_in.weight" };
+    try views.append(wa, try makeFp16Synthetic(wa, 256, 256, 0.02, 0, false));
+    try views.append(wa, try makeFp16Synthetic(wa, 1024, 1, 0.01, 1, true));
+    try views.append(wa, try makeFp16Synthetic(wa, 512, 512, 0.05, 2, false));
+    const names = [_][]const u8{ "attn_proj.weight", "norm_1.gamma", "embed.weight" };
     var outs: std.ArrayList(safetensors.TensorOut) = .empty;
     defer outs.deinit(wa);
     for (names, views.items) |n, v| try outs.append(wa, .{ .name = n, .view = v });
@@ -497,10 +536,7 @@ fn makeFp16Synthetic(wa: std.mem.Allocator, d0: u64, d1: u64, sigma: f32, seed: 
     var prng: std.Random.DefaultPrng = .init(seed);
     const r = prng.random();
     for (0..n) |i| {
-        const v: f16 = if (near_one)
-            @floatCast(1.0 + r.floatNorm(f32) * sigma)
-        else
-            @floatCast(r.floatNorm(f32) * sigma);
+        const v: f16 = if (near_one) @floatCast(1.0 + r.floatNorm(f32) * sigma) else @floatCast(r.floatNorm(f32) * sigma);
         const u: u16 = @bitCast(v);
         std.mem.writeInt(u16, buf[i * 2 ..][0..2], u, .little);
     }
@@ -515,4 +551,9 @@ fn makeFp16Synthetic(wa: std.mem.Allocator, d0: u64, d1: u64, sigma: f32, seed: 
         break :blk s;
     };
     return .{ .data = buf, .shape = shape, .dtype = .f16, .owns_data = true, .owns_shape = true };
+}
+
+// silence unused-import warnings for `grammar` (it's used transitively via astar)
+comptime {
+    _ = grammar;
 }

@@ -20,14 +20,6 @@ pub const Dtype = enum(u8) {
     u16 = 4,
     u32 = 5,
 
-    pub fn elemSize(self: Dtype) usize {
-        return switch (self) {
-            .f16, .bf16, .u16 => 2,
-            .f32, .u32 => 4,
-            .u8 => 1,
-        };
-    }
-
     pub fn isFloat16Like(self: Dtype) bool {
         return self == .f16 or self == .bf16;
     }
@@ -64,23 +56,9 @@ pub const Stream = struct {
     bits_per_elem: u8, // 1, 2, .., 32
     owns_data: bool = true,
 
-    pub fn elemBytes(self: Stream) usize {
-        return @divExact(roundUpToPow2(self.bits_per_elem), 8);
-    }
-
-    pub fn nbytes(self: Stream) usize {
-        return self.data.len;
-    }
-
     pub fn deinit(self: *Stream, alloc: Allocator) void {
         if (self.owns_data) alloc.free(self.data);
         self.data = &.{};
-    }
-
-    pub fn cloneAlloc(self: Stream, alloc: Allocator) !Stream {
-        const buf = try alloc.alloc(u8, self.data.len);
-        @memcpy(buf, self.data);
-        return .{ .data = buf, .count = self.count, .bits_per_elem = self.bits_per_elem };
     }
 
     /// Read element i as a u32 (zero-extended).
@@ -113,26 +91,9 @@ pub const TensorView = struct {
     owns_data: bool = false,
     owns_shape: bool = false,
 
-    pub fn numel(self: TensorView) u64 {
-        var n: u64 = 1;
-        for (self.shape) |d| n *= d;
-        return n;
-    }
-
-    pub fn nbytes(self: TensorView) usize {
-        return self.data.len;
-    }
-
     pub fn deinit(self: *TensorView, alloc: Allocator) void {
         if (self.owns_data) alloc.free(self.data);
         if (self.owns_shape) alloc.free(self.shape);
-    }
-
-    pub fn equalsBytes(self: TensorView, other: TensorView) bool {
-        if (self.dtype != other.dtype) return false;
-        if (self.shape.len != other.shape.len) return false;
-        for (self.shape, other.shape) |a, b| if (a != b) return false;
-        return std.mem.eql(u8, self.data, other.data);
     }
 };
 

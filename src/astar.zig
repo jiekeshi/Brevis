@@ -1,65 +1,319 @@
-//! Branch-and-bound program synthesis over the low-level grammar.
+//! Euphony-style A* search over the sentential-form graph of the brevis
+//! grammar (`grammar.zig`), with edge weights `−log₂ q(A → β | c)` taken
+//! from PHOG (`phog.zig`). Admissible heuristic h is the PHOG fixpoint
+//! `neg_log_h_S` applied to each remaining hole.
 //!
-//! Strictly speaking this is B&B, not classic A* (we DFS rather than
-//! priority-queue expand) — but it carries the A* spirit: an admissible
-//! Shannon-entropy heuristic + best-so-far pruning. For small grammars and
-//! depth ≤ 6, B&B is *more* memory-efficient than A* with partial states
-//! (peak memory = depth × stream size, not branching-factor^depth × stream
-//! size).
+//! After search returns the next complete sentential form (i.e. a candidate
+//! program), it's "realized" — actually run through the encoder to measure
+//! true compressed bytes. The caller can realize the top K candidates and
+//! pick the one with smallest actual bytes; A* gives them in decreasing
+//! PHOG likelihood.
 //!
-//! Design
-//! ======
-//! `bestCost(stream, depth)` returns the optimal (cost, program) for
-//! encoding `stream` with up to `depth` non-terminal layers above it. It
-//! recurses by:
-//!   - trying every terminal at this stream (huffman / rans / raw)
-//!   - trying every non-terminal action (xor_const(c), rotate_bits(r),
-//!     diff_mod, ..., split_field(start, n_bits)) — for each, compute the
-//!     output stream and recurse with depth−1.
-//! The incumbent best cost is tracked across the recursion; any subtree
-//! whose admissible h already exceeds best is pruned.
-//!
-//! Action space is hard-limited per op type to keep the recursion tractable
-//! (see `enumerateActions` for the list).
+//! Two layers in this file:
+//!   1. SForm + State + bestForStream — the search.
+//!   2. PNode + realize + decompress — the program-tree representation used
+//!      at compress/decompress time. Same as before; A* converts its final
+//!      SForm into a PNode for realize/decompress.
 
 const std = @import("std");
 const types = @import("types.zig");
 const codec = @import("codec.zig");
 const lowlevel = @import("lowlevel.zig");
-const discovered = @import("discovered_macros.zig");
-const built_in = @import("built_in_macros.zig");
-
-/// All macros visible to A* and to realize. Built-in ones come first
-/// (low indices stay stable across re-training of discovered macros).
-pub fn allMacros() []const discovered.Macro {
-    // For MVP we use a comptime-known concatenation. If sizes get large
-    // we'll switch to a thread-local cache.
-    const total = built_in.BUILT_IN.len + discovered.DISCOVERED.len;
-    if (total == 0) return &.{};
-    const buf_ptr = &macros_cache;
-    if (!macros_cache_inited) {
-        var i: usize = 0;
-        for (built_in.BUILT_IN) |m| {
-            buf_ptr[i] = m;
-            i += 1;
-        }
-        for (discovered.DISCOVERED) |m| {
-            buf_ptr[i] = m;
-            i += 1;
-        }
-        macros_cache_len = i;
-        macros_cache_inited = true;
-    }
-    return buf_ptr[0..macros_cache_len];
-}
-var macros_cache: [256]discovered.Macro = undefined;
-var macros_cache_len: usize = 0;
-var macros_cache_inited: bool = false;
+const grammar = @import("grammar.zig");
+const phog_mod = @import("phog.zig");
 
 const Allocator = types.Allocator;
 const Stream = types.Stream;
+const PHOG = phog_mod.PHOG;
 
-// =================== program tree representation ===================
+// =================== Sentential-form representation ===================
+
+/// One node in a sentential-form tree. Either an unexpanded hole (carries its
+/// context for PHOG) or a partially/fully-expanded op (carries the chosen
+/// op + concrete params + indices of its children in the same array).
+pub const SFormNode = union(enum) {
+    hole: struct {
+        ctx_parent_op: i16, // -1 if root, otherwise OpKind value
+        ctx_slot: u8,
+    },
+    op: struct {
+        kind: lowlevel.OpKind,
+        params_raw: u32,
+        child_hi: i32, // node index in array; -1 if unused
+        child_lo: i32,
+    },
+};
+
+pub const State = struct {
+    /// Flat array of nodes; root is `nodes[0]`.
+    nodes: []SFormNode,
+    n_holes: u32,
+    /// Sum of −log₂ q(production | ctx) along the chosen edges.
+    g: f64,
+    /// `n_holes × neg_log_h_S` — sum of the admissible fixpoint bound for
+    /// each remaining hole.
+    h: f64,
+
+    pub fn deinit(self: *State, alloc: Allocator) void {
+        alloc.free(self.nodes);
+    }
+
+    pub fn priority(self: State) f64 {
+        return self.g + self.h;
+    }
+
+    pub fn isComplete(self: State) bool {
+        return self.n_holes == 0;
+    }
+};
+
+fn cloneState(alloc: Allocator, s: State) !State {
+    const buf = try alloc.alloc(SFormNode, s.nodes.len);
+    @memcpy(buf, s.nodes);
+    return .{ .nodes = buf, .n_holes = s.n_holes, .g = s.g, .h = s.h };
+}
+
+/// Find the leftmost hole in the tree (DFS from root).
+fn leftmostHole(nodes: []const SFormNode) ?u32 {
+    return leftmostHoleAt(nodes, 0);
+}
+
+fn leftmostHoleAt(nodes: []const SFormNode, idx: u32) ?u32 {
+    if (idx >= nodes.len) return null;
+    return switch (nodes[idx]) {
+        .hole => idx,
+        .op => |o| blk: {
+            if (o.child_hi >= 0) {
+                if (leftmostHoleAt(nodes, @intCast(o.child_hi))) |h| break :blk h;
+            }
+            if (o.child_lo >= 0) {
+                if (leftmostHoleAt(nodes, @intCast(o.child_lo))) |h| break :blk h;
+            }
+            break :blk null;
+        },
+    };
+}
+
+// =================== A* search core ===================
+
+pub const Best = struct {
+    /// Realized program tree (PNode), or null if no candidate was found.
+    program: ?*PNode = null,
+    /// Actual compressed bits after realization (not the search g).
+    cost_bits: u64 = std.math.maxInt(u64),
+
+    pub fn deinit(self: *Best, alloc: Allocator) void {
+        if (self.program) |p| {
+            p.deinit(alloc);
+            alloc.destroy(p);
+        }
+        self.program = null;
+    }
+};
+
+pub const Opts = struct {
+    /// Stop after this many state expansions, even if no goal found.
+    max_pops: u32 = 200_000,
+    /// Realize at most this many complete candidates; keep the one with
+    /// smallest actual encoded bytes (which need not be the highest-likelihood).
+    realize_top_k: u32 = 8,
+};
+
+const StateCmp = struct {
+    fn order(_: void, a: State, b: State) std.math.Order {
+        return std.math.order(a.priority(), b.priority());
+    }
+};
+
+pub fn synthesize(alloc: Allocator, input: Stream, phog: PHOG, opts: Opts) !Best {
+    // Initial state: one hole with root context.
+    var nodes0 = try alloc.alloc(SFormNode, 1);
+    nodes0[0] = .{ .hole = .{ .ctx_parent_op = -1, .ctx_slot = 0 } };
+    const init_state: State = .{
+        .nodes = nodes0,
+        .n_holes = 1,
+        .g = 0.0,
+        .h = phog.neg_log_h_S,
+    };
+
+    var heap: std.PriorityQueue(State, void, StateCmp.order) = .empty;
+    defer {
+        while (heap.pop()) |s_const| {
+            var s = s_const;
+            s.deinit(alloc);
+        }
+        heap.deinit(alloc);
+    }
+    try heap.push(alloc, init_state);
+
+    // Equivalence-class pruning (Euphony §3.4.1, simplified): dedup states by
+    // a hash of the sentential-form structure. Two states with identical sform
+    // ARE equivalent (same partial program → same future). The hash table
+    // tracks the lowest g+h seen for each structure; pushes with higher cost
+    // are skipped.
+    var seen: std.AutoHashMap(u64, f64) = .init(alloc);
+    defer seen.deinit();
+
+    var best: Best = .{};
+    errdefer best.deinit(alloc);
+    var realized: u32 = 0;
+    var pops: u32 = 0;
+    var pruned_dup: u32 = 0;
+    _ = &pruned_dup;
+
+    while (heap.pop()) |s_const| {
+        var s = s_const;
+        pops += 1;
+        if (pops > opts.max_pops) {
+            s.deinit(alloc);
+            break;
+        }
+
+        if (s.isComplete()) {
+            // Convert to PNode and realize.
+            const prog = sformToPNode(alloc, s.nodes, 0) catch {
+                s.deinit(alloc);
+                continue;
+            };
+            const actual = realizeAndMeasure(alloc, prog, input) catch {
+                prog.deinit(alloc);
+                alloc.destroy(prog);
+                s.deinit(alloc);
+                continue;
+            };
+            if (actual < best.cost_bits) {
+                if (best.program) |p| {
+                    p.deinit(alloc);
+                    alloc.destroy(p);
+                }
+                best.program = prog;
+                best.cost_bits = actual;
+            } else {
+                prog.deinit(alloc);
+                alloc.destroy(prog);
+            }
+            realized += 1;
+            s.deinit(alloc);
+            if (realized >= opts.realize_top_k) break;
+            continue;
+        }
+
+        // Expand leftmost hole.
+        const h_idx = leftmostHole(s.nodes).?;
+        const hole = s.nodes[h_idx].hole;
+        const ctx: grammar.Context = .{
+            .parent_op = if (hole.ctx_parent_op < 0) null else @as(lowlevel.OpKind, @enumFromInt(@as(u8, @intCast(hole.ctx_parent_op)))),
+            .slot = hole.ctx_slot,
+        };
+
+        for (grammar.ALL_OPS) |op| {
+            // Skip ops the search shouldn't enumerate (no concrete params to try).
+            const params = grammar.paramChoices(op, 16); // bpe param-dependent only for prune; using 16 here is conservative
+            if (params.len == 0) continue;
+            const edge_cost = phog.negLogProb(ctx, op);
+
+            for (params) |pv| {
+                // Build new state by cloning, then replace the hole with the op.
+                const a = grammar.arity(op);
+                const new_n_holes: u32 = @intCast(@as(i32, @intCast(s.n_holes)) - 1 + @as(i32, a));
+
+                // Allocate child node slots if needed.
+                const new_node_count = s.nodes.len + @as(usize, a);
+                var new_nodes = try alloc.alloc(SFormNode, new_node_count);
+                @memcpy(new_nodes[0..s.nodes.len], s.nodes);
+
+                var child_hi: i32 = -1;
+                var child_lo: i32 = -1;
+                if (a >= 1) {
+                    child_hi = @intCast(s.nodes.len);
+                    new_nodes[s.nodes.len] = .{ .hole = .{
+                        .ctx_parent_op = @intCast(@intFromEnum(op)),
+                        .ctx_slot = 0,
+                    } };
+                }
+                if (a == 2) {
+                    child_lo = @intCast(s.nodes.len + 1);
+                    new_nodes[s.nodes.len + 1] = .{ .hole = .{
+                        .ctx_parent_op = @intCast(@intFromEnum(op)),
+                        .ctx_slot = 1,
+                    } };
+                }
+
+                new_nodes[h_idx] = .{ .op = .{
+                    .kind = op,
+                    .params_raw = pv,
+                    .child_hi = child_hi,
+                    .child_lo = child_lo,
+                } };
+
+                const new_state: State = .{
+                    .nodes = new_nodes,
+                    .n_holes = new_n_holes,
+                    .g = s.g + edge_cost,
+                    .h = @as(f64, @floatFromInt(new_n_holes)) * phog.neg_log_h_S,
+                };
+
+                // Prune if already worse than best.
+                if (new_state.priority() >= bitsToCost(best.cost_bits)) {
+                    alloc.free(new_nodes);
+                    continue;
+                }
+                // Equivalence pruning: hash the sform structure; skip if a
+                // cheaper-priority state with the same structure was seen.
+                const fp = hashSForm(new_nodes);
+                if (seen.get(fp)) |prev_p| {
+                    if (prev_p <= new_state.priority()) {
+                        alloc.free(new_nodes);
+                        pruned_dup += 1;
+                        continue;
+                    }
+                }
+                try seen.put(fp, new_state.priority());
+                try heap.push(alloc, new_state);
+            }
+        }
+        s.deinit(alloc);
+    }
+
+    return best;
+}
+
+fn hashSForm(nodes: []const SFormNode) u64 {
+    var h: std.hash.XxHash64 = .init(0xC0FFEE);
+    var buf: [16]u8 = undefined;
+    for (nodes) |n| switch (n) {
+        .hole => |hh| {
+            buf[0] = 0;
+            std.mem.writeInt(i16, buf[1..3], hh.ctx_parent_op, .little);
+            buf[3] = hh.ctx_slot;
+            h.update(buf[0..4]);
+        },
+        .op => |o| {
+            buf[0] = 1;
+            buf[1] = @intFromEnum(o.kind);
+            std.mem.writeInt(u32, buf[2..6], o.params_raw, .little);
+            std.mem.writeInt(i32, buf[6..10], o.child_hi, .little);
+            std.mem.writeInt(i32, buf[10..14], o.child_lo, .little);
+            h.update(buf[0..14]);
+        },
+    };
+    return h.final();
+}
+
+fn bitsToCost(bits: u64) f64 {
+    if (bits == std.math.maxInt(u64)) return std.math.inf(f64);
+    // bits is actual encoded length; priority is -log q which is incomparable
+    // dimensionally. We use it only as an upper bound for pruning *unlikely
+    // candidates that would also be worse*. In practice priority/bits both
+    // increase with worse programs, so this is a useful (if imperfect) prune.
+    return @as(f64, @floatFromInt(bits));
+}
+
+// =================== SForm → PNode conversion + realize + decompress ===================
+//
+// PNode is the runtime program-tree representation. It carries side_info
+// (Huffman/rANS tables) and encoded payload bytes on its terminal nodes
+// after `realize()`. `decompress()` is its inverse.
 
 pub const TerminalSide = union(enum) {
     huffman: struct { table: codec.HuffmanTable, count: usize, bits_per_elem: u8 },
@@ -76,11 +330,8 @@ pub const TerminalSide = union(enum) {
 };
 
 pub const PNode = union(enum) {
-    /// Terminal: encodes a stream into bytes. Search-time it's a placeholder
-    /// (side_info = .raw, payload = empty); after `realize()` it carries the
-    /// actual encoder table and the encoded bytes.
     terminal: struct {
-        kind: lowlevel.OpKind, // huffman | rans | raw
+        kind: lowlevel.OpKind,
         bits: u64,
         side_info: TerminalSide = .{ .raw = .{ .count = 0, .bits_per_elem = 0 } },
         payload: []u8 = &.{},
@@ -91,15 +342,9 @@ pub const PNode = union(enum) {
         next: *PNode,
     },
     split: struct {
-        op: lowlevel.LowOp, // split_field
+        op: lowlevel.LowOp,
         hi: *PNode,
         lo: *PNode,
-    },
-    /// A discovered macro applied to the input. Atomic at search time;
-    /// `realize()` expands it into chain/split/terminal subtree.
-    macro: struct {
-        macro_idx: u32,
-        bits: u64,
     },
 
     pub fn deinit(self: *PNode, alloc: Allocator) void {
@@ -108,7 +353,6 @@ pub const PNode = union(enum) {
                 t.side_info.deinit(alloc);
                 if (t.payload_owned and t.payload.len > 0) alloc.free(t.payload);
             },
-            .macro => {},
             .chain => |c| {
                 c.next.deinit(alloc);
                 alloc.destroy(c.next);
@@ -121,352 +365,35 @@ pub const PNode = union(enum) {
             },
         }
     }
-
-    pub fn clone(self: *const PNode, alloc: Allocator) Allocator.Error!*PNode {
-        const n = try alloc.create(PNode);
-        n.* = switch (self.*) {
-            .terminal => |t| .{ .terminal = .{ .kind = t.kind, .bits = t.bits } },
-            .macro => |m| .{ .macro = m },
-            .chain => |c| .{ .chain = .{ .op = c.op, .next = try c.next.clone(alloc) } },
-            .split => |s| .{ .split = .{
-                .op = s.op,
-                .hi = try s.hi.clone(alloc),
-                .lo = try s.lo.clone(alloc),
-            } },
-        };
-        return n;
-    }
-
-    pub fn pretty(self: *const PNode, alloc: Allocator) Allocator.Error![]u8 {
-        return switch (self.*) {
-            .terminal => |t| std.fmt.allocPrint(alloc, "{s}", .{lowlevelOpName(t.kind)}),
-            .macro => |m| std.fmt.allocPrint(alloc, "MACRO[{s}]", .{allMacros()[m.macro_idx].name}),
-            .chain => |c| blk: {
-                const inner = try c.next.pretty(alloc);
-                defer alloc.free(inner);
-                break :blk std.fmt.allocPrint(alloc, "{s}({d}) -> {s}", .{ lowlevelOpName(c.op.kind), c.op.params.raw, inner });
-            },
-            .split => |s| blk: {
-                const hi = try s.hi.pretty(alloc);
-                defer alloc.free(hi);
-                const lo = try s.lo.pretty(alloc);
-                defer alloc.free(lo);
-                break :blk std.fmt.allocPrint(alloc, "split_field(p={x}) [hi={s}, lo={s}]", .{ s.op.params.raw, hi, lo });
-            },
-        };
-    }
 };
 
-fn lowlevelOpName(k: lowlevel.OpKind) []const u8 {
-    return switch (k) {
-        .xor_const => "xor_const",
-        .add_const_mod => "add_const_mod",
-        .rotate_bits => "rotate",
-        .bit_swap_pair => "bit_swap",
-        .xor_prev => "xor_prev",
-        .prefix_xor => "prefix_xor",
-        .diff_mod => "diff",
-        .cumsum_mod => "cumsum",
-        .split_field => "split_field",
-        .huffman => "huffman",
-        .rans => "rans",
-        .raw => "raw",
-    };
-}
-
-// =================== action enumeration (hard-limited for MVP) ===================
-
-fn enumerateNonTerminals(stream_bpe: u8, buf: *std.ArrayList(lowlevel.LowOp), alloc: Allocator) !void {
-    // Parameter-free ops that always make sense.
-    try buf.append(alloc, .{ .kind = .xor_prev });
-    try buf.append(alloc, .{ .kind = .diff_mod });
-    try buf.append(alloc, .{ .kind = .gray_code });
-    try buf.append(alloc, .{ .kind = .inv_gray_code });
-    try buf.append(alloc, .{ .kind = .bit_reverse });
-    try buf.append(alloc, .{ .kind = .negate_mod });
-
-    // xor_with_shift with a few shift amounts (good for highly-correlated bits).
-    if (stream_bpe >= 4) {
-        const shifts: []const u32 = if (stream_bpe == 8) &.{ 1, 2, 4 } else &.{ 1, 2, 4, 8 };
-        for (shifts) |s| try buf.append(alloc, .{ .kind = .xor_with_shift, .params = .{ .raw = s } });
-    }
-
-    // mul_const_odd_mod with a few small odd constants.
-    {
-        const odds: []const u32 = &.{ 3, 5, 7, 11, 17 };
-        for (odds) |c| try buf.append(alloc, .{ .kind = .mul_const_odd_mod, .params = .{ .raw = c } });
-    }
-
-    // xor_const with a few common bit patterns.
-    const xor_consts: []const u32 = if (stream_bpe == 8)
-        &.{ 0xFF, 0xAA, 0x55, 0x80 }
-    else if (stream_bpe == 16)
-        &.{ 0xFFFF, 0xAAAA, 0x5555, 0x8000 }
-    else
-        &.{};
-    for (xor_consts) |c| try buf.append(alloc, .{ .kind = .xor_const, .params = .{ .raw = c } });
-
-    // rotate_bits: a few sensible rotations.
-    if (stream_bpe >= 4) {
-        const rotates: []const u32 = if (stream_bpe == 8) &.{ 1, 3, 4 } else &.{ 1, 4, 8, 12 };
-        for (rotates) |r| try buf.append(alloc, .{ .kind = .rotate_bits, .params = .{ .raw = r } });
-    }
-
-    // split_field: a few "natural" split points based on bpe.
-    if (stream_bpe == 16) {
-        const splits: []const struct { start: u8, n: u8 } = &.{
-            .{ .start = 15, .n = 1 }, // sign of fp16/bf16
-            .{ .start = 10, .n = 5 }, // exp of fp16
-            .{ .start = 7, .n = 8 }, // exp of bf16
-            .{ .start = 8, .n = 8 }, // bf16 (sign+exp) vs (mant)
-        };
-        for (splits) |sp| {
-            const params: u32 = sp.start | (@as(u32, sp.n) << 8) | (@as(u32, stream_bpe) << 16);
-            try buf.append(alloc, .{ .kind = .split_field, .params = .{ .raw = params } });
-        }
-    } else if (stream_bpe == 8) {
-        const splits: []const struct { start: u8, n: u8 } = &.{
-            .{ .start = 7, .n = 1 },
-            .{ .start = 4, .n = 4 },
-            .{ .start = 0, .n = 4 },
-            .{ .start = 6, .n = 2 },
-            .{ .start = 0, .n = 2 },
-        };
-        for (splits) |sp| {
-            const params: u32 = sp.start | (@as(u32, sp.n) << 8) | (@as(u32, stream_bpe) << 16);
-            try buf.append(alloc, .{ .kind = .split_field, .params = .{ .raw = params } });
-        }
-    }
-}
-
-// =================== heuristic: Shannon entropy lower bound ===================
-
-fn shannonBits(stream: Stream) u64 {
-    if (stream.count == 0) return 0;
-    if (stream.bits_per_elem > 16) return @as(u64, stream.count) * @as(u64, stream.bits_per_elem);
-    var counts: [65536]u32 = undefined;
-    @memset(&counts, 0);
-    for (0..stream.count) |i| counts[stream.getU32(i) & 0xFFFF] += 1;
-    var H: f64 = 0;
-    const n_f: f64 = @floatFromInt(stream.count);
-    for (counts) |c| {
-        if (c == 0) continue;
-        const p: f64 = @as(f64, @floatFromInt(c)) / n_f;
-        H += -p * std.math.log2(p);
-    }
-    return @intFromFloat(@ceil(H * n_f));
-}
-
-// =================== macro execution ===================
-//
-// A discovered macro is a (small) program tree we found high-frequency-enough
-// during training to lambda-fy. To use it as a single A* action, we simulate
-// running it on the input stream and accumulate the encoding cost of all
-// terminals in its tree.
-
-fn applyMacroCost(alloc: Allocator, macro: discovered.Macro, root_idx: u32, input: Stream) !u64 {
-    const node = macro.nodes[root_idx];
-    if (node.is_terminal) {
-        return terminalCost(alloc, node.op_kind, input);
-    }
-    const op: lowlevel.LowOp = .{ .kind = node.op_kind, .params = .{ .raw = node.params_raw } };
-    const r = try lowlevel.forward(alloc, op, input);
-    switch (r) {
-        .one => |out| {
-            defer alloc.free(out.data);
-            if (node.child_hi < 0) return error.BadMacroLink;
-            return try applyMacroCost(alloc, macro, @intCast(node.child_hi), out);
-        },
-        .two => |outs| {
-            defer alloc.free(outs[0].data);
-            defer alloc.free(outs[1].data);
-            if (node.child_hi < 0 or node.child_lo < 0) return error.BadMacroLink;
-            const hi_c = try applyMacroCost(alloc, macro, @intCast(node.child_hi), outs[0]);
-            const lo_c = try applyMacroCost(alloc, macro, @intCast(node.child_lo), outs[1]);
-            return hi_c + lo_c;
+fn sformToPNode(alloc: Allocator, nodes: []const SFormNode, idx: u32) Allocator.Error!*PNode {
+    const n = try alloc.create(PNode);
+    errdefer alloc.destroy(n);
+    switch (nodes[idx]) {
+        .hole => return error.OutOfMemory, // shouldn't happen on a complete sform
+        .op => |o| {
+            if (grammar.isTerminal(o.kind)) {
+                n.* = .{ .terminal = .{ .kind = o.kind, .bits = 0 } };
+                return n;
+            }
+            const op: lowlevel.LowOp = .{ .kind = o.kind, .params = .{ .raw = o.params_raw } };
+            if (grammar.arity(o.kind) == 2) {
+                const hi = try sformToPNode(alloc, nodes, @intCast(o.child_hi));
+                const lo = try sformToPNode(alloc, nodes, @intCast(o.child_lo));
+                n.* = .{ .split = .{ .op = op, .hi = hi, .lo = lo } };
+            } else {
+                const next = try sformToPNode(alloc, nodes, @intCast(o.child_hi));
+                n.* = .{ .chain = .{ .op = op, .next = next } };
+            }
+            return n;
         },
     }
 }
 
-// =================== terminal cost estimation ===================
-
-fn terminalCost(alloc: Allocator, kind: lowlevel.OpKind, stream: Stream) !u64 {
-    _ = alloc;
-    return switch (kind) {
-        .raw => @as(u64, stream.data.len) * 8,
-        .huffman => codec.huffmanCostBits(stream),
-        .rans => codec.ransCostBits(stream),
-        else => unreachable,
-    };
-}
-
-// =================== main entry: bestCost recursive search ===================
-
-pub const Best = struct {
-    cost: u64,
-    program: ?*PNode,
-
-    pub fn deinit(self: *Best, alloc: Allocator) void {
-        if (self.program) |p| {
-            p.deinit(alloc);
-            alloc.destroy(p);
-        }
-        self.program = null;
-    }
-};
-
-pub const Opts = struct {
-    max_depth: u8 = 4,
-    /// Soft cap on outer compute — when exceeded, return whatever is best so far.
-    max_nodes_explored: u64 = std.math.maxInt(u64),
-};
-
-/// Returns the optimal (cost, plan) for encoding `input`, considering up to
-/// `depth_left` non-terminal layers. `incumbent` is the best cost found
-/// elsewhere in the search — used for pruning.
-pub fn bestForStream(
-    alloc: Allocator,
-    input: Stream,
-    depth_left: u8,
-    incumbent: u64,
-    nodes_explored: *u64,
-    node_budget: u64,
-) Allocator.Error!Best {
-    nodes_explored.* += 1;
-    var local: Best = .{ .cost = std.math.maxInt(u64), .program = null };
-
-    if (nodes_explored.* >= node_budget) return local;
-
-    // Admissible bound.
-    const h = shannonBits(input);
-    if (h >= incumbent) return local;
-
-    // Try each terminal.
-    const terminals: []const lowlevel.OpKind = &.{ .huffman, .rans, .raw };
-    for (terminals) |term| {
-        const c = try terminalCost(alloc, term, input);
-        if (c < local.cost) {
-            local.cost = c;
-            if (local.program) |p| {
-                p.deinit(alloc);
-                alloc.destroy(p);
-            }
-            const node = try alloc.create(PNode);
-            node.* = .{ .terminal = .{ .kind = term, .bits = c } };
-            local.program = node;
-        }
-    }
-
-    // Try each discovered macro (as an atomic action — the macro body
-    // already encodes a multi-step program). Macros only apply if they're
-    // calibrated for this stream's bpe (or any-bpe = 0).
-    for (allMacros(), 0..) |macro, m_idx| {
-        if (macro.input_bpe != 0 and macro.input_bpe != input.bits_per_elem) continue;
-        const c = applyMacroCost(alloc, macro, 0, input) catch continue;
-        if (c < local.cost) {
-            local.cost = c;
-            if (local.program) |p| {
-                p.deinit(alloc);
-                alloc.destroy(p);
-            }
-            const node = try alloc.create(PNode);
-            node.* = .{ .macro = .{ .macro_idx = @intCast(m_idx), .bits = c } };
-            local.program = node;
-        }
-    }
-
-    if (depth_left == 0) return local;
-
-    // Try each non-terminal.
-    var actions: std.ArrayList(lowlevel.LowOp) = .empty;
-    defer actions.deinit(alloc);
-    enumerateNonTerminals(input.bits_per_elem, &actions, alloc) catch return local;
-
-    for (actions.items) |op| {
-        const new_incumbent: u64 = @min(incumbent, local.cost);
-        const r = lowlevel.forward(alloc, op, input) catch continue;
-        switch (r) {
-            .one => |out| {
-                defer alloc.free(out.data);
-                var sub = try bestForStream(alloc, out, depth_left - 1, new_incumbent, nodes_explored, node_budget);
-                defer sub.deinit(alloc);
-                if (sub.program == null) continue;
-                if (sub.cost >= local.cost) continue;
-                // Wrap in chain.
-                const node = try alloc.create(PNode);
-                const sub_program = sub.program.?;
-                sub.program = null; // transfer ownership
-                node.* = .{ .chain = .{ .op = op, .next = sub_program } };
-                if (local.program) |p| {
-                    p.deinit(alloc);
-                    alloc.destroy(p);
-                }
-                local.cost = sub.cost;
-                local.program = node;
-            },
-            .two => |two_outs| {
-                const outs = two_outs;
-                defer alloc.free(outs[0].data);
-                defer alloc.free(outs[1].data);
-                // Solve hi and lo independently.
-                var hi_sub = try bestForStream(alloc, outs[0], depth_left - 1, new_incumbent, nodes_explored, node_budget);
-                defer hi_sub.deinit(alloc);
-                if (hi_sub.program == null) continue;
-                if (hi_sub.cost >= new_incumbent) continue;
-                const lo_budget: u64 = if (new_incumbent > hi_sub.cost) new_incumbent - hi_sub.cost else 0;
-                var lo_sub = try bestForStream(alloc, outs[1], depth_left - 1, lo_budget, nodes_explored, node_budget);
-                defer lo_sub.deinit(alloc);
-                if (lo_sub.program == null) continue;
-                const total = hi_sub.cost + lo_sub.cost;
-                if (total >= local.cost) continue;
-                const node = try alloc.create(PNode);
-                const hi_p = hi_sub.program.?;
-                const lo_p = lo_sub.program.?;
-                hi_sub.program = null;
-                lo_sub.program = null;
-                node.* = .{ .split = .{ .op = op, .hi = hi_p, .lo = lo_p } };
-                if (local.program) |p| {
-                    p.deinit(alloc);
-                    alloc.destroy(p);
-                }
-                local.cost = total;
-                local.program = node;
-            },
-        }
-    }
-    return local;
-}
-
-/// Convenience: run the search from a fresh state with default opts.
-pub fn synthesize(alloc: Allocator, input: Stream, opts: Opts) !Best {
-    var nodes: u64 = 0;
-    return bestForStream(alloc, input, opts.max_depth, std.math.maxInt(u64), &nodes, opts.max_nodes_explored);
-}
-
-// =================== realize: actually run the encoder, fill side_info + payload ===================
-//
-// Walks the program tree top-down. For terminals, builds the actual encoder
-// table (Huffman / rANS) and produces real encoded bytes. For non-terminals,
-// runs `lowlevel.forward` and recurses on the output stream(s). For macros,
-// expands the macro body inline into chain/split/terminal nodes so that
-// decompress doesn't need to know about macros.
+/// Realize the program tree on `input`: run forward at non-terminals,
+/// build encoder tables + encode bytes at terminals. Fills side_info+payload.
 pub fn realize(alloc: Allocator, node: *PNode, input: Stream) !void {
-    // First, expand any .macro by replacing this node with the realized
-    // sub-program. We do this before processing other variants.
-    if (node.* == .macro) {
-        const m_idx = node.macro.macro_idx;
-        const ms = allMacros();
-        if (m_idx >= ms.len) return error.BadMacroIndex;
-        const m = ms[m_idx];
-        // Build a chain/split tree from the flat MacroNode array.
-        const expanded = try buildPNodeFromMacro(alloc, m, 0);
-        defer alloc.destroy(expanded);
-        // Splice expanded.* into node.*.
-        node.* = expanded.*;
-        // (alloc.destroy(expanded) only frees the wrapper; the children inside
-        // were assigned by buildPNodeFromMacro and now belong to `node`.)
-    }
-
     switch (node.*) {
         .terminal => |*t| switch (t.kind) {
             .huffman => {
@@ -501,7 +428,7 @@ pub fn realize(alloc: Allocator, node: *PNode, input: Stream) !void {
                 t.payload_owned = true;
                 t.bits = @as(u64, payload.len) * 8;
             },
-            else => unreachable,
+            else => return error.NotATerminal,
         },
         .chain => |c| {
             const r = try lowlevel.forward(alloc, c.op, input);
@@ -510,13 +437,13 @@ pub fn realize(alloc: Allocator, node: *PNode, input: Stream) !void {
                     defer alloc.free(out.data);
                     try realize(alloc, c.next, out);
                 },
-                .two => unreachable,
+                .two => return error.ArityMismatch,
             }
         },
         .split => |s| {
             const r = try lowlevel.forward(alloc, s.op, input);
             switch (r) {
-                .one => unreachable,
+                .one => return error.ArityMismatch,
                 .two => |outs| {
                     defer alloc.free(outs[0].data);
                     defer alloc.free(outs[1].data);
@@ -525,32 +452,24 @@ pub fn realize(alloc: Allocator, node: *PNode, input: Stream) !void {
                 },
             }
         },
-        .macro => unreachable, // handled at the top
     }
 }
 
-fn buildPNodeFromMacro(alloc: Allocator, m: discovered.Macro, idx: u32) Allocator.Error!*PNode {
-    const node = try alloc.create(PNode);
-    const mn = m.nodes[idx];
-    if (mn.is_terminal) {
-        node.* = .{ .terminal = .{ .kind = mn.op_kind, .bits = 0 } };
-    } else {
-        const op: lowlevel.LowOp = .{ .kind = mn.op_kind, .params = .{ .raw = mn.params_raw } };
-        if (mn.op_kind == .split_field) {
-            if (mn.child_hi < 0 or mn.child_lo < 0) return error.OutOfMemory;
-            const hi = try buildPNodeFromMacro(alloc, m, @intCast(mn.child_hi));
-            const lo = try buildPNodeFromMacro(alloc, m, @intCast(mn.child_lo));
-            node.* = .{ .split = .{ .op = op, .hi = hi, .lo = lo } };
-        } else {
-            if (mn.child_hi < 0) return error.OutOfMemory;
-            const next = try buildPNodeFromMacro(alloc, m, @intCast(mn.child_hi));
-            node.* = .{ .chain = .{ .op = op, .next = next } };
-        }
-    }
-    return node;
+fn realizeAndMeasure(alloc: Allocator, node: *PNode, input: Stream) !u64 {
+    try realize(alloc, node, input);
+    return totalBits(node);
 }
 
-// =================== decompress: reverse the realized program tree ===================
+fn totalBits(node: *const PNode) u64 {
+    return switch (node.*) {
+        .terminal => |t| t.bits,
+        .chain => |c| totalBits(c.next),
+        .split => |s| totalBits(s.hi) + totalBits(s.lo),
+    };
+}
+
+/// Reverse of realize: walk a fully-realized program tree backwards,
+/// reconstructing the original stream from the payloads + side_info.
 pub fn decompress(alloc: Allocator, node: *const PNode) !Stream {
     return switch (node.*) {
         .terminal => |t| switch (t.side_info) {
@@ -574,6 +493,23 @@ pub fn decompress(alloc: Allocator, node: *const PNode) !Stream {
             defer alloc.free(lo.data);
             break :blk lowlevel.inverseTwo(alloc, s.op, hi, lo);
         },
-        .macro => unreachable, // realize() expands macros before decompress can run
     };
+}
+
+/// Walk a realized PNode tree, observing each (parent → child) production
+/// edge in PHOG counts. Used during training.
+pub fn observeProgram(p: *const PNode, parent_op: ?lowlevel.OpKind, slot: u8, phog: *PHOG) void {
+    const ctx: grammar.Context = .{ .parent_op = parent_op, .slot = slot };
+    switch (p.*) {
+        .terminal => |t| phog.observe(ctx, t.kind),
+        .chain => |c| {
+            phog.observe(ctx, c.op.kind);
+            observeProgram(c.next, c.op.kind, 0, phog);
+        },
+        .split => |s| {
+            phog.observe(ctx, s.op.kind);
+            observeProgram(s.hi, s.op.kind, 0, phog);
+            observeProgram(s.lo, s.op.kind, 1, phog);
+        },
+    }
 }

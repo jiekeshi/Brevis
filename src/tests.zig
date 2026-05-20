@@ -6,6 +6,14 @@ const baseline = @import("baseline.zig");
 const lowlevel = @import("lowlevel.zig");
 const astar = @import("astar.zig");
 const pnode_archive = @import("pnode_archive.zig");
+const phog_mod = @import("phog.zig");
+const grammar = @import("grammar.zig");
+
+fn uniformPhog() phog_mod.PHOG {
+    var p = phog_mod.PHOG.empty();
+    p.computeFixpoint();
+    return p;
+}
 
 fn makeFp16Tensor(alloc: std.mem.Allocator, n: usize, seed: u64) !types.TensorView {
     const buf = try alloc.alloc(u8, n * 2);
@@ -284,11 +292,12 @@ test "astar: realize + decompress roundtrip on a fp16 sign-pattern stream" {
     }
     const s: types.Stream = .{ .data = buf, .count = n, .bits_per_elem = 16 };
 
-    var best = try astar.synthesize(alloc, s, .{ .max_depth = 3, .max_nodes_explored = 50_000 });
+    const phog = uniformPhog();
+    var best = try astar.synthesize(alloc, s, phog, .{ .max_pops = 5_000, .realize_top_k = 3 });
     defer best.deinit(alloc);
     try std.testing.expect(best.program != null);
 
-    try astar.realize(alloc, best.program.?, s);
+    // synthesize already realized — verify by decompress alone.
     const back = try astar.decompress(alloc, best.program.?);
     defer alloc.free(back.data);
     try std.testing.expectEqual(n, back.count);
@@ -310,10 +319,101 @@ test "astar: synthesize a fp16 sign stream finds something better than raw" {
         std.mem.writeInt(u16, buf[i * 2 ..][0..2], v, .little);
     }
     const s: types.Stream = .{ .data = buf, .count = n, .bits_per_elem = 16 };
-    var best = try astar.synthesize(alloc, s, .{ .max_depth = 3, .max_nodes_explored = 50_000 });
+    const phog = uniformPhog();
+    var best = try astar.synthesize(alloc, s, phog, .{ .max_pops = 5_000, .realize_top_k = 3 });
     defer best.deinit(alloc);
     try std.testing.expect(best.program != null);
-    try std.testing.expect(best.cost <= n * 16);
+    try std.testing.expect(best.cost_bits <= n * 16);
+}
+
+test "e2e: archive via file" {
+    const alloc = std.testing.allocator;
+    var t1 = try makeFp16Tensor(alloc, 65536, 99); // 128KB ~= fixture attn_proj size
+    defer t1.deinit(alloc);
+    var t2 = try makeFp16Tensor(alloc, 4096, 100);
+    defer t2.deinit(alloc);
+    var t3 = try makeFp16Tensor(alloc, 262144, 101); // 512KB
+    defer t3.deinit(alloc);
+    const stream1: types.Stream = .{ .data = t1.data, .count = 65536, .bits_per_elem = 16 };
+    const stream2: types.Stream = .{ .data = t2.data, .count = 4096, .bits_per_elem = 16 };
+    const stream3: types.Stream = .{ .data = t3.data, .count = 262144, .bits_per_elem = 16 };
+    const phog = uniformPhog();
+    var best1 = try astar.synthesize(alloc, stream1, phog, .{ .max_pops = 8_000, .realize_top_k = 4 });
+    defer best1.deinit(alloc);
+    var best2 = try astar.synthesize(alloc, stream2, phog, .{ .max_pops = 8_000, .realize_top_k = 4 });
+    defer best2.deinit(alloc);
+    var best3 = try astar.synthesize(alloc, stream3, phog, .{ .max_pops = 8_000, .realize_top_k = 4 });
+    defer best3.deinit(alloc);
+    const jobs = [_]pnode_archive.TensorJob{
+        .{ .name = "a", .dtype = t1.dtype, .shape = t1.shape, .program = best1.program.? },
+        .{ .name = "b", .dtype = t2.dtype, .shape = t2.shape, .program = best2.program.? },
+        .{ .name = "c", .dtype = t3.dtype, .shape = t3.shape, .program = best3.program.? },
+    };
+    const bytes = try pnode_archive.buildArchiveBytes(alloc, &jobs);
+    defer alloc.free(bytes);
+
+    // Write + read back from file
+    var threaded: std.Io.Threaded = .init(alloc, .{});
+    defer threaded.deinit();
+    const io: std.Io = threaded.io();
+    const cwd = std.Io.Dir.cwd();
+    const tmp = "/tmp/brevis-e2e-archive.bin";
+    const fw = try cwd.createFile(io, tmp, .{});
+    var wb: [4096]u8 = undefined;
+    var wf = fw.writer(io, &wb);
+    try wf.interface.writeAll(bytes);
+    try wf.interface.flush();
+    fw.close(io);
+
+    const fr = try cwd.openFile(io, tmp, .{});
+    const stat = try fr.stat(io);
+    const got = try alloc.alloc(u8, @intCast(stat.size));
+    defer alloc.free(got);
+    var rb: [4096]u8 = undefined;
+    var rdr = fr.reader(io, &rb);
+    _ = try rdr.interface.readSliceAll(got);
+    fr.close(io);
+
+    try std.testing.expect(std.mem.eql(u8, bytes, got));
+    var parsed = try pnode_archive.parseArchive(alloc, got);
+    defer parsed.deinit(alloc);
+    for (parsed.tensors) |*pt| {
+        const back = try astar.decompress(alloc, pt.program);
+        defer alloc.free(back.data);
+        const orig: []const u8 = if (std.mem.eql(u8, pt.name, "a")) t1.data
+            else if (std.mem.eql(u8, pt.name, "b")) t2.data
+            else t3.data;
+        try std.testing.expect(std.mem.eql(u8, orig, back.data));
+    }
+}
+
+test "e2e: archive roundtrip with larger tensors (CLI-like)" {
+    const alloc = std.testing.allocator;
+    var t1 = try makeFp16Tensor(alloc, 4096, 99);
+    defer t1.deinit(alloc);
+    var t2 = try makeFp16Tensor(alloc, 16384, 100);
+    defer t2.deinit(alloc);
+    const stream1: types.Stream = .{ .data = t1.data, .count = 4096, .bits_per_elem = 16 };
+    const stream2: types.Stream = .{ .data = t2.data, .count = 16384, .bits_per_elem = 16 };
+    const phog = uniformPhog();
+    var best1 = try astar.synthesize(alloc, stream1, phog, .{ .max_pops = 8_000, .realize_top_k = 4 });
+    var best2 = try astar.synthesize(alloc, stream2, phog, .{ .max_pops = 8_000, .realize_top_k = 4 });
+    const jobs = [_]pnode_archive.TensorJob{
+        .{ .name = "a", .dtype = t1.dtype, .shape = t1.shape, .program = best1.program.? },
+        .{ .name = "b", .dtype = t2.dtype, .shape = t2.shape, .program = best2.program.? },
+    };
+    const bytes = try pnode_archive.buildArchiveBytes(alloc, &jobs);
+    defer alloc.free(bytes);
+    defer best1.deinit(alloc);
+    defer best2.deinit(alloc);
+    var parsed = try pnode_archive.parseArchive(alloc, bytes);
+    defer parsed.deinit(alloc);
+    for (parsed.tensors) |*pt| {
+        const stream = try astar.decompress(alloc, pt.program);
+        defer alloc.free(stream.data);
+        const orig: []const u8 = if (std.mem.eql(u8, pt.name, "a")) t1.data else t2.data;
+        try std.testing.expect(std.mem.eql(u8, orig, stream.data));
+    }
 }
 
 test "pnode_archive: 2-tensor v2 archive roundtrip bit-exact" {
@@ -323,13 +423,14 @@ test "pnode_archive: 2-tensor v2 archive roundtrip bit-exact" {
     var t2 = try makeFp16Tensor(alloc, 1024, 32);
     defer t2.deinit(alloc);
 
-    // Synthesize + realize each.
+    // Synthesize each (synthesize already realizes).
     const stream1: types.Stream = .{ .data = t1.data, .count = 256, .bits_per_elem = 16 };
     const stream2: types.Stream = .{ .data = t2.data, .count = 1024, .bits_per_elem = 16 };
-    var best1 = try astar.synthesize(alloc, stream1, .{ .max_depth = 1, .max_nodes_explored = 20_000 });
-    var best2 = try astar.synthesize(alloc, stream2, .{ .max_depth = 1, .max_nodes_explored = 20_000 });
-    try astar.realize(alloc, best1.program.?, stream1);
-    try astar.realize(alloc, best2.program.?, stream2);
+    const phog = uniformPhog();
+    var best1 = try astar.synthesize(alloc, stream1, phog, .{ .max_pops = 5_000, .realize_top_k = 3 });
+    defer best1.deinit(alloc);
+    var best2 = try astar.synthesize(alloc, stream2, phog, .{ .max_pops = 5_000, .realize_top_k = 3 });
+    defer best2.deinit(alloc);
 
     const jobs = [_]pnode_archive.TensorJob{
         .{ .name = "alpha", .dtype = t1.dtype, .shape = t1.shape, .program = best1.program.? },
@@ -337,12 +438,6 @@ test "pnode_archive: 2-tensor v2 archive roundtrip bit-exact" {
     };
     const bytes = try pnode_archive.buildArchiveBytes(alloc, &jobs);
     defer alloc.free(bytes);
-    // Don't deinit best1/best2 — their programs are now owned by the archive
-    // (via the same pointer). But we DO need to free wrapping Best struct.
-    best1.program = null;
-    best2.program = null;
-    best1.deinit(alloc);
-    best2.deinit(alloc);
 
     var parsed = try pnode_archive.parseArchive(alloc, bytes);
     defer parsed.deinit(alloc);
