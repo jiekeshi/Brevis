@@ -126,11 +126,13 @@ const SynthWorker = struct {
             const i = self.next.fetchAdd(1, .acq_rel);
             if (i >= self.tensors.len) return;
             const t = self.tensors[i];
-            // Supported dtypes: fp16/bf16 (16-bit) and u8 (8-bit).
+            // Supported dtypes: fp16/bf16/u16 (16-bit), fp32/u32 (32-bit),
+            // u8 (8-bit). The grammar is generic over the stream's bit width;
+            // the bpe-aware search decomposes each word to its fields.
             const bpe: u8 = switch (t.view.dtype) {
                 .f16, .bf16, .u16 => 16,
+                .f32, .u32 => 32,
                 .u8 => 8,
-                else => continue,
             };
             const elem_bytes: usize = @divExact(bpe, 8);
             const count = @divExact(t.view.data.len, elem_bytes);

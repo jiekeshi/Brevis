@@ -207,6 +207,11 @@ fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
 /// Build a length-limited Huffman tree (max 32 bits) from a stream.
 /// Returns the canonical table.
 pub fn huffmanBuild(alloc: Allocator, stream: Stream) !HuffmanTable {
+    // Decline alphabets wider than 16 bits: the histogram/tree would be huge
+    // (up to 2^32 symbols) and the table overhead never pays off on the
+    // near-random wide streams (e.g. a 23-bit fp32 mantissa). Declining forces
+    // the search to decompose the word via split_field first.
+    if (stream.bits_per_elem > 16) return error.AlphabetTooLargeForHuffman;
     var hist = try buildHistogram(alloc, stream);
     defer hist.deinit(alloc);
 

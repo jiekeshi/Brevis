@@ -64,6 +64,9 @@ pub fn paramChoices(op: lowlevel.OpKind, bpe: u8) []const u32 {
 
 fn splitFieldParams(bpe: u8) []const u32 {
     return switch (bpe) {
+        32 => &SPLIT_PARAMS_32,
+        31 => &SPLIT_PARAMS_31,
+        23 => &SPLIT_PARAMS_23,
         16 => &SPLIT_PARAMS_16,
         15 => &SPLIT_PARAMS_15,
         8 => &SPLIT_PARAMS_8,
@@ -77,6 +80,19 @@ fn mkSplit(start: u32, n: u32, k: u32) u32 {
 }
 
 // Note: `param.raw = start | (n_bits << 8) | (k << 16)` per lowlevel.zig.
+// The search overrides the `k` field with the hole's actual bits-per-elem at
+// expansion time, so the `k` written here is only documentation of intent.
+const SPLIT_PARAMS_32 = [_]u32{
+    mkSplit(31, 1, 32), // sign vs rest (fp32: 1/8/23)
+    mkSplit(23, 9, 32), // sign+exponent together vs mantissa
+};
+const SPLIT_PARAMS_31 = [_]u32{
+    mkSplit(23, 8, 31), // exponent (fp32) on the sign-stripped 31-bit word
+};
+const SPLIT_PARAMS_23 = [_]u32{
+    mkSplit(16, 7, 23), // top 7 mantissa bits vs low 16 (16-bit chunk → raw/rANS)
+    mkSplit(0, 14, 23), // low 14 (rANS-able) vs high 9
+};
 const SPLIT_PARAMS_16 = [_]u32{
     mkSplit(15, 1, 16), // sign vs rest (fp16/bf16)
     mkSplit(10, 5, 16), // exp (fp16)

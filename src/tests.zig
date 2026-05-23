@@ -304,6 +304,32 @@ test "astar: realize + decompress roundtrip on a fp16 sign-pattern stream" {
     try std.testing.expect(std.mem.eql(u8, buf, back.data));
 }
 
+test "astar: fp32 realize + decompress roundtrip (near-constant)" {
+    const alloc = std.testing.allocator;
+    const n: usize = 1024;
+    const buf = try alloc.alloc(u8, n * 4);
+    defer alloc.free(buf);
+    var prng: std.Random.DefaultPrng = .init(7);
+    const r = prng.random();
+    for (0..n) |i| {
+        const v: f32 = 1.0 + r.floatNorm(f32) * 0.01; // near-constant ⇒ skewed exponent
+        const u: u32 = @bitCast(v);
+        std.mem.writeInt(u32, buf[i * 4 ..][0..4], u, .little);
+    }
+    const s: types.Stream = .{ .data = buf, .count = n, .bits_per_elem = 32 };
+    const phog = uniformPhog();
+    var best = try astar.synthesize(alloc, s, phog, .{ .max_pops = 20_000, .realize_top_k = 6 });
+    defer best.deinit(alloc);
+    try std.testing.expect(best.program != null);
+    // The bpe-aware search must reconstruct 32-bit words bit-exactly.
+    const back = try astar.decompress(alloc, best.program.?);
+    defer alloc.free(back.data);
+    try std.testing.expectEqual(n, back.count);
+    try std.testing.expect(std.mem.eql(u8, buf, back.data));
+    // Near-constant fp32 has a skewed exponent ⇒ must beat raw (32 bits/elem).
+    try std.testing.expect(best.cost_bits < n * 32);
+}
+
 test "astar: synthesize a fp16 sign stream finds something better than raw" {
     const alloc = std.testing.allocator;
     const n: usize = 1024;

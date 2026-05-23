@@ -35,6 +35,7 @@ pub const SFormNode = union(enum) {
     hole: struct {
         ctx_parent_op: i16, // -1 if root, otherwise OpKind value
         ctx_slot: u8,
+        bpe: u8, // bits-per-elem of the stream that will fill this hole
     },
     op: struct {
         kind: lowlevel.OpKind,
@@ -126,9 +127,9 @@ const StateCmp = struct {
 };
 
 pub fn synthesize(alloc: Allocator, input: Stream, phog: PHOG, opts: Opts) !Best {
-    // Initial state: one hole with root context.
+    // Initial state: one hole with root context, at the input stream's width.
     var nodes0 = try alloc.alloc(SFormNode, 1);
-    nodes0[0] = .{ .hole = .{ .ctx_parent_op = -1, .ctx_slot = 0 } };
+    nodes0[0] = .{ .hole = .{ .ctx_parent_op = -1, .ctx_slot = 0, .bpe = input.bits_per_elem } };
     const init_state: State = .{
         .nodes = nodes0,
         .n_holes = 1,
@@ -206,9 +207,10 @@ pub fn synthesize(alloc: Allocator, input: Stream, phog: PHOG, opts: Opts) !Best
             .slot = hole.ctx_slot,
         };
 
+        const hole_bpe = hole.bpe;
         for (grammar.ALL_OPS) |op| {
-            // Skip ops the search shouldn't enumerate (no concrete params to try).
-            const params = grammar.paramChoices(op, 16); // bpe param-dependent only for prune; using 16 here is conservative
+            // Enumerate parameter values valid for this hole's bit width.
+            const params = grammar.paramChoices(op, hole_bpe);
             if (params.len == 0) continue;
             const edge_cost = phog.negLogProb(ctx, op);
 
@@ -216,6 +218,18 @@ pub fn synthesize(alloc: Allocator, input: Stream, phog: PHOG, opts: Opts) !Best
                 // Build new state by cloning, then replace the hole with the op.
                 const a = grammar.arity(op);
                 const new_n_holes: u32 = @intCast(@as(i32, @intCast(s.n_holes)) - 1 + @as(i32, a));
+
+                // For split_field, force the stored `k` to this hole's bpe so
+                // that fwd (which uses the live stream width) and inv (which
+                // uses the stored `k`) agree → bit-exact at any width. Child
+                // widths follow from the split: hi = n_bits, lo = bpe − n_bits.
+                const n_bits: u8 = @intCast((pv >> 8) & 0xFF);
+                const params_raw: u32 = if (op == .split_field)
+                    (pv & 0xFFFF) | (@as(u32, hole_bpe) << 16)
+                else
+                    pv;
+                const hi_bpe: u8 = if (op == .split_field) n_bits else hole_bpe;
+                const lo_bpe: u8 = if (op == .split_field) hole_bpe - n_bits else 0;
 
                 // Allocate child node slots if needed.
                 const new_node_count = s.nodes.len + @as(usize, a);
@@ -229,6 +243,7 @@ pub fn synthesize(alloc: Allocator, input: Stream, phog: PHOG, opts: Opts) !Best
                     new_nodes[s.nodes.len] = .{ .hole = .{
                         .ctx_parent_op = @intCast(@intFromEnum(op)),
                         .ctx_slot = 0,
+                        .bpe = hi_bpe,
                     } };
                 }
                 if (a == 2) {
@@ -236,12 +251,13 @@ pub fn synthesize(alloc: Allocator, input: Stream, phog: PHOG, opts: Opts) !Best
                     new_nodes[s.nodes.len + 1] = .{ .hole = .{
                         .ctx_parent_op = @intCast(@intFromEnum(op)),
                         .ctx_slot = 1,
+                        .bpe = lo_bpe,
                     } };
                 }
 
                 new_nodes[h_idx] = .{ .op = .{
                     .kind = op,
-                    .params_raw = pv,
+                    .params_raw = params_raw,
                     .child_hi = child_hi,
                     .child_lo = child_lo,
                 } };
@@ -286,7 +302,8 @@ fn hashSForm(nodes: []const SFormNode) u64 {
             buf[0] = 0;
             std.mem.writeInt(i16, buf[1..3], hh.ctx_parent_op, .little);
             buf[3] = hh.ctx_slot;
-            h.update(buf[0..4]);
+            buf[4] = hh.bpe;
+            h.update(buf[0..5]);
         },
         .op => |o| {
             buf[0] = 1;
