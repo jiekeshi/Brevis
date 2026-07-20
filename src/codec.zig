@@ -93,6 +93,10 @@ pub const HuffmanTable = struct {
         alloc.free(self.entries);
         self.entries = &.{};
     }
+
+    pub fn clone(self: HuffmanTable, alloc: Allocator) !HuffmanTable {
+        return .{ .entries = try alloc.dupe(Entry, self.entries) };
+    }
 };
 
 /// Histogram a stream into (sym, count) pairs. For 8/16-bit storage the
@@ -100,7 +104,7 @@ pub const HuffmanTable = struct {
 /// dependency between iterations (a 2-4× speed-up on a single core, no
 /// SIMD needed — modern OoO engines pipeline the independent increments).
 /// For wider alphabets, falls back to a HashMap.
-const Histogram = struct {
+pub const Histogram = struct {
     /// (sym, count) pairs, ascending sym; only present symbols are listed.
     pairs: []Pair,
     pub const Pair = struct { sym: u32, count: u64 };
@@ -111,8 +115,38 @@ const Histogram = struct {
     }
 };
 
-fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
+/// Below this length a dense alphabet-sized histogram costs far more to zero
+/// than the stream costs to sort. The search evaluates many short streams, so
+/// this path dominates in practice.
+const SMALL_STREAM: usize = 8192;
+
+fn histogramBySort(alloc: Allocator, stream: Stream) !Histogram {
+    const tmp = try alloc.alloc(u32, stream.count);
+    defer alloc.free(tmp);
+    for (0..stream.count) |i| tmp[i] = stream.getU32(i);
+    std.mem.sort(u32, tmp, {}, std.sort.asc(u32));
+
+    var unique: usize = 0;
+    for (tmp, 0..) |v, i| {
+        if (i == 0 or v != tmp[i - 1]) unique += 1;
+    }
+
+    const pairs = try alloc.alloc(Histogram.Pair, unique);
+    var j: usize = 0;
+    var i: usize = 0;
+    while (i < tmp.len) {
+        var run: u64 = 1;
+        while (i + run < tmp.len and tmp[i + run] == tmp[i]) run += 1;
+        pairs[j] = .{ .sym = tmp[i], .count = run };
+        j += 1;
+        i += run;
+    }
+    return .{ .pairs = pairs };
+}
+
+pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
     const bpe_pow2 = types.roundUpToPow2(stream.bits_per_elem);
+    if (bpe_pow2 != 8 and stream.count < SMALL_STREAM) return histogramBySort(alloc, stream);
     if (bpe_pow2 == 8) {
         var c0: [256]u32 = .{0} ** 256;
         var c1: [256]u32 = .{0} ** 256;
@@ -209,6 +243,12 @@ fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
 pub fn huffmanBuild(alloc: Allocator, stream: Stream) !HuffmanTable {
     var hist = try buildHistogram(alloc, stream);
     defer hist.deinit(alloc);
+    return huffmanFromHist(alloc, hist, stream.bits_per_elem);
+}
+
+/// Code lengths from a histogram alone. No data pass.
+pub fn huffmanFromHist(alloc: Allocator, hist: Histogram, bits_per_elem: u8) !HuffmanTable {
+    _ = bits_per_elem;
 
     if (hist.pairs.len == 0) {
         return .{ .entries = try alloc.alloc(HuffmanTable.Entry, 0) };
@@ -432,36 +472,49 @@ pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable,
     return s;
 }
 
-/// Cost estimate (bits) for Huffman-coding a stream — Shannon entropy plus
-/// table overhead. Admissible-ish lower bound for the search heuristic.
-pub fn huffmanCostBits(stream: Stream) u64 {
-    if (stream.count == 0) return 0;
-    var counts: [65536]u32 = undefined;
-    @memset(&counts, 0);
-    var n: u32 = 0;
+// ==================== Bit packing ====================
+//
+// Each element is written as exactly `width` bits, MSB-first. No table.
 
-    if (stream.bits_per_elem <= 16) {
-        for (0..stream.count) |i| {
-            const sym = stream.getU32(i) & 0xFFFF;
-            counts[sym] += 1;
-            n += 1;
-        }
-        var H: f64 = 0.0;
-        const fn_total: f64 = @floatFromInt(n);
-        var unique: u32 = 0;
-        for (counts) |c| {
-            if (c == 0) continue;
-            unique += 1;
-            const p: f64 = @as(f64, @floatFromInt(c)) / fn_total;
-            H += -p * std.math.log2(p);
-        }
-        const data_bits: u64 = @intFromFloat(@ceil(H * fn_total));
-        const table_overhead: u64 = @as(u64, unique) * 24; // ~3 bytes per entry
-        return data_bits + table_overhead;
+pub fn bitpackEncode(alloc: Allocator, stream: Stream, width: u8) ![]u8 {
+    std.debug.assert(width > 0 and width <= 32);
+
+    var out: std.ArrayList(u8) = .empty;
+    try out.ensureTotalCapacity(alloc, (stream.count * width + 7) / 8);
+    defer out.deinit(alloc);
+    var bw = BitWriter.init(alloc, &out);
+
+    const m: u64 = (@as(u64, 1) << @intCast(width)) - 1;
+    for (0..stream.count) |i| {
+        try bw.writeBits(@as(u64, stream.getU32(i)) & m, width);
     }
-    // Fallback: just bound by raw size — entropy of u32 alphabet is too
-    // expensive to compute in the heuristic.
-    return @as(u64, stream.count) * @as(u64, stream.bits_per_elem);
+    try bw.flush();
+
+    return out.toOwnedSlice(alloc);
+}
+
+pub fn bitpackDecode(alloc: Allocator, payload: []const u8, width: u8, count: usize, out_bpe: u8) !Stream {
+    std.debug.assert(width > 0 and width <= 32);
+
+    var s = try Stream.init(alloc, count, out_bpe);
+    errdefer s.deinit(alloc);
+    if (count == 0) return s;
+
+    if (payload.len * 8 < count * @as(usize, width)) return error.CorruptBitpackStream;
+
+    var br = BitReader.init(payload);
+    for (0..count) |i| {
+        var v: u32 = 0;
+        var b: u8 = 0;
+        while (b < width) : (b += 1) v = (v << 1) | br.readBit();
+        s.setU32(i, v);
+    }
+    return s;
+}
+
+pub fn bitpackCostBits(stream: Stream, width: u8) u64 {
+    const bits = @as(u64, stream.count) * @as(u64, width);
+    return ((bits + 7) / 8) * 8;
 }
 
 // ==================== rANS ====================
@@ -482,33 +535,29 @@ pub const RansSymbol = struct {
 pub const RansTable = struct {
     symbols: []u32, // present symbol values, sorted ascending
     info: []RansSymbol, // 1:1 with `symbols`
-    // For decode: cum -> symbol_index lookup of length RANS_PROB_SCALE.
-    cum2sym: ?[]u16 = null,
 
     pub fn deinit(self: *RansTable, alloc: Allocator) void {
         alloc.free(self.symbols);
         alloc.free(self.info);
-        if (self.cum2sym) |cs| alloc.free(cs);
         self.symbols = &.{};
         self.info = &.{};
-        self.cum2sym = null;
     }
 
-    pub fn buildCum2Sym(self: *RansTable, alloc: Allocator) !void {
-        const cs = try alloc.alloc(u16, RANS_PROB_SCALE);
-        for (self.info, 0..) |info, i| {
-            const end = info.cum + info.freq;
-            var c = info.cum;
-            while (c < end) : (c += 1) cs[c] = @intCast(i);
-        }
-        self.cum2sym = cs;
+    pub fn clone(self: RansTable, alloc: Allocator) !RansTable {
+        const syms = try alloc.dupe(u32, self.symbols);
+        errdefer alloc.free(syms);
+        return .{ .symbols = syms, .info = try alloc.dupe(RansSymbol, self.info) };
     }
 };
 
 pub fn ransBuild(alloc: Allocator, stream: Stream) !RansTable {
     var hist = try buildHistogram(alloc, stream);
     defer hist.deinit(alloc);
+    return ransFromHist(alloc, hist, stream.count);
+}
 
+/// Quantized frequency table from a histogram alone. No data pass.
+pub fn ransFromHist(alloc: Allocator, hist: Histogram, count: usize) !RansTable {
     if (hist.pairs.len == 0) {
         return .{
             .symbols = try alloc.alloc(u32, 0),
@@ -516,13 +565,17 @@ pub fn ransBuild(alloc: Allocator, stream: Stream) !RansTable {
         };
     }
 
+    // Every observed symbol needs at least one slot, so an alphabet wider than
+    // the probability scale cannot be represented at all.
+    if (hist.pairs.len > RANS_PROB_SCALE) return error.AlphabetTooLarge;
+
     // Pairs are already sorted by symbol ascending.
     const n = hist.pairs.len;
     const syms = try alloc.alloc(u32, n);
     for (hist.pairs, 0..) |p, k| syms[k] = p.sym;
 
     // Quantize frequencies to RANS_PROB_SCALE.
-    const raw_total: f64 = @floatFromInt(stream.count);
+    const raw_total: f64 = @floatFromInt(count);
     const info = try alloc.alloc(RansSymbol, n);
     var quantized_total: u32 = 0;
     for (hist.pairs, 0..) |p, ii| {
@@ -532,17 +585,41 @@ pub fn ransBuild(alloc: Allocator, stream: Stream) !RansTable {
         info[ii] = .{ .freq = q, .cum = 0 };
         quantized_total += q;
     }
-    // Adjust the largest frequency to make the total exactly RANS_PROB_SCALE.
-    var max_idx: usize = 0;
-    for (info, 0..) |x, ii| if (x.freq > info[max_idx].freq) {
-        max_idx = ii;
-    };
+    // Make the total exactly RANS_PROB_SCALE. Surplus must be spread across
+    // symbols proportionally to their slack above 1: dumping it all on the
+    // largest symbol underflows whenever the distribution is flat (e.g. 10k
+    // equiprobable symbols all quantize to 2, leaving a surplus far larger
+    // than any single frequency).
     if (quantized_total > RANS_PROB_SCALE) {
-        const over = quantized_total - RANS_PROB_SCALE;
-        info[max_idx].freq -= over;
+        var over: u32 = quantized_total - RANS_PROB_SCALE;
+        var slack: u64 = 0;
+        for (info) |x| slack += x.freq - 1;
+        std.debug.assert(slack >= over); // holds because n <= RANS_PROB_SCALE
+        const target = over;
+        for (info) |*ip| {
+            if (over == 0) break;
+            const s = ip.freq - 1;
+            if (s == 0) continue;
+            const share: u32 = @intCast((@as(u64, s) * target) / slack);
+            const cut = @min(over, @min(share, s));
+            ip.freq -= cut;
+            over -= cut;
+        }
+        while (over > 0) {
+            for (info) |*ip| {
+                if (over == 0) break;
+                if (ip.freq > 1) {
+                    ip.freq -= 1;
+                    over -= 1;
+                }
+            }
+        }
     } else if (quantized_total < RANS_PROB_SCALE) {
-        const under = RANS_PROB_SCALE - quantized_total;
-        info[max_idx].freq += under;
+        var max_idx: usize = 0;
+        for (info, 0..) |x, ii| if (x.freq > info[max_idx].freq) {
+            max_idx = ii;
+        };
+        info[max_idx].freq += RANS_PROB_SCALE - quantized_total;
     }
 
     // Cumulative.
@@ -658,28 +735,53 @@ pub fn ransDecode(alloc: Allocator, payload: []const u8, table: RansTable, count
     return s;
 }
 
-/// Optimistic lower bound for rANS cost — Shannon entropy * count.
-pub fn ransCostBits(stream: Stream) u64 {
-    if (stream.count == 0) return 0;
-    if (stream.bits_per_elem > 16) {
-        return @as(u64, stream.count) * @as(u64, stream.bits_per_elem);
+// ==================== closed-form terminal costs ====================
+//
+// The searcher prices candidates without encoding. For Huffman the payload
+// size is EXACT: a prefix code writes sum(len[s]*count[s]) bits and flushes,
+// so this is byte-identical to what huffmanEncode would emit. For rANS the
+// quantized table gives a strict lower bound (the coder cannot beat the
+// probabilities it was built from), which is what the branch-and-bound needs.
+
+/// Exact payload bytes huffmanEncode would produce for this histogram.
+pub fn huffmanPayloadBytes(table: HuffmanTable, hist: Histogram) u64 {
+    // entries are canonical order (len, sym); hist.pairs is sym-ascending.
+    var bits: u64 = 0;
+    for (table.entries) |e| {
+        var lo: usize = 0;
+        var hi: usize = hist.pairs.len;
+        while (lo < hi) {
+            const mid = lo + (hi - lo) / 2;
+            if (hist.pairs[mid].sym < e.sym) lo = mid + 1 else hi = mid;
+        }
+        if (lo < hist.pairs.len and hist.pairs[lo].sym == e.sym) {
+            bits += @as(u64, e.len) * hist.pairs[lo].count;
+        }
     }
-    var counts: [65536]u32 = undefined;
-    @memset(&counts, 0);
-    for (0..stream.count) |i| {
-        counts[stream.getU32(i) & 0xFFFF] += 1;
+    return (bits + 7) / 8;
+}
+
+/// Strict lower bound on ransEncode's payload: sum count[s]*log2(SCALE/freq[s]).
+/// The trailing 4 state bytes are deliberately omitted to keep it a bound.
+pub fn ransLowerBytes(table: RansTable, hist: Histogram) u64 {
+    var bits: f64 = 0;
+    for (hist.pairs, 0..) |p, k| {
+        const f = table.info[k].freq;
+        if (f == 0) continue;
+        const q = @as(f64, @floatFromInt(f)) / @as(f64, @floatFromInt(RANS_PROB_SCALE));
+        bits += @as(f64, @floatFromInt(p.count)) * -std.math.log2(q);
     }
-    var H: f64 = 0.0;
-    const total_f: f64 = @floatFromInt(stream.count);
-    var unique: u32 = 0;
-    for (counts) |c| {
-        if (c == 0) continue;
-        unique += 1;
-        const p: f64 = @as(f64, @floatFromInt(c)) / total_f;
-        H += -p * std.math.log2(p);
+    return @intFromFloat(@floor(bits / 8.0));
+}
+
+/// Zeroth-order entropy in bits, from a histogram. O(alphabet), no data pass.
+pub fn entropyBits(hist: Histogram, count: usize) u64 {
+    if (count == 0) return 0;
+    const total: f64 = @floatFromInt(count);
+    var h: f64 = 0;
+    for (hist.pairs) |p| {
+        const q = @as(f64, @floatFromInt(p.count)) / total;
+        h -= q * std.math.log2(q);
     }
-    const data_bits: u64 = @intFromFloat(@ceil(H * total_f));
-    // Smaller table overhead than Huffman because we transmit just freqs.
-    const table_overhead: u64 = @as(u64, unique) * 18;
-    return data_bits + table_overhead;
+    return @intFromFloat(@floor(h * total));
 }

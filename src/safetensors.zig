@@ -8,7 +8,7 @@
 //! Header schema (relevant subset):
 //!   {
 //!     "tensor_name": {
-//!       "dtype": "F16" | "BF16" | "F32" | "U8" | "U16" | "U32",
+//!       "dtype": "F16" | "BF16" | "F32" | "U8" | "U16" | "U32" | "I8" | "I16" | "I32",
 //!       "shape": [d1, d2, ...],
 //!       "data_offsets": [start, end]
 //!     },
@@ -26,6 +26,10 @@ pub const Tensor = struct {
     name: []const u8, // borrowed from input bytes; copy if you need ownership
     view: TensorView, // .data borrows from input; not owned
 };
+
+fn beforeData(_: void, a: Tensor, b: Tensor) bool {
+    return @intFromPtr(a.view.data.ptr) < @intFromPtr(b.view.data.ptr);
+}
 
 pub const Loaded = struct {
     /// The full file bytes. May be either an allocator-owned buffer (the
@@ -122,6 +126,7 @@ pub fn loadFromBytes(alloc: Allocator, bytes: []u8) !Loaded {
         });
     }
 
+    std.mem.sort(Tensor, tensor_list.items, {}, beforeData);
     return .{ .bytes = bytes, .tensors = try tensor_list.toOwnedSlice(alloc) };
 }
 
@@ -170,36 +175,56 @@ pub const TensorOut = struct {
     view: TensorView,
 };
 
+pub const TensorMeta = struct {
+    name: []const u8,
+    dtype: Dtype,
+    shape: []const u64,
+    byte_len: usize,
+};
+
+pub fn buildHeader(alloc: Allocator, tensors: []const TensorMeta) ![]u8 {
+    var offset: u64 = 0;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+
+    try out.append(alloc, '{');
+    for (tensors, 0..) |tensor, i| {
+        if (i > 0) try out.append(alloc, ',');
+        try out.append(alloc, '"');
+        try out.appendSlice(alloc, tensor.name);
+        try out.appendSlice(alloc, "\":{\"dtype\":\"");
+        try out.appendSlice(alloc, tensor.dtype.name());
+        try out.appendSlice(alloc, "\",\"shape\":[");
+        for (tensor.shape, 0..) |dim, k| {
+            if (k > 0) try out.append(alloc, ',');
+            const value = try std.fmt.allocPrint(alloc, "{d}", .{dim});
+            defer alloc.free(value);
+            try out.appendSlice(alloc, value);
+        }
+        try out.appendSlice(alloc, "],\"data_offsets\":[");
+        const offsets = try std.fmt.allocPrint(alloc, "{d},{d}", .{ offset, offset + tensor.byte_len });
+        defer alloc.free(offsets);
+        try out.appendSlice(alloc, offsets);
+        try out.appendSlice(alloc, "]}");
+        offset += tensor.byte_len;
+    }
+    try out.append(alloc, '}');
+    return out.toOwnedSlice(alloc);
+}
+
 /// Write tensors to a safetensors file at `path`. Tensor data is written in
 /// the order given.
 pub fn saveToPath(alloc: Allocator, io: std.Io, path: []const u8, tensors: []const TensorOut) !void {
-    // Build the JSON header. We compute offsets by walking once first.
-    var offset: u64 = 0;
-    var header_buf: std.ArrayList(u8) = .empty;
-    defer header_buf.deinit(alloc);
-
-    try header_buf.append(alloc, '{');
-    for (tensors, 0..) |t, i| {
-        if (i > 0) try header_buf.append(alloc, ',');
-        try header_buf.append(alloc, '"');
-        try header_buf.appendSlice(alloc, t.name);
-        try header_buf.appendSlice(alloc, "\":{\"dtype\":\"");
-        try header_buf.appendSlice(alloc, t.view.dtype.name());
-        try header_buf.appendSlice(alloc, "\",\"shape\":[");
-        for (t.view.shape, 0..) |d, k| {
-            if (k > 0) try header_buf.append(alloc, ',');
-            const s = try std.fmt.allocPrint(alloc, "{d}", .{d});
-            defer alloc.free(s);
-            try header_buf.appendSlice(alloc, s);
-        }
-        try header_buf.appendSlice(alloc, "],\"data_offsets\":[");
-        const off_s = try std.fmt.allocPrint(alloc, "{d},{d}", .{ offset, offset + t.view.data.len });
-        defer alloc.free(off_s);
-        try header_buf.appendSlice(alloc, off_s);
-        try header_buf.appendSlice(alloc, "]}");
-        offset += t.view.data.len;
-    }
-    try header_buf.append(alloc, '}');
+    const metas = try alloc.alloc(TensorMeta, tensors.len);
+    defer alloc.free(metas);
+    for (tensors, metas) |tensor, *meta| meta.* = .{
+        .name = tensor.name,
+        .dtype = tensor.view.dtype,
+        .shape = tensor.view.shape,
+        .byte_len = tensor.view.data.len,
+    };
+    const header = try buildHeader(alloc, metas);
+    defer alloc.free(header);
 
     const cwd = std.Io.Dir.cwd();
     const f = try cwd.createFile(io, path, .{});
@@ -208,9 +233,9 @@ pub fn saveToPath(alloc: Allocator, io: std.Io, path: []const u8, tensors: []con
     var wf = f.writer(io, &wb);
 
     var len_buf: [8]u8 = undefined;
-    std.mem.writeInt(u64, &len_buf, header_buf.items.len, .little);
+    std.mem.writeInt(u64, &len_buf, header.len, .little);
     try wf.interface.writeAll(&len_buf);
-    try wf.interface.writeAll(header_buf.items);
+    try wf.interface.writeAll(header);
     for (tensors) |t| try wf.interface.writeAll(t.view.data);
     try wf.interface.flush();
 }

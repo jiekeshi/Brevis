@@ -1,516 +1,463 @@
-//! Brevis archive container (.brv) — bundles many compressed tensors with
-//! cross-tensor codebook sharing.
-//!
-//! File layout (little-endian throughout):
-//!
-//!   [4]    MAGIC = "BRV\x01"
-//!   [2]    VERSION (u16)
-//!   [2]    FLAGS (u16) — reserved
-//!   [4]    N_TABLES (u32)
-//!   per table:
-//!     [1]  KIND (0 = huffman, 1 = rans)
-//!     [4]  N_ENTRIES (u32)
-//!     huffman: each entry = u32 sym + u8 len  (5 bytes)
-//!     rans:    each entry = u32 sym + u32 freq (8 bytes)
-//!   [4]    N_TENSORS (u32)
-//!   per tensor:
-//!     [2]  NAME_LEN (u16)
-//!     [N]  NAME (utf-8)
-//!     [2]  BASE_NAME_LEN (u16) — 0 if no base referenced
-//!     [N]  BASE_NAME (utf-8)
-//!     [4]  PROGRAM_LEN (u32)
-//!     [N]  PROGRAM_BYTES (uses table-id refs instead of inline tables)
-//!     [8]  PAYLOAD_LEN (u64)
-//!     [N]  PAYLOAD_BYTES
-//!
-//! Codebook sharing:
-//! Every huffman/rans table in any tensor's program is interned in the file's
-//! shared table list, identified by content fingerprint. Programs reference
-//! tables by index; identical tables across tensors are stored once.
+//! Streamable .brv container: payloads first, a compact dictionary/index footer
+//! last. Program bytecode and entropy tables are content-addressed.
 
 const std = @import("std");
 const types = @import("types.zig");
 const codec = @import("codec.zig");
-const program = @import("program.zig");
 const ops = @import("ops.zig");
+const program = @import("program.zig");
 
-const Allocator = types.Allocator;
+const Allocator = std.mem.Allocator;
+const Dtype = types.Dtype;
+const Node = program.Node;
 
-pub const MAGIC: [4]u8 = .{ 'B', 'R', 'V', 1 };
-pub const VERSION: u16 = 1;
+pub const HEADER: [8]u8 = .{ 'B', 'R', 'V', 3, 4, 0, 0, 0 };
+const FOOTER_MAGIC: [4]u8 = .{ 'B', 'R', 'V', 'F' };
 
 pub const TableKind = enum(u8) { huffman = 0, rans = 1 };
 
-pub const SharedTable = union(TableKind) {
-    huffman: codec.HuffmanTable,
-    rans: codec.RansTable,
+pub const BlockJob = struct { node: *Node, payload: []const u8 };
+pub const TensorMeta = struct { name: []const u8, dtype: Dtype, shape: []const u64, n_blocks: u32 };
 
-    pub fn deinit(self: *SharedTable, alloc: Allocator) void {
-        switch (self.*) {
-            .huffman => |*h| h.deinit(alloc),
-            .rans => |*r| r.deinit(alloc),
+// ==================== build ====================
+
+const Interner = struct {
+    ids: std.AutoHashMapUnmanaged(u64, u32) = .empty,
+    items: std.ArrayList([]u8) = .empty,
+
+    fn deinit(self: *Interner, alloc: Allocator) void {
+        self.ids.deinit(alloc);
+        for (self.items.items) |b| alloc.free(b);
+        self.items.deinit(alloc);
+    }
+
+    fn intern(self: *Interner, alloc: Allocator, bytes: []const u8) !u32 {
+        const gop = try self.ids.getOrPut(alloc, std.hash.XxHash64.hash(0, bytes));
+        if (gop.found_existing and std.mem.eql(u8, self.items.items[gop.value_ptr.*], bytes)) {
+            return gop.value_ptr.*;
         }
-    }
-};
-
-pub const TensorEntry = struct {
-    name: []const u8, // owned
-    base_name: []const u8, // owned, may be empty
-    program_bytes: []u8, // owned
-    payload_bytes: []u8, // owned
-
-    pub fn deinit(self: *TensorEntry, alloc: Allocator) void {
-        alloc.free(self.name);
-        alloc.free(self.base_name);
-        alloc.free(self.program_bytes);
-        alloc.free(self.payload_bytes);
-    }
-};
-
-pub const Archive = struct {
-    tables: []SharedTable, // owned
-    tensors: []TensorEntry, // owned
-
-    pub fn deinit(self: *Archive, alloc: Allocator) void {
-        for (self.tables) |*t| t.deinit(alloc);
-        alloc.free(self.tables);
-        for (self.tensors) |*t| t.deinit(alloc);
-        alloc.free(self.tensors);
-    }
-};
-
-// ---------- Hashing tables for dedup ----------
-
-fn fingerprintHuffman(t: codec.HuffmanTable) u64 {
-    var h: std.hash.XxHash64 = .init(0xBEEF0001);
-    var n_bytes: [4]u8 = undefined;
-    std.mem.writeInt(u32, &n_bytes, @intCast(t.entries.len), .little);
-    h.update(&n_bytes);
-    for (t.entries) |e| {
-        var sb: [4]u8 = undefined;
-        std.mem.writeInt(u32, &sb, e.sym, .little);
-        h.update(&sb);
-        h.update(&[_]u8{e.len});
-    }
-    return h.final();
-}
-
-fn fingerprintRans(t: codec.RansTable) u64 {
-    var h: std.hash.XxHash64 = .init(0xBEEF0002);
-    var n_bytes: [4]u8 = undefined;
-    std.mem.writeInt(u32, &n_bytes, @intCast(t.symbols.len), .little);
-    h.update(&n_bytes);
-    for (t.symbols, t.info) |s, info| {
-        var sb: [4]u8 = undefined;
-        std.mem.writeInt(u32, &sb, s, .little);
-        h.update(&sb);
-        std.mem.writeInt(u32, &sb, info.freq, .little);
-        h.update(&sb);
-    }
-    return h.final();
-}
-
-// ---------- Build dedup map by walking all programs ----------
-
-const TableMap = struct {
-    by_fp: std.AutoHashMap(u64, u32), // fingerprint → table index
-    tables: std.ArrayList(SharedTable),
-
-    fn init(alloc: Allocator) TableMap {
-        return .{
-            .by_fp = .init(alloc),
-            .tables = .empty,
-        };
-    }
-    fn deinit(self: *TableMap, alloc: Allocator) void {
-        self.by_fp.deinit();
-        // tables are transferred out via toOwnedSlice; if not, free them
-        for (self.tables.items) |*t| t.deinit(alloc);
-        self.tables.deinit(alloc);
-    }
-
-    fn internHuffman(self: *TableMap, alloc: Allocator, t: codec.HuffmanTable) !u32 {
-        const fp = fingerprintHuffman(t);
-        if (self.by_fp.get(fp)) |id| return id;
-        // Clone the table and insert.
-        const cloned_entries = try alloc.alloc(codec.HuffmanTable.Entry, t.entries.len);
-        @memcpy(cloned_entries, t.entries);
-        const id: u32 = @intCast(self.tables.items.len);
-        try self.tables.append(alloc, .{ .huffman = .{ .entries = cloned_entries } });
-        try self.by_fp.put(fp, id);
-        return id;
-    }
-
-    fn internRans(self: *TableMap, alloc: Allocator, t: codec.RansTable) !u32 {
-        const fp = fingerprintRans(t);
-        if (self.by_fp.get(fp)) |id| return id;
-        const cloned_syms = try alloc.alloc(u32, t.symbols.len);
-        @memcpy(cloned_syms, t.symbols);
-        const cloned_info = try alloc.alloc(codec.RansSymbol, t.info.len);
-        @memcpy(cloned_info, t.info);
-        const id: u32 = @intCast(self.tables.items.len);
-        try self.tables.append(alloc, .{ .rans = .{ .symbols = cloned_syms, .info = cloned_info } });
-        try self.by_fp.put(fp, id);
+        const id: u32 = @intCast(self.items.items.len);
+        try self.items.append(alloc, try alloc.dupe(u8, bytes));
+        if (!gop.found_existing) gop.value_ptr.* = id;
         return id;
     }
 };
 
-fn collectTables(alloc: Allocator, node: *const program.Node, map: *TableMap, ids: *std.ArrayList(u32)) !void {
-    switch (node.side_info) {
-        .huffman => |h| {
-            const id = try map.internHuffman(alloc, h.table);
-            try ids.append(alloc, id);
-        },
-        .rans => |r| {
-            const id = try map.internRans(alloc, r.table);
-            try ids.append(alloc, id);
-        },
+fn collectTableSides(alloc: Allocator, node: *Node, out: *std.ArrayList(*ops.SideInfo)) Allocator.Error!void {
+    switch (node.side) {
+        .huffman, .rans => try out.append(alloc, &node.side),
         else => {},
     }
-    for (node.children) |*c| try collectTables(alloc, c, map, ids);
+    for (node.children) |*c| try collectTableSides(alloc, c, out);
 }
 
-// ---------- Program serialization with shared table refs ----------
-//
-// Mirrors program.zig's serializeProgram but writes a u32 table id for
-// huffman/rans nodes instead of the inline entries. The id is consumed in
-// pre-order from the `ids` slice (parallel to collectTables).
-
-fn writeProgramShared(alloc: Allocator, out: *std.ArrayList(u8), node: *const program.Node, ids: []const u32, ids_pos: *usize) !void {
-    try out.append(alloc, @intFromEnum(node.op));
-    var buf4: [4]u8 = undefined;
-    std.mem.writeInt(u32, &buf4, node.base_id, .little);
-    try out.appendSlice(alloc, &buf4);
-    try writeSideInfoShared(alloc, out, node, ids, ids_pos);
-    try out.append(alloc, @intCast(node.children.len));
-    for (node.children) |*c| try writeProgramShared(alloc, out, c, ids, ids_pos);
-}
-
-fn writeSideInfoShared(alloc: Allocator, out: *std.ArrayList(u8), node: *const program.Node, ids: []const u32, ids_pos: *usize) !void {
-    switch (node.side_info) {
-        .none => {},
-        .split_float => |i| {
-            try out.append(alloc, @intFromEnum(i.dtype));
-            try out.append(alloc, i.exp_bits);
-            try out.append(alloc, i.mant_bits);
-            try out.append(alloc, i.ndim);
-            for (0..i.ndim) |k| try writeU64(alloc, out, i.shape[k]);
+fn encodeTable(alloc: Allocator, out: *std.ArrayList(u8), side: ops.SideInfo) !void {
+    switch (side) {
+        .huffman => |h| {
+            try out.append(alloc, @intFromEnum(TableKind.huffman));
+            try w32(alloc, out, @intCast(h.table.entries.len));
+            for (h.table.entries) |e| {
+                try w32(alloc, out, e.sym);
+                try out.append(alloc, e.len);
+            }
         },
-        .bitplane_split => |i| {
-            try out.append(alloc, i.n_planes);
-            try writeU64(alloc, out, i.count);
+        .rans => |r| {
+            try out.append(alloc, @intFromEnum(TableKind.rans));
+            try w32(alloc, out, @intCast(r.table.symbols.len));
+            for (r.table.symbols, r.table.info) |s, inf| {
+                try w32(alloc, out, s);
+                try w32(alloc, out, inf.freq);
+            }
         },
-        .delta_encode => |i| {
-            try writeU32(alloc, out, i.first);
-            try writeU64(alloc, out, i.count);
-            try out.append(alloc, i.bits_per_elem);
-        },
-        .huffman => |i| {
-            try writeU64(alloc, out, i.count);
-            try out.append(alloc, i.bits_per_elem);
-            const id = ids[ids_pos.*];
-            ids_pos.* += 1;
-            try writeU32(alloc, out, id);
-        },
-        .rans => |i| {
-            try writeU64(alloc, out, i.count);
-            try out.append(alloc, i.bits_per_elem);
-            const id = ids[ids_pos.*];
-            ids_pos.* += 1;
-            try writeU32(alloc, out, id);
-        },
-        .raw => |i| {
-            try writeU64(alloc, out, i.count);
-            try out.append(alloc, i.bits_per_elem);
-        },
-        .tensor_raw => |i| {
-            try out.append(alloc, @intFromEnum(i.dtype));
-            try out.append(alloc, i.ndim);
-            for (0..i.ndim) |k| try writeU64(alloc, out, i.shape[k]);
-        },
-        .tensor_xor => |i| {
-            try out.append(alloc, @intFromEnum(i.dtype));
-            try out.append(alloc, i.ndim);
-            for (0..i.ndim) |k| try writeU64(alloc, out, i.shape[k]);
-        },
+        else => unreachable,
     }
 }
 
-fn readProgramShared(alloc: Allocator, r: *program.ProgramReader, shared: []const SharedTable) !program.Node {
-    const op: program.OpKind = @enumFromInt(r.readU8());
-    const base_id = r.readU32();
-    var side_info: program.SideInfo = .none;
-    switch (op) {
-        .split_float => {
-            const dtype: types.Dtype = @enumFromInt(r.readU8());
-            const exp_bits = r.readU8();
-            const mant_bits = r.readU8();
-            const ndim = r.readU8();
-            var info: ops.SplitFloatInfo = .{ .dtype = dtype, .exp_bits = exp_bits, .mant_bits = mant_bits, .ndim = ndim, .shape = .{0} ** 8 };
-            for (0..ndim) |k| info.shape[k] = r.readU64();
-            side_info = .{ .split_float = info };
-        },
-        .bitplane_split => {
-            const n_planes = r.readU8();
-            const count = r.readU64();
-            side_info = .{ .bitplane_split = .{ .n_planes = n_planes, .count = count } };
-        },
-        .delta_encode => {
-            const first = r.readU32();
-            const count = r.readU64();
-            const bpe = r.readU8();
-            side_info = .{ .delta_encode = .{ .first = first, .count = count, .bits_per_elem = bpe } };
-        },
-        .huffman => {
-            const count = r.readU64();
-            const bpe = r.readU8();
-            const id = r.readU32();
-            // Clone the shared entries so this Node owns them — required because
-            // the Node's deinit will free them, and the same shared table may be
-            // referenced by other nodes too.
-            const orig = shared[id].huffman.entries;
-            const cloned = try alloc.alloc(codec.HuffmanTable.Entry, orig.len);
-            @memcpy(cloned, orig);
-            side_info = .{ .huffman = .{ .table = .{ .entries = cloned }, .count = count, .bits_per_elem = bpe } };
-        },
-        .rans => {
-            const count = r.readU64();
-            const bpe = r.readU8();
-            const id = r.readU32();
-            const orig_syms = shared[id].rans.symbols;
-            const orig_info = shared[id].rans.info;
-            const cs = try alloc.alloc(u32, orig_syms.len);
-            const ci = try alloc.alloc(codec.RansSymbol, orig_info.len);
-            @memcpy(cs, orig_syms);
-            @memcpy(ci, orig_info);
-            side_info = .{ .rans = .{ .table = .{ .symbols = cs, .info = ci }, .count = count, .bits_per_elem = bpe } };
-        },
-        .raw => {
-            const count = r.readU64();
-            const bpe = r.readU8();
-            side_info = .{ .raw = .{ .count = count, .bits_per_elem = bpe } };
-        },
-        .tensor_raw => {
-            const dtype: types.Dtype = @enumFromInt(r.readU8());
-            const ndim = r.readU8();
-            var info: ops.TensorRawInfo = .{ .dtype = dtype, .ndim = ndim, .shape = .{0} ** 8 };
-            for (0..ndim) |k| info.shape[k] = r.readU64();
-            side_info = .{ .tensor_raw = info };
-        },
-        .tensor_xor => {
-            const dtype: types.Dtype = @enumFromInt(r.readU8());
-            const ndim = r.readU8();
-            var info: ops.TensorXorInfo = .{ .dtype = dtype, .ndim = ndim, .shape = .{0} ** 8 };
-            for (0..ndim) |k| info.shape[k] = r.readU64();
-            side_info = .{ .tensor_xor = info };
-        },
-    }
-    const n_kids = r.readU8();
-    const kids = try alloc.alloc(program.Node, n_kids);
-    for (kids) |*c| c.* = try readProgramShared(alloc, r, shared);
-    return .{ .op = op, .children = kids, .base_id = base_id, .side_info = side_info };
+fn strippedSide(side: ops.SideInfo) ops.SideInfo {
+    return switch (side) {
+        .huffman => |h| .{ .huffman = .{
+            .table = .{ .entries = &.{} },
+            .count = h.count,
+            .bits_per_elem = h.bits_per_elem,
+        } },
+        .rans => |r| .{ .rans = .{
+            .table = .{ .symbols = &.{}, .info = &.{} },
+            .count = r.count,
+            .bits_per_elem = r.bits_per_elem,
+        } },
+        else => unreachable,
+    };
 }
 
-// ---------- Build archive from a list of (name, program, payload, base_name?) ----------
-pub const TensorJob = struct {
-    name: []const u8,
-    base_name: []const u8 = &.{},
-    program: *const program.Node,
-    payload: []const u8,
+const BlockRec = struct { program_id: u32, refs: []u32, payload_off: u64, payload_len: u64 };
+
+pub const Builder = struct {
+    alloc: Allocator,
+    tables: Interner = .{},
+    progs: Interner = .{},
+    recs: std.ArrayList(BlockRec) = .empty,
+
+    pub fn init(alloc: Allocator) Builder {
+        return .{ .alloc = alloc };
+    }
+
+    pub fn deinit(self: *Builder) void {
+        self.tables.deinit(self.alloc);
+        self.progs.deinit(self.alloc);
+        for (self.recs.items) |rec| self.alloc.free(rec.refs);
+        self.recs.deinit(self.alloc);
+    }
+
+    pub fn add(self: *Builder, job: BlockJob, payload_off: u64) !void {
+        const alloc = self.alloc;
+        var sides: std.ArrayList(*ops.SideInfo) = .empty;
+        defer sides.deinit(alloc);
+        try collectTableSides(alloc, job.node, &sides);
+
+        const refs = try alloc.alloc(u32, sides.items.len);
+        errdefer alloc.free(refs);
+        const saved = try alloc.alloc(ops.SideInfo, sides.items.len);
+        defer alloc.free(saved);
+        var scratch: std.ArrayList(u8) = .empty;
+        defer scratch.deinit(alloc);
+
+        for (sides.items, saved) |sp, *side| side.* = sp.*;
+        defer {
+            for (sides.items, saved) |sp, side| sp.* = side;
+        }
+        for (sides.items, 0..) |sp, i| {
+            try encodeTable(alloc, &scratch, sp.*);
+            refs[i] = try self.tables.intern(alloc, scratch.items);
+            scratch.clearRetainingCapacity();
+            sp.* = strippedSide(sp.*);
+        }
+
+        const bytecode = try program.serialize(alloc, job.node.*);
+        defer alloc.free(bytecode);
+        try self.recs.append(alloc, .{
+            .program_id = try self.progs.intern(alloc, bytecode),
+            .refs = refs,
+            .payload_off = payload_off,
+            .payload_len = job.payload.len,
+        });
+    }
+
+    pub fn finish(self: *Builder, tensors: []const TensorMeta, index_off: u64, safetensors_prefix: []const u8) ![]u8 {
+        const alloc = self.alloc;
+        var out: std.ArrayList(u8) = .empty;
+        defer out.deinit(alloc);
+
+        try w64(alloc, &out, @intCast(safetensors_prefix.len));
+        try out.appendSlice(alloc, safetensors_prefix);
+
+        try w32(alloc, &out, @intCast(self.tables.items.items.len));
+        for (self.tables.items.items) |table| try out.appendSlice(alloc, table);
+
+        try w32(alloc, &out, @intCast(self.progs.items.items.len));
+        for (self.progs.items.items) |prog| {
+            try w32(alloc, &out, @intCast(prog.len));
+            try out.appendSlice(alloc, prog);
+        }
+
+        try w32(alloc, &out, @intCast(tensors.len));
+        var rec_i: usize = 0;
+        for (tensors) |tensor| {
+            try w16(alloc, &out, @intCast(tensor.name.len));
+            try out.appendSlice(alloc, tensor.name);
+            try out.append(alloc, @intFromEnum(tensor.dtype));
+            try out.append(alloc, @intCast(tensor.shape.len));
+            for (tensor.shape) |dim| try w64(alloc, &out, dim);
+            try w32(alloc, &out, tensor.n_blocks);
+
+            for (0..tensor.n_blocks) |_| {
+                const rec = self.recs.items[rec_i];
+                try w32(alloc, &out, rec.program_id);
+                try w32(alloc, &out, @intCast(rec.refs.len));
+                for (rec.refs) |id| try w32(alloc, &out, id);
+                try w64(alloc, &out, rec.payload_off);
+                try w64(alloc, &out, rec.payload_len);
+                rec_i += 1;
+            }
+        }
+        std.debug.assert(rec_i == self.recs.items.len);
+        try out.appendSlice(alloc, &FOOTER_MAGIC);
+        try w64(alloc, &out, index_off);
+        return out.toOwnedSlice(alloc);
+    }
 };
 
-pub fn buildArchiveBytes(alloc: Allocator, jobs: []const TensorJob) ![]u8 {
-    var map = TableMap.init(alloc);
-    defer map.deinit(alloc);
-
-    // Phase 1: collect IDs per job in pre-order to parallel writeProgramShared.
-    var per_job_ids: std.ArrayList(std.ArrayList(u32)) = .empty;
-    defer {
-        for (per_job_ids.items) |*ids| ids.deinit(alloc);
-        per_job_ids.deinit(alloc);
-    }
-    for (jobs) |job| {
-        var ids: std.ArrayList(u32) = .empty;
-        try collectTables(alloc, job.program, &map, &ids);
-        try per_job_ids.append(alloc, ids);
-    }
-
-    // Phase 2: write archive.
+pub fn build(alloc: Allocator, tensors: []const TensorMeta, jobs: []const BlockJob, safetensors_prefix: []const u8) ![]u8 {
+    var builder = Builder.init(alloc);
+    defer builder.deinit();
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(alloc);
-
-    try out.appendSlice(alloc, &MAGIC);
-    try writeU16(alloc, &out, VERSION);
-    try writeU16(alloc, &out, 0);
-    try writeU32(alloc, &out, @intCast(map.tables.items.len));
-    for (map.tables.items) |t| {
-        try out.append(alloc, @intFromEnum(@as(TableKind, t)));
-        switch (t) {
-            .huffman => |ht| {
-                try writeU32(alloc, &out, @intCast(ht.entries.len));
-                for (ht.entries) |e| {
-                    try writeU32(alloc, &out, e.sym);
-                    try out.append(alloc, e.len);
-                }
-            },
-            .rans => |rt| {
-                try writeU32(alloc, &out, @intCast(rt.symbols.len));
-                for (rt.symbols, rt.info) |s, info| {
-                    try writeU32(alloc, &out, s);
-                    try writeU32(alloc, &out, info.freq);
-                }
-            },
-        }
-    }
-
-    try writeU32(alloc, &out, @intCast(jobs.len));
-    for (jobs, 0..) |job, ji| {
-        try writeU16(alloc, &out, @intCast(job.name.len));
-        try out.appendSlice(alloc, job.name);
-        try writeU16(alloc, &out, @intCast(job.base_name.len));
-        try out.appendSlice(alloc, job.base_name);
-
-        var prog_bytes: std.ArrayList(u8) = .empty;
-        defer prog_bytes.deinit(alloc);
-        var pos: usize = 0;
-        try writeProgramShared(alloc, &prog_bytes, job.program, per_job_ids.items[ji].items, &pos);
-        try writeU32(alloc, &out, @intCast(prog_bytes.items.len));
-        try out.appendSlice(alloc, prog_bytes.items);
-
-        try writeU64(alloc, &out, @intCast(job.payload.len));
+    try out.appendSlice(alloc, &HEADER);
+    for (jobs) |job| {
+        try builder.add(job, out.items.len);
         try out.appendSlice(alloc, job.payload);
     }
-
+    const tail = try builder.finish(tensors, out.items.len, safetensors_prefix);
+    defer alloc.free(tail);
+    try out.appendSlice(alloc, tail);
     return out.toOwnedSlice(alloc);
 }
 
-// ---------- Read archive from bytes ----------
-pub const ParsedTensor = struct {
-    name: []const u8, // owned
-    base_name: []const u8, // owned
-    program: program.Node, // owned
-    payload: []u8, // owned (a copy into a separate buffer to keep sharing-by-ref intact for distributePayloadBytes)
+fn w16(alloc: Allocator, out: *std.ArrayList(u8), v: u16) !void {
+    var b: [2]u8 = undefined;
+    std.mem.writeInt(u16, &b, v, .little);
+    try out.appendSlice(alloc, &b);
+}
 
-    pub fn deinit(self: *ParsedTensor, alloc: Allocator) void {
-        alloc.free(self.name);
-        alloc.free(self.base_name);
-        self.program.deinit(alloc);
-        alloc.free(self.payload);
-    }
+fn w32(alloc: Allocator, out: *std.ArrayList(u8), v: u32) !void {
+    var b: [4]u8 = undefined;
+    std.mem.writeInt(u32, &b, v, .little);
+    try out.appendSlice(alloc, &b);
+}
+
+fn w64(alloc: Allocator, out: *std.ArrayList(u8), v: u64) !void {
+    var b: [8]u8 = undefined;
+    std.mem.writeInt(u64, &b, v, .little);
+    try out.appendSlice(alloc, &b);
+}
+
+// ==================== parse ====================
+
+pub const ParsedBlock = struct {
+    node: *Node,
+    tables: []const ParsedTable,
+    refs: []const u32,
+    payload: []const u8,
 };
 
-pub const ParsedArchive = struct {
-    shared: []SharedTable,
+pub const ParsedTensor = struct { name: []u8, dtype: Dtype, shape: []u64, blocks: []ParsedBlock };
+
+pub const Parsed = struct {
     tensors: []ParsedTensor,
+    safetensors_prefix: []const u8,
+    arena: std.heap.ArenaAllocator,
 
-    pub fn deinit(self: *ParsedArchive, alloc: Allocator) void {
-        for (self.shared) |*t| t.deinit(alloc);
-        alloc.free(self.shared);
-        for (self.tensors) |*t| t.deinit(alloc);
-        alloc.free(self.tensors);
+    pub fn deinit(self: *Parsed) void {
+        self.arena.deinit();
     }
 };
 
-pub fn parseArchive(alloc: Allocator, bytes: []const u8) !ParsedArchive {
-    var pos: usize = 0;
-    if (bytes.len < 12) return error.ArchiveTooShort;
-    if (!std.mem.eql(u8, bytes[0..4], &MAGIC)) return error.BadMagic;
-    pos = 4;
-    const version = std.mem.readInt(u16, bytes[pos..][0..2], .little);
-    pos += 2;
-    if (version != VERSION) return error.UnsupportedVersion;
-    pos += 2; // flags
+pub const Loaded = struct {
+    parsed: Parsed,
+    bytes: []u8,
+    mmap: ?std.Io.File.MemoryMap,
 
-    const n_tables = std.mem.readInt(u32, bytes[pos..][0..4], .little);
-    pos += 4;
+    pub fn deinit(self: *Loaded, alloc: Allocator, io: std.Io) void {
+        self.parsed.deinit();
+        if (self.mmap) |*mapping| mapping.destroy(io) else alloc.free(self.bytes);
+    }
+};
 
-    const shared = try alloc.alloc(SharedTable, n_tables);
-    errdefer alloc.free(shared);
+const ParsedTable = union(TableKind) {
+    huffman: codec.HuffmanTable,
+    rans: codec.RansTable,
+};
 
-    for (shared) |*tbl| {
-        const kind: TableKind = @enumFromInt(bytes[pos]);
-        pos += 1;
-        const n_entries = std.mem.readInt(u32, bytes[pos..][0..4], .little);
-        pos += 4;
+pub fn decodeBlock(alloc: Allocator, block: ParsedBlock) !types.Stream {
+    var node = try cloneBorrowed(alloc, block.node.*);
+    defer deinitBorrowed(alloc, &node);
+    try attachTables(&node, block.tables, block.refs);
+    try program.distributePayload(&node, block.payload);
+    return program.decode(alloc, node);
+}
+
+fn cloneBorrowed(alloc: Allocator, node: Node) Allocator.Error!Node {
+    const children: []Node = if (node.children.len == 0) &.{} else try alloc.alloc(Node, node.children.len);
+    var filled: usize = 0;
+    errdefer {
+        for (children[0..filled]) |*child| deinitBorrowed(alloc, child);
+        if (children.len > 0) alloc.free(children);
+    }
+    for (node.children, 0..) |child, i| {
+        children[i] = try cloneBorrowed(alloc, child);
+        filled += 1;
+    }
+    return .{
+        .op = node.op,
+        .params = node.params,
+        .children = children,
+        .side = node.side,
+    };
+}
+
+fn deinitBorrowed(alloc: Allocator, node: *Node) void {
+    for (node.children) |*child| deinitBorrowed(alloc, child);
+    if (node.children.len > 0) alloc.free(node.children);
+}
+
+const Reader = struct {
+    b: []const u8,
+    pos: usize = 0,
+
+    fn take(self: *Reader, n: usize) ![]const u8 {
+        if (n > self.b.len - self.pos) return error.Truncated;
+        defer self.pos += n;
+        return self.b[self.pos..][0..n];
+    }
+    fn u8v(self: *Reader) !u8 {
+        return (try self.take(1))[0];
+    }
+    fn u16v(self: *Reader) !u16 {
+        return std.mem.readInt(u16, (try self.take(2))[0..2], .little);
+    }
+    fn u32v(self: *Reader) !u32 {
+        return std.mem.readInt(u32, (try self.take(4))[0..4], .little);
+    }
+    fn u64v(self: *Reader) !u64 {
+        return std.mem.readInt(u64, (try self.take(8))[0..8], .little);
+    }
+    /// Reject a count whose minimum encoding cannot fit in what remains.
+    fn checkCount(self: Reader, n: u32, per_elem: usize) !usize {
+        if (@as(u64, n) * per_elem > self.b.len - self.pos) return error.Truncated;
+        return n;
+    }
+};
+
+pub fn parse(alloc: Allocator, bytes: []const u8) !Parsed {
+    if (bytes.len < HEADER.len + 12) return error.Truncated;
+    if (!std.mem.eql(u8, bytes[0..HEADER.len], &HEADER)) return error.BadMagic;
+    const footer = bytes.len - 12;
+    if (!std.mem.eql(u8, bytes[footer..][0..4], &FOOTER_MAGIC)) return error.BadFooter;
+    const index_off = std.math.cast(usize, std.mem.readInt(u64, bytes[footer + 4 ..][0..8], .little)) orelse
+        return error.Truncated;
+    if (index_off < HEADER.len or index_off > footer) return error.Truncated;
+
+    var arena: std.heap.ArenaAllocator = .init(alloc);
+    errdefer arena.deinit();
+    const a = arena.allocator();
+
+    var r: Reader = .{ .b = bytes[0..footer], .pos = index_off };
+
+    const prefix_len = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
+    const safetensors_prefix = try r.take(prefix_len);
+    if (prefix_len > 0 and (prefix_len < 8 or
+        std.mem.readInt(u64, safetensors_prefix[0..8], .little) != prefix_len - 8))
+        return error.InvalidSafetensorsPrefix;
+
+    const n_tables = try r.checkCount(try r.u32v(), 5);
+    const tables = try a.alloc(ParsedTable, n_tables);
+    for (tables) |*t| {
+        const kind = std.enums.fromInt(TableKind, try r.u8v()) orelse return error.InvalidTableKind;
         switch (kind) {
             .huffman => {
-                const entries = try alloc.alloc(codec.HuffmanTable.Entry, n_entries);
+                const n = try r.checkCount(try r.u32v(), 5);
+                const entries = try a.alloc(codec.HuffmanTable.Entry, n);
                 for (entries) |*e| {
-                    e.sym = std.mem.readInt(u32, bytes[pos..][0..4], .little);
-                    pos += 4;
-                    e.len = bytes[pos];
-                    pos += 1;
+                    e.sym = try r.u32v();
+                    e.len = try r.u8v();
                 }
-                tbl.* = .{ .huffman = .{ .entries = entries } };
+                t.* = .{ .huffman = .{ .entries = entries } };
             },
             .rans => {
-                const syms = try alloc.alloc(u32, n_entries);
-                const info = try alloc.alloc(codec.RansSymbol, n_entries);
-                var cum: u32 = 0;
-                for (syms, info) |*s, *inf| {
-                    s.* = std.mem.readInt(u32, bytes[pos..][0..4], .little);
-                    pos += 4;
-                    inf.freq = std.mem.readInt(u32, bytes[pos..][0..4], .little);
-                    pos += 4;
-                    inf.cum = cum;
+                const n = try r.checkCount(try r.u32v(), 8);
+                const symbols = try a.alloc(u32, n);
+                const info = try a.alloc(codec.RansSymbol, n);
+                // Frequencies must tile [0, RANS_PROB_SCALE) exactly, or decoding
+                // would index the cum→symbol map out of range.
+                var cum: u64 = 0;
+                for (symbols, info) |*s, *inf| {
+                    s.* = try r.u32v();
+                    inf.freq = try r.u32v();
+                    if (inf.freq == 0) return error.InvalidRansTable;
+                    inf.cum = @intCast(cum);
                     cum += inf.freq;
+                    if (cum > codec.RANS_PROB_SCALE) return error.InvalidRansTable;
                 }
-                tbl.* = .{ .rans = .{ .symbols = syms, .info = info } };
+                if (n > 0 and cum != codec.RANS_PROB_SCALE) return error.InvalidRansTable;
+                t.* = .{ .rans = .{ .symbols = symbols, .info = info } };
             },
         }
     }
 
-    const n_tensors = std.mem.readInt(u32, bytes[pos..][0..4], .little);
-    pos += 4;
+    const n_programs = try r.checkCount(try r.u32v(), 4);
+    const programs = try a.alloc(Node, n_programs);
+    for (programs) |*p| p.* = try program.deserialize(a, try r.take(try r.u32v()));
 
-    const tensors = try alloc.alloc(ParsedTensor, n_tensors);
-    for (tensors) |*t| {
-        const name_len = std.mem.readInt(u16, bytes[pos..][0..2], .little);
-        pos += 2;
-        const name_buf = try alloc.alloc(u8, name_len);
-        @memcpy(name_buf, bytes[pos .. pos + name_len]);
-        pos += name_len;
+    const n_tensors = try r.checkCount(try r.u32v(), 8);
+    const out_tensors = try a.alloc(ParsedTensor, n_tensors);
+    for (out_tensors) |*t| {
+        const name_len = try r.u16v();
+        t.name = try a.dupe(u8, try r.take(name_len));
+        t.dtype = std.enums.fromInt(Dtype, try r.u8v()) orelse return error.InvalidDtype;
+        const ndim = try r.u8v();
+        const shape = try a.alloc(u64, ndim);
+        for (shape) |*d| d.* = try r.u64v();
+        t.shape = shape;
 
-        const base_len = std.mem.readInt(u16, bytes[pos..][0..2], .little);
-        pos += 2;
-        const base_buf = try alloc.alloc(u8, base_len);
-        @memcpy(base_buf, bytes[pos .. pos + base_len]);
-        pos += base_len;
+        const n_blocks = try r.checkCount(try r.u32v(), 16);
+        t.blocks = try a.alloc(ParsedBlock, n_blocks);
+        for (t.blocks) |*block| {
+            const pid = try r.u32v();
+            if (pid >= programs.len) return error.InvalidProgramId;
+            const n_refs = try r.checkCount(try r.u32v(), 4);
+            const refs = try a.alloc(u32, n_refs);
+            for (refs) |*id| id.* = try r.u32v();
+            const off = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
+            const len = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
+            if (off < HEADER.len or off > index_off or len > index_off - off) return error.Truncated;
 
-        const prog_len = std.mem.readInt(u32, bytes[pos..][0..4], .little);
-        pos += 4;
-        var pr: program.ProgramReader = .{ .bytes = bytes[pos .. pos + prog_len] };
-        var prog_node = try readProgramShared(alloc, &pr, shared);
-        pos += prog_len;
-
-        const pay_len = std.mem.readInt(u64, bytes[pos..][0..8], .little);
-        pos += 8;
-        const pay_buf = try alloc.alloc(u8, @intCast(pay_len));
-        @memcpy(pay_buf, bytes[pos .. pos + @as(usize, @intCast(pay_len))]);
-        pos += @intCast(pay_len);
-
-        // Wire up payloads into terminal nodes.
-        try program.distributePayloadBytes(&prog_node, pay_buf);
-
-        t.* = .{ .name = name_buf, .base_name = base_buf, .program = prog_node, .payload = pay_buf };
+            const node = &programs[pid];
+            try attachTables(node, tables, refs);
+            const payload = bytes[off..][0..len];
+            try program.distributePayload(node, payload);
+            block.* = .{ .node = node, .tables = tables, .refs = refs, .payload = payload };
+        }
     }
 
-    return .{ .shared = shared, .tensors = tensors };
+    return .{ .tensors = out_tensors, .safetensors_prefix = safetensors_prefix, .arena = arena };
 }
 
-// ---------- helpers ----------
-fn writeU16(alloc: Allocator, out: *std.ArrayList(u8), v: u16) !void {
-    var buf: [2]u8 = undefined;
-    std.mem.writeInt(u16, &buf, v, .little);
-    try out.appendSlice(alloc, &buf);
+pub fn loadFromPath(alloc: Allocator, io: std.Io, path: []const u8) !Loaded {
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const size: usize = @intCast((try file.stat(io)).size);
+    if (std.Io.File.MemoryMap.create(io, file, .{
+        .len = size,
+        .protection = .{ .read = true, .write = false },
+    })) |mapped| {
+        var mapping = mapped;
+        errdefer mapping.destroy(io);
+        return .{ .parsed = try parse(alloc, mapping.memory), .bytes = mapping.memory, .mmap = mapping };
+    } else |_| {
+        const bytes = try alloc.alloc(u8, size);
+        errdefer alloc.free(bytes);
+        var buffer: [64 * 1024]u8 = undefined;
+        var reader = file.reader(io, &buffer);
+        try reader.interface.readSliceAll(bytes);
+        return .{ .parsed = try parse(alloc, bytes), .bytes = bytes, .mmap = null };
+    }
 }
-fn writeU32(alloc: Allocator, out: *std.ArrayList(u8), v: u32) !void {
-    var buf: [4]u8 = undefined;
-    std.mem.writeInt(u32, &buf, v, .little);
-    try out.appendSlice(alloc, &buf);
+
+fn attachTables(node: *Node, tables: []const ParsedTable, refs: []const u32) !void {
+    var ref_i: usize = 0;
+    try attachTablesRec(node, tables, refs, &ref_i);
+    if (ref_i != refs.len) return error.TableRefMismatch;
 }
-fn writeU64(alloc: Allocator, out: *std.ArrayList(u8), v: u64) !void {
-    var buf: [8]u8 = undefined;
-    std.mem.writeInt(u64, &buf, v, .little);
-    try out.appendSlice(alloc, &buf);
+
+fn attachTablesRec(node: *Node, tables: []const ParsedTable, refs: []const u32, ref_i: *usize) !void {
+    switch (node.side) {
+        .huffman => |*h| {
+            if (ref_i.* >= refs.len) return error.TableRefMismatch;
+            const id = refs[ref_i.*];
+            ref_i.* += 1;
+            if (id >= tables.len) return error.InvalidTableId;
+            if (std.meta.activeTag(tables[id]) != .huffman) return error.TableKindMismatch;
+            h.table.entries = tables[id].huffman.entries;
+        },
+        .rans => |*r| {
+            if (ref_i.* >= refs.len) return error.TableRefMismatch;
+            const id = refs[ref_i.*];
+            ref_i.* += 1;
+            if (id >= tables.len) return error.InvalidTableId;
+            if (std.meta.activeTag(tables[id]) != .rans) return error.TableKindMismatch;
+            r.table.symbols = tables[id].rans.symbols;
+            r.table.info = tables[id].rans.info;
+        },
+        else => {},
+    }
+    for (node.children) |*child| try attachTablesRec(child, tables, refs, ref_i);
 }

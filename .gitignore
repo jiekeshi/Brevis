@@ -3,5 +3,7 @@ zig-out/
 *.brv
 __pycache__/
 *.pyc
+.DS_Store
+eval/cache/
 
 .claude

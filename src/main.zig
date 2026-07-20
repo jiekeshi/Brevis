@@ -1,21 +1,25 @@
-//! brevis — CLI for synthesizing & decompressing tensor archives.
-//!
-//! Subcommands:
-//!   brevis compress   <model.safetensors>  <out.brv>
-//!   brevis decompress <model.brv>          <out.safetensors>
-//!   brevis bench      <model.safetensors>     [per-tensor report]
-//!   brevis verify     <model.brv>          <orig.safetensors>
-//!   brevis demo                                  [synthetic data]
+//! brevis CLI.
 
 const std = @import("std");
 const types = @import("types.zig");
 const ops = @import("ops.zig");
 const program = @import("program.zig");
+const prior = @import("prior.zig");
 const search = @import("search.zig");
 const archive = @import("archive.zig");
 const safetensors = @import("safetensors.zig");
 const baseline = @import("baseline.zig");
-const lowlevel_training = @import("lowlevel_training.zig");
+
+const Allocator = std.mem.Allocator;
+const Dtype = types.Dtype;
+const Block = types.Block;
+const Stream = types.Stream;
+
+const N_DTYPE: usize = 9;
+const ROOT_PARENT: u8 = 255;
+/// Calibration candidate enumeration is superlinear in block length; a prefix this
+/// long already saturates the context statistics.
+const CALIB_ELEMS: usize = 16 * 1024;
 
 pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
@@ -23,750 +27,1018 @@ pub fn main(init: std.process.Init) !void {
 
     var stdout_buf: [4096]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &stdout_buf);
-    var stderr_buf: [4096]u8 = undefined;
-    var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
     const out = &stdout.interface;
+    var stderr_buf: [1024]u8 = undefined;
+    var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
     const err = &stderr.interface;
 
-    var args_list: std.ArrayList([]u8) = .empty;
+    var argv: std.ArrayList([]u8) = .empty;
     defer {
-        for (args_list.items) |a| alloc.free(a);
-        args_list.deinit(alloc);
+        for (argv.items) |a| alloc.free(a);
+        argv.deinit(alloc);
     }
     var it = init.minimal.args.iterate();
     defer it.deinit();
-    while (it.next()) |a| {
-        const owned = try alloc.alloc(u8, a.len);
-        @memcpy(owned, a);
-        try args_list.append(alloc, owned);
-    }
+    while (it.next()) |a| try argv.append(alloc, try alloc.dupe(u8, a));
 
-    if (args_list.items.len < 2) {
-        try printUsage(err);
-        try err.flush();
-        std.process.exit(2);
-    }
+    if (argv.items.len < 2) try usage(err);
+    const cmd = argv.items[1];
 
-    const cmd = args_list.items[1];
-    if (std.mem.eql(u8, cmd, "compress")) {
-        if (args_list.items.len != 4) return usageExit(err);
-        try cmdCompress(alloc, io, out, args_list.items[2], args_list.items[3]);
+    var pos: std.ArrayList([]const u8) = .empty;
+    defer pos.deinit(alloc);
+    var opt_prior: ?[]const u8 = null;
+    var opt_jobs: ?usize = null;
+    var opt_blocks: usize = ops.CALIBRATE_BLOCKS;
+
+    const rest = argv.items[2..];
+    var i: usize = 0;
+    while (i < rest.len) : (i += 1) {
+        const a = rest[i];
+        if (!std.mem.startsWith(u8, a, "--")) {
+            try pos.append(alloc, a);
+            continue;
+        }
+        i += 1;
+        if (i >= rest.len) try usage(err);
+        const v = rest[i];
+        if (std.mem.eql(u8, a, "--prior")) {
+            opt_prior = v;
+        } else if (std.mem.eql(u8, a, "--jobs")) {
+            opt_jobs = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--blocks")) {
+            opt_blocks = try std.fmt.parseInt(usize, v, 10);
+        } else try usage(err);
+    }
+    const p = pos.items;
+
+    if (std.mem.eql(u8, cmd, "calibrate")) {
+        if (p.len != 2) try usage(err);
+        try cmdCalibrate(io, out, p[0], p[1], opt_blocks);
+    } else if (std.mem.eql(u8, cmd, "compress")) {
+        if (p.len != 2) try usage(err);
+        try cmdCompress(io, out, p[0], p[1], opt_prior, opt_jobs);
     } else if (std.mem.eql(u8, cmd, "decompress")) {
-        if (args_list.items.len != 4) return usageExit(err);
-        try cmdDecompress(alloc, io, out, args_list.items[2], args_list.items[3]);
-    } else if (std.mem.eql(u8, cmd, "bench")) {
-        if (args_list.items.len != 3) return usageExit(err);
-        try cmdBench(alloc, io, out, args_list.items[2]);
+        if (p.len != 2) try usage(err);
+        try cmdDecompress(io, out, p[0], p[1], opt_jobs);
     } else if (std.mem.eql(u8, cmd, "verify")) {
-        if (args_list.items.len != 4) return usageExit(err);
-        try cmdVerify(alloc, io, out, args_list.items[2], args_list.items[3]);
-    } else if (std.mem.eql(u8, cmd, "demo")) {
-        try cmdDemo(alloc, out);
-    } else if (std.mem.eql(u8, cmd, "make-fixture")) {
-        if (args_list.items.len != 3) return usageExit(err);
-        try cmdMakeFixture(alloc, io, out, args_list.items[2]);
+        if (p.len != 2) try usage(err);
+        try cmdVerify(alloc, io, out, p[0], p[1]);
+    } else if (std.mem.eql(u8, cmd, "bench")) {
+        if (p.len != 1) try usage(err);
+        try cmdBench(io, out, p[0], opt_prior, opt_jobs);
     } else if (std.mem.eql(u8, cmd, "baseline")) {
-        if (args_list.items.len != 3) return usageExit(err);
-        try cmdBaseline(alloc, io, out, args_list.items[2]);
-    } else if (std.mem.eql(u8, cmd, "collect-training")) {
-        if (args_list.items.len != 4) return usageExit(err);
-        try cmdCollectTraining(alloc, io, out, args_list.items[2], args_list.items[3]);
-    } else if (std.mem.eql(u8, cmd, "train-lowlevel")) {
-        if (args_list.items.len != 4) return usageExit(err);
-        try cmdTrainLowlevel(alloc, io, out, args_list.items[2], args_list.items[3]);
+        if (p.len != 1) try usage(err);
+        try cmdBaseline(io, out, p[0], opt_jobs);
+    } else if (std.mem.eql(u8, cmd, "demo")) {
+        try cmdDemo(io, out);
+    } else if (std.mem.eql(u8, cmd, "make-fixture")) {
+        if (p.len != 1) try usage(err);
+        try cmdMakeFixture(alloc, io, out, p[0]);
     } else {
         try err.print("brevis: unknown command '{s}'\n", .{cmd});
-        try printUsage(err);
-        try err.flush();
-        std.process.exit(2);
+        try usage(err);
     }
     try out.flush();
 }
 
-fn usageExit(err: *std.Io.Writer) !void {
-    try printUsage(err);
-    try err.flush();
+fn usage(w: *std.Io.Writer) !noreturn {
+    try w.writeAll(
+        \\brevis — bit-exact lossless tensor compression via program synthesis
+        \\
+        \\  brevis calibrate   <model.safetensors> <prior.bin> [--blocks N]
+        \\  brevis compress    <model.safetensors> <out.brv> [--prior p.bin] [--jobs N]
+        \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
+        \\  brevis verify      <in.brv> <orig.safetensors>
+        \\  brevis bench       <model.safetensors> [--prior p.bin] [--jobs N]
+        \\  brevis baseline    <model.safetensors> [--jobs N]
+        \\  brevis demo
+        \\  brevis make-fixture <out.safetensors>
+        \\
+    );
+    try w.flush();
     std.process.exit(2);
 }
 
-fn printUsage(w: *std.Io.Writer) !void {
-    try w.writeAll(
-        \\brevis 0.1.0 — bit-exact lossless tensor compression via program synthesis
-        \\
-        \\Usage:
-        \\  brevis compress   <model.safetensors>  <out.brv>
-        \\  brevis decompress <model.brv>          <out.safetensors>
-        \\  brevis bench      <model.safetensors>     [per-tensor report]
-        \\  brevis verify     <model.brv>          <orig.safetensors>
-        \\  brevis demo                                  [synthetic data]
-        \\  brevis make-fixture <out.safetensors>        [synthetic data → safetensors]
-        \\  brevis baseline   <model.safetensors>        [compare brevis vs gzip vs zstd]
-        \\  brevis collect-training <model.safetensors> <out.jsonl>   [PHOG oracle dump]
-        \\  brevis train-lowlevel <model.safetensors> <out.json>      [low-level grammar training: B&B per tensor + subtree mining + MDL macro promotion]
-        \\
-    );
+// ==================== shared pipeline ====================
+
+fn checkTensors(tensors: []const safetensors.Tensor) !void {
+    for (tensors) |t| {
+        if (t.view.numel() * t.view.dtype.elemSize() != t.view.data.len) return error.ShapeDataMismatch;
+    }
 }
 
-// ---------- train-lowlevel: streaming search + abstraction + PHOG counts ----------
-fn cmdTrainLowlevel(
-    alloc: std.mem.Allocator,
-    io: std.Io,
-    out: *std.Io.Writer,
-    in_path: []const u8,
-    out_path: []const u8,
-) !void {
-    _ = alloc;
-    const work_alloc = std.heap.smp_allocator;
-
-    var loaded = try safetensors.loadFromPath(work_alloc, io, in_path);
-    defer loaded.deinitMmap(work_alloc, io);
-
-    // Subsample tensors: training the full TinyLlama with low-level B&B on
-    // every 131 MB embed/lm_head would take hours. For MVP, take only fp16/bf16
-    // tensors with ≤ 1 M elements (small layernorm / small attn k/v_proj).
-    var picked: std.ArrayList(types.TensorView) = .empty;
-    defer picked.deinit(work_alloc);
-    for (loaded.tensors) |t| {
-        if (!t.view.dtype.isFloat16Like()) continue;
-        try picked.append(work_alloc, t.view); // include all sizes; subsample below
+fn planAll(alloc: Allocator, tensors: []const safetensors.Tensor) ![]Block {
+    var list: std.ArrayList(Block) = .empty;
+    errdefer list.deinit(alloc);
+    for (tensors, 0..) |t, ti| {
+        const numel = t.view.numel();
+        if (numel == 0) continue;
+        const inner: usize = if (t.view.shape.len == 0) 1 else @intCast(t.view.shape[t.view.shape.len - 1]);
+        const bs = try types.planBlocks(alloc, @intCast(ti), t.view.dtype, numel, inner);
+        defer alloc.free(bs);
+        try list.appendSlice(alloc, bs);
     }
-
-    try out.print("train-lowlevel: {d} tensors picked, subsampling to 5K elem for B&B (mining only)\n", .{picked.items.len});
-    try out.flush();
-
-    const t_start = std.Io.Timestamp.now(io, .awake);
-    var result = try lowlevel_training.trainOnTensors(work_alloc, picked.items, .{
-        .max_depth = 4,
-        .max_nodes_explored = 30_000,
-        .macro_def_cost = 5,
-        .min_count_for_promotion = 2,
-        .subsample_elements = 5_000, // 5K samples is plenty for distribution-shape mining
-    });
-    defer result.deinit();
-    const elapsed_ms = t_start.durationTo(.now(io, .awake)).toMilliseconds();
-
-    try out.print("training done in {d}ms wall\n", .{elapsed_ms});
-    try out.print("  n_tensors processed: {d}\n", .{result.counters.n_tensors});
-    if (result.counters.total_compressed_bits > 0) {
-        const ratio: f64 = @as(f64, @floatFromInt(result.counters.total_raw_bits)) / @as(f64, @floatFromInt(result.counters.total_compressed_bits));
-        try out.print("  avg compression ratio (low-level B&B): {d:.3}x\n", .{ratio});
-    }
-    try out.print("  unique subtrees seen: {d}\n", .{result.counters.subtree_counts.count()});
-    try out.print("  subtrees promoted (MDL benefit > 0): {d}\n", .{result.promoted.len});
-    try out.flush();
-
-    // Write JSON report.
-    const cwd = std.Io.Dir.cwd();
-    const f = try cwd.createFile(io, out_path, .{});
-    defer f.close(io);
-    var wb: [4096]u8 = undefined;
-    var wf = f.writer(io, &wb);
-    try lowlevel_training.dumpReport(work_alloc, &result, &wf.interface);
-    try out.print("wrote report → {s}\n", .{out_path});
-    try out.flush();
+    return list.toOwnedSlice(alloc);
 }
 
-// ---------- collect-training (PHOG oracle dump) ----------
-//
-// For every fp16/bf16 tensor in `in_path`, runs the full A* search (no
-// fast-path, larger top_k) and emits one JSONL record per (context,
-// production) pair. The Python trainer (tools/train_phog.py) consumes this
-// to build the count-based PHOG.
-fn cmdCollectTraining(
-    alloc: std.mem.Allocator,
-    io: std.Io,
-    out: *std.Io.Writer,
-    in_path: []const u8,
-    out_path: []const u8,
-) !void {
-    _ = alloc;
-    const work_alloc = std.heap.smp_allocator;
+fn loadPrior(alloc: Allocator, path: ?[]const u8) !prior.Prior {
+    if (path) |pth| return prior.Prior.load(alloc, pth);
+    return prior.Prior.initUniform(alloc);
+}
 
-    var loaded = try safetensors.loadFromPath(work_alloc, io, in_path);
-    defer loaded.deinitMmap(work_alloc, io);
+const PlanJob = struct {
+    next: std.atomic.Value(usize),
+    fails: std.atomic.Value(usize),
+    tensors: []const safetensors.Tensor,
+    tensor_indices: []const usize,
+    plans: []?search.Plan,
+    pr: *const prior.Prior,
+    alloc: Allocator,
 
-    const cwd = std.Io.Dir.cwd();
-    const f = try cwd.createFile(io, out_path, .{});
-    defer f.close(io);
-    var wb: [4096]u8 = undefined;
-    var wf = f.writer(io, &wb);
-    const w = &wf.interface;
-
-    try out.print("collect-training: {d} tensors → {s}\n", .{ loaded.tensors.len, out_path });
-    try out.flush();
-
-    var n_examples: usize = 0;
-    for (loaded.tensors, 0..) |t, idx| {
-        if (!t.view.dtype.isFloat16Like()) continue;
-        var r = try search.synthesize(work_alloc, t.view, &.{}, .{
-            .use_fast_path = false,
-            .realize_top_k = 32,
-        });
-        defer r.deinit(work_alloc);
-
-        const trace = search.ChoiceTrace.fromShape(r.chosen_shape);
-        const dtype_name = t.view.dtype.name();
-        const log2_numel: u8 = @intCast(std.math.log2_int(u64, @max(t.view.numel(), 1)));
-        const ndim_bucket: u8 = if (t.view.shape.len == 1) 1 else if (t.view.shape.len == 2) 2 else 3;
-
-        // Emit one record for the T_PROG choice + (if split_float) one per stream slot.
-        try w.print(
-            \\{{"pos":"root","dtype":"{s}","log2_numel":{d},"ndim":{d},"prod":"{s}"}}
-            ++ "\n",
-            .{ dtype_name, log2_numel, ndim_bucket, trace.t_prog.name() },
-        );
-        n_examples += 1;
-        if (trace.t_prog == .split_float) {
-            const slots = .{
-                .{ "split.sign", trace.s_sign.? },
-                .{ "split.exp", trace.s_exp.? },
-                .{ "split.mant", trace.s_mant.? },
+    fn run(self: *PlanJob) void {
+        while (true) {
+            const next = self.next.fetchAdd(1, .acq_rel);
+            if (next >= self.tensor_indices.len) return;
+            const tensor_idx = self.tensor_indices[next];
+            const view = self.tensors[tensor_idx].view;
+            const stream: Stream = .{
+                .data = view.data,
+                .count = view.numel(),
+                .bits_per_elem = view.dtype.bitWidth(),
+                .owns_data = false,
             };
-            inline for (slots) |slot| {
-                try w.print(
-                    \\{{"pos":"{s}","dtype":"{s}","log2_numel":{d},"ndim":{d},"prod":"{s}"}}
-                    ++ "\n",
-                    .{ slot[0], dtype_name, log2_numel, ndim_bucket, slot[1].name() },
-                );
-                n_examples += 1;
-            }
-        }
-        if (idx % 20 == 0 or idx + 1 == loaded.tensors.len) {
-            try out.print("  [{d}/{d}] {s}: ratio={d:.3}x\n", .{ idx + 1, loaded.tensors.len, t.name, r.compression_ratio });
-            try out.flush();
+            self.plans[tensor_idx] = search.synthesizePlan(self.alloc, stream, view.dtype, self.pr, .{}) catch |err| {
+                std.debug.print("tensor {d} dtype {s}: {t}\n", .{ tensor_idx, @tagName(view.dtype), err });
+                _ = self.fails.fetchAdd(1, .acq_rel);
+                continue;
+            };
         }
     }
-    try w.flush();
-    try out.print("wrote {d} (ctx,production) examples\n", .{n_examples});
-    try out.flush();
+};
+
+const EncodeJob = struct {
+    next: std.atomic.Value(usize),
+    fails: std.atomic.Value(usize),
+    tensors: []const safetensors.Tensor,
+    blocks: []const Block,
+    results: []?search.Result,
+    plans: []const ?search.Plan,
+    alloc: Allocator,
+
+    fn run(self: *EncodeJob) void {
+        while (true) {
+            const i = self.next.fetchAdd(1, .acq_rel);
+            if (i >= self.blocks.len) return;
+            const b = self.blocks[i];
+            const s = b.asStream(self.tensors[b.tensor_idx].view.data);
+            const plan = &self.plans[b.tensor_idx].?;
+            var result = search.encode(self.alloc, plan, s, b.dtype) catch |err| {
+                std.debug.print("block {d} tensor {d} dtype {s}: {t}\n", .{ i, b.tensor_idx, @tagName(b.dtype), err });
+                _ = self.fails.fetchAdd(1, .acq_rel);
+                continue;
+            };
+            result.expanded = plan.expanded;
+            self.results[i] = result;
+        }
+    }
+};
+
+fn runWorkers(alloc: Allocator, n_threads: usize, job: anytype, comptime run: anytype) !void {
+    const threads = try alloc.alloc(std.Thread, n_threads);
+    defer alloc.free(threads);
+    var spawned: usize = 0;
+    errdefer for (threads[0..spawned]) |thread| thread.join();
+    for (threads) |*thread| {
+        thread.* = try std.Thread.spawn(.{}, run, .{job});
+        spawned += 1;
+    }
+    for (threads) |thread| thread.join();
 }
 
-// ---------- baseline (brevis vs gzip vs zstd) ----------
-fn cmdBaseline(alloc: std.mem.Allocator, io: std.Io, out: *std.Io.Writer, in_path: []const u8) !void {
+fn synthesizePlans(
+    alloc: Allocator,
+    tensors: []const safetensors.Tensor,
+    pr: *const prior.Prior,
+    n_threads: usize,
+) ![]?search.Plan {
+    const plans = try alloc.alloc(?search.Plan, tensors.len);
+    errdefer freePlans(alloc, plans);
+    for (plans) |*plan| plan.* = null;
+
+    var tensor_indices: std.ArrayList(usize) = .empty;
+    defer tensor_indices.deinit(alloc);
+    for (tensors, 0..) |tensor, i| {
+        if (tensor.view.numel() > 0) try tensor_indices.append(alloc, i);
+    }
+
+    var plan_job: PlanJob = .{
+        .next = .init(0),
+        .fails = .init(0),
+        .tensors = tensors,
+        .tensor_indices = tensor_indices.items,
+        .plans = plans,
+        .pr = pr,
+        .alloc = alloc,
+    };
+    if (tensor_indices.items.len > 0) {
+        const n = @max(@as(usize, 1), @min(n_threads, tensor_indices.items.len));
+        try runWorkers(alloc, n, &plan_job, PlanJob.run);
+    }
+    if (plan_job.fails.load(.acquire) > 0) return error.SynthesisFailed;
+    return plans;
+}
+
+fn encodeBlocks(
+    alloc: Allocator,
+    tensors: []const safetensors.Tensor,
+    blocks: []const Block,
+    plans: []const ?search.Plan,
+    n_threads: usize,
+) ![]?search.Result {
+    const results = try alloc.alloc(?search.Result, blocks.len);
+    errdefer freeResults(alloc, results);
+    for (results) |*result| result.* = null;
+    var encode_job: EncodeJob = .{
+        .next = .init(0),
+        .fails = .init(0),
+        .tensors = tensors,
+        .blocks = blocks,
+        .results = results,
+        .plans = plans,
+        .alloc = alloc,
+    };
+    if (blocks.len > 0) {
+        const n = @max(@as(usize, 1), @min(n_threads, blocks.len));
+        try runWorkers(alloc, n, &encode_job, EncodeJob.run);
+    }
+
+    if (encode_job.fails.load(.acquire) > 0) return error.SynthesisFailed;
+    return results;
+}
+
+fn synthesizeBlocks(
+    alloc: Allocator,
+    tensors: []const safetensors.Tensor,
+    blocks: []const Block,
+    pr: *const prior.Prior,
+    n_threads: usize,
+) ![]?search.Result {
+    const plans = try synthesizePlans(alloc, tensors, pr, n_threads);
+    defer freePlans(alloc, plans);
+    return encodeBlocks(alloc, tensors, blocks, plans, n_threads);
+}
+
+fn freeResults(alloc: Allocator, results: []?search.Result) void {
+    for (results) |*r| if (r.*) |*v| v.deinit(alloc);
+    alloc.free(results);
+}
+
+fn freePlans(alloc: Allocator, plans: []?search.Plan) void {
+    for (plans) |*plan| if (plan.*) |*value| value.deinit(alloc);
+    alloc.free(plans);
+}
+
+fn tensorMetas(
+    alloc: Allocator,
+    tensors: []const safetensors.Tensor,
+    blocks: []const Block,
+) ![]archive.TensorMeta {
+    const metas = try alloc.alloc(archive.TensorMeta, tensors.len);
+    var bi: usize = 0;
+    for (tensors, 0..) |t, ti| {
+        var n: u32 = 0;
+        while (bi + n < blocks.len and blocks[bi + n].tensor_idx == ti) n += 1;
+        metas[ti] = .{
+            .name = t.name,
+            .dtype = t.view.dtype,
+            .shape = t.view.shape,
+            .n_blocks = n,
+        };
+        bi += n;
+    }
+    std.debug.assert(bi == blocks.len);
+    return metas;
+}
+
+fn buildArchive(
+    alloc: Allocator,
+    tensors: []const safetensors.Tensor,
+    blocks: []const Block,
+    results: []?search.Result,
+) ![]u8 {
+    const metas = try tensorMetas(alloc, tensors, blocks);
+    defer alloc.free(metas);
+    var jobs: std.ArrayList(archive.BlockJob) = .empty;
+    defer jobs.deinit(alloc);
+
+    for (results, 0..) |_, i| {
+        const r = &results[i].?;
+        try jobs.append(alloc, .{ .node = &r.node, .payload = r.payload });
+    }
+    return archive.build(alloc, metas, jobs.items, &.{});
+}
+
+fn ratio(orig: u64, comp: u64) f64 {
+    if (comp == 0) return 0;
+    return @as(f64, @floatFromInt(orig)) / @as(f64, @floatFromInt(comp));
+}
+
+fn rawBytes(tensors: []const safetensors.Tensor) u64 {
+    var n: u64 = 0;
+    for (tensors) |t| n += t.view.data.len;
+    return n;
+}
+
+fn threadCount(opt: ?usize) usize {
+    return opt orelse (std.Thread.getCpuCount() catch 8);
+}
+
+// ==================== calibrate ====================
+
+fn stratifiedSample(alloc: Allocator, blocks: []const Block, n: usize, seed: u64) ![]Block {
+    if (blocks.len <= n) return alloc.dupe(Block, blocks);
+
+    var strata: std.AutoHashMapUnmanaged(u16, std.ArrayList(u32)) = .empty;
+    defer {
+        var vit = strata.valueIterator();
+        while (vit.next()) |l| l.deinit(alloc);
+        strata.deinit(alloc);
+    }
+    for (blocks, 0..) |b, i| {
+        const lg: u16 = @intCast(std.math.log2_int(usize, @max(b.elem_count, 1)));
+        const key = (@as(u16, @intFromEnum(b.dtype)) << 8) | lg;
+        const gop = try strata.getOrPut(alloc, key);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(alloc, @intCast(i));
+    }
+
+    var keys: std.ArrayList(u16) = .empty;
+    defer keys.deinit(alloc);
+    var kit = strata.keyIterator();
+    while (kit.next()) |k| try keys.append(alloc, k.*);
+    std.mem.sort(u16, keys.items, {}, std.sort.asc(u16));
+
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const rnd = prng.random();
+    for (keys.items) |k| rnd.shuffle(u32, strata.getPtr(k).?.items);
+
+    var out: std.ArrayList(Block) = .empty;
+    errdefer out.deinit(alloc);
+    var cursor: usize = 0;
+    while (out.items.len < n) {
+        var progressed = false;
+        for (keys.items) |k| {
+            const l = strata.getPtr(k).?;
+            if (cursor >= l.items.len) continue;
+            try out.append(alloc, blocks[l.items[cursor]]);
+            progressed = true;
+            if (out.items.len == n) break;
+        }
+        if (!progressed) break;
+        cursor += 1;
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+fn accumulate(
+    alloc: Allocator,
+    counts: *prior.Counts,
+    node: program.Node,
+    in: Stream,
+    dtype: Dtype,
+    slot: u8,
+    depth: u8,
+    parent_op: u8,
+    w: f64,
+) anyerror!void {
+    const ctx = prior.Context.fromStream(in, dtype, slot, depth, parent_op);
+    try counts.add(alloc, ctx, node.op, w);
+    if (node.op.isTerminal()) return;
+
+    var outs: std.ArrayList(Stream) = .empty;
+    defer {
+        for (outs.items) |*s| s.deinit(alloc);
+        outs.deinit(alloc);
+    }
+    var side: ops.SideInfo = .none;
+    defer side.deinit(alloc);
+    try ops.forward(alloc, node.op, node.params, in, &outs, &side);
+
+    for (node.children, outs.items, 0..) |c, s, k|
+        try accumulate(alloc, counts, c, s, dtype, @intCast(k), depth + 1, @intFromEnum(node.op), w);
+}
+
+const CalibJob = struct {
+    next: std.atomic.Value(usize),
+    fails: std.atomic.Value(usize),
+    tensors: []const safetensors.Tensor,
+    picked: []const Block,
+    counts: []prior.Counts,
+    alloc: Allocator,
+
+    fn run(self: *CalibJob, slot: usize) void {
+        while (true) {
+            const i = self.next.fetchAdd(1, .acq_rel);
+            if (i >= self.picked.len) return;
+            self.one(slot, self.picked[i]) catch |e| {
+                std.debug.print("calibrate block {d}: {t}\n", .{ i, e });
+                _ = self.fails.fetchAdd(1, .acq_rel);
+            };
+        }
+    }
+
+    fn one(self: *CalibJob, slot: usize, b: Block) !void {
+        const alloc = self.alloc;
+        var s = b.asStream(self.tensors[b.tensor_idx].view.data);
+        s.count = @min(s.count, CALIB_ELEMS);
+        s.data = s.data[0 .. s.count * s.elemBytes()];
+
+        const cands = try search.synthesizeAll(alloc, s, b.dtype, .{
+            .enumerate_all = true,
+            .max_nodes = 4,
+            .max_depth = 2,
+        });
+        defer {
+            for (cands) |*c| c.deinit(alloc);
+            alloc.free(cands);
+        }
+        if (cands.len == 0) return;
+
+        const best: f64 = @floatFromInt(cands[0].bytes);
+        for (cands) |c| {
+            const w = @exp(-(@as(f64, @floatFromInt(c.bytes)) - best) / ops.TAU);
+            if (w < 0.01) break;
+            try accumulate(alloc, &self.counts[slot], c.node, s, b.dtype, 0, 0, ROOT_PARENT, w);
+        }
+    }
+};
+
+fn mergeCounts(alloc: Allocator, dst: *prior.Counts, src: prior.Counts) !void {
+    for (0..3) |lv| {
+        var it = src.levels[lv].iterator();
+        while (it.next()) |e| {
+            const gop = try dst.levels[lv].getOrPut(alloc, e.key_ptr.*);
+            if (!gop.found_existing) gop.value_ptr.* = @splat(0);
+            for (gop.value_ptr, e.value_ptr.*) |*d, v| d.* += v;
+        }
+    }
+}
+
+fn cmdCalibrate(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: []const u8, n_sample: usize) !void {
+    const alloc = std.heap.smp_allocator;
+
     var loaded = try safetensors.loadFromPath(alloc, io, in_path);
     defer loaded.deinitMmap(alloc, io);
+    try checkTensors(loaded.tensors);
 
-    // Concatenate raw tensor bytes (the meaningful payload, excludes safetensors header).
-    var raw_total: usize = 0;
-    for (loaded.tensors) |t| raw_total += t.view.data.len;
-    const raw_concat = try alloc.alloc(u8, raw_total);
+    const blocks = try planAll(alloc, loaded.tensors);
+    defer alloc.free(blocks);
+
+    const picked = try stratifiedSample(alloc, blocks, n_sample, 0x5EED_B10C);
+    defer alloc.free(picked);
+
+    const n_threads = @max(@as(usize, 1), @min(threadCount(null), picked.len));
+    try out.print("calibrate: {d} tensors, {d} blocks, sampling {d} on {d} threads\n", .{
+        loaded.tensors.len, blocks.len, picked.len, n_threads,
+    });
+    try out.flush();
+
+    const per_thread = try alloc.alloc(prior.Counts, n_threads);
+    defer {
+        for (per_thread) |*c| c.deinit(alloc);
+        alloc.free(per_thread);
+    }
+    for (per_thread) |*c| c.* = prior.Counts.init(alloc);
+
+    var job: CalibJob = .{
+        .next = .init(0),
+        .fails = .init(0),
+        .tensors = loaded.tensors,
+        .picked = picked,
+        .counts = per_thread,
+        .alloc = alloc,
+    };
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    const threads = try alloc.alloc(std.Thread, n_threads);
+    defer alloc.free(threads);
+    for (threads, 0..) |*t, slot| t.* = try std.Thread.spawn(.{}, CalibJob.run, .{ &job, slot });
+    for (threads) |t| t.join();
+    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
+
+    if (job.fails.load(.acquire) > 0) return error.CalibrationFailed;
+
+    var counts = prior.Counts.init(alloc);
+    defer counts.deinit(alloc);
+    for (per_thread) |c| try mergeCounts(alloc, &counts, c);
+
+    var pr = try counts.toPrior(alloc);
+    defer pr.deinit(alloc);
+    try pr.save(alloc, prior_path);
+
+    try out.print("calibrated in {d}ms; contexts L0={d} L1={d} L2={d} -> {s}\n", .{
+        ms, pr.levels[0].count(), pr.levels[1].count(), pr.levels[2].count(), prior_path,
+    });
+}
+
+// ==================== compress ====================
+
+fn cmdCompress(
+    io: std.Io,
+    out: *std.Io.Writer,
+    in_path: []const u8,
+    out_path: []const u8,
+    prior_path: ?[]const u8,
+    jobs: ?usize,
+) !void {
+    const alloc = std.heap.smp_allocator;
+
+    var loaded = try safetensors.loadFromPath(alloc, io, in_path);
+    defer loaded.deinitMmap(alloc, io);
+    try checkTensors(loaded.tensors);
+
+    var pr = try loadPrior(alloc, prior_path);
+    defer pr.deinit(alloc);
+
+    const blocks = try planAll(alloc, loaded.tensors);
+    defer alloc.free(blocks);
+
+    const n_threads = threadCount(jobs);
+    try out.print("compress: {d} tensors, {d} blocks, {d} threads, prior={s}\n", .{
+        loaded.tensors.len, blocks.len, n_threads, prior_path orelse "uniform",
+    });
+    try out.flush();
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads);
+    defer freePlans(alloc, plans);
+    const metas = try tensorMetas(alloc, loaded.tensors, blocks);
+    defer alloc.free(metas);
+
+    var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
+    defer atomic.deinit(io);
+    var file_buf: [64 * 1024]u8 = undefined;
+    var writer = atomic.file.writer(io, &file_buf);
+    try writer.interface.writeAll(&archive.HEADER);
+
+    var builder = archive.Builder.init(alloc);
+    defer builder.deinit();
+    var file_off: u64 = archive.HEADER.len;
+    const batch_size = @max(@as(usize, 1), n_threads) * 16;
+    var first: usize = 0;
+    while (first < blocks.len) {
+        const last = @min(first + batch_size, blocks.len);
+        const batch = blocks[first..last];
+        const results = try encodeBlocks(alloc, loaded.tensors, batch, plans, n_threads);
+        defer freeResults(alloc, results);
+        for (results) |maybe_result| {
+            var result = maybe_result.?;
+            try builder.add(.{ .node = &result.node, .payload = result.payload }, file_off);
+            try writer.interface.writeAll(result.payload);
+            file_off += result.payload.len;
+        }
+        first = last;
+    }
+
+    const header_len: usize = @intCast(std.mem.readInt(u64, loaded.bytes[0..8], .little));
+    const tail = try builder.finish(metas, file_off, loaded.bytes[0 .. 8 + header_len]);
+    defer alloc.free(tail);
+    try writer.interface.writeAll(tail);
+    try writer.interface.flush();
+    const written = file_off + tail.len;
+    try atomic.replace(io);
+    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
+
+    const raw = rawBytes(loaded.tensors);
+    try out.print("synthesized and wrote in {d}ms\n", .{ms});
+    try out.print("wrote {s}: {d} -> {d} bytes ({d:.3}x)\n", .{ out_path, raw, written, ratio(raw, written) });
+}
+
+// ==================== decompress / verify ====================
+
+const DecodeJob = struct {
+    next: std.atomic.Value(usize),
+    fails: std.atomic.Value(usize),
+    blocks: []const archive.ParsedBlock,
+    streams: []?Stream,
+    alloc: Allocator,
+
+    fn run(self: *DecodeJob) void {
+        while (true) {
+            const i = self.next.fetchAdd(1, .acq_rel);
+            if (i >= self.blocks.len) return;
+            self.streams[i] = archive.decodeBlock(self.alloc, self.blocks[i]) catch |err| {
+                std.debug.print("decode block {d}: {t}\n", .{ i, err });
+                _ = self.fails.fetchAdd(1, .acq_rel);
+                continue;
+            };
+        }
+    }
+};
+
+fn decodeBlocks(alloc: Allocator, blocks: []const archive.ParsedBlock, n_threads: usize) ![]?Stream {
+    const streams = try alloc.alloc(?Stream, blocks.len);
+    errdefer freeStreams(alloc, streams);
+    for (streams) |*stream| stream.* = null;
+
+    var job: DecodeJob = .{
+        .next = .init(0),
+        .fails = .init(0),
+        .blocks = blocks,
+        .streams = streams,
+        .alloc = alloc,
+    };
+    if (blocks.len > 0) {
+        const n = @min(n_threads, blocks.len);
+        if (n == 1) job.run() else try runWorkers(alloc, n, &job, DecodeJob.run);
+    }
+    if (job.fails.load(.acquire) > 0) return error.DecompressionFailed;
+    return streams;
+}
+
+fn freeStreams(alloc: Allocator, streams: []?Stream) void {
+    for (streams) |*stream| if (stream.*) |*value| value.deinit(alloc);
+    alloc.free(streams);
+}
+
+fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path: []const u8, jobs: ?usize) !void {
+    const alloc = std.heap.smp_allocator;
+    var loaded = try archive.loadFromPath(alloc, io, in_path);
+    defer loaded.deinit(alloc, io);
+
+    const n_threads = @max(@as(usize, 1), threadCount(jobs));
+    const t0 = std.Io.Timestamp.now(io, .awake);
+
+    const metas = try alloc.alloc(safetensors.TensorMeta, loaded.parsed.tensors.len);
+    defer alloc.free(metas);
+    for (loaded.parsed.tensors, metas) |tensor, *meta| {
+        var count: usize = 1;
+        for (tensor.shape) |dim| count *= @intCast(dim);
+        meta.* = .{
+            .name = tensor.name,
+            .dtype = tensor.dtype,
+            .shape = tensor.shape,
+            .byte_len = count * tensor.dtype.elemSize(),
+        };
+    }
+    var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
+    defer atomic.deinit(io);
+    var file_buf: [64 * 1024]u8 = undefined;
+    var writer = atomic.file.writer(io, &file_buf);
+    if (loaded.parsed.safetensors_prefix.len > 0) {
+        try writer.interface.writeAll(loaded.parsed.safetensors_prefix);
+    } else {
+        const header = try safetensors.buildHeader(alloc, metas);
+        defer alloc.free(header);
+        var len_buf: [8]u8 = undefined;
+        std.mem.writeInt(u64, &len_buf, header.len, .little);
+        try writer.interface.writeAll(&len_buf);
+        try writer.interface.writeAll(header);
+    }
+
+    for (loaded.parsed.tensors, metas) |tensor, meta| {
+        var written: usize = 0;
+        const batch_size = n_threads * 16;
+        var first: usize = 0;
+        while (first < tensor.blocks.len) {
+            const last = @min(first + batch_size, tensor.blocks.len);
+            const streams = try decodeBlocks(alloc, tensor.blocks[first..last], n_threads);
+            defer freeStreams(alloc, streams);
+            for (streams) |maybe_stream| {
+                const stream = maybe_stream.?;
+                const data = stream.data[0 .. stream.count * stream.elemBytes()];
+                try writer.interface.writeAll(data);
+                written += data.len;
+            }
+            first = last;
+        }
+        if (written != meta.byte_len) return error.ShapeDataMismatch;
+    }
+    try writer.interface.flush();
+    try atomic.replace(io);
+    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
+    try out.print("decompressed {d} tensors on {d} threads in {d}ms -> {s}\n", .{
+        loaded.parsed.tensors.len, n_threads, ms, out_path,
+    });
+}
+
+fn cmdVerify(alloc: Allocator, io: std.Io, out: *std.Io.Writer, brv_path: []const u8, orig_path: []const u8) !void {
+    var loaded = try archive.loadFromPath(alloc, io, brv_path);
+    defer loaded.deinit(alloc, io);
+
+    var orig = try safetensors.loadFromPath(alloc, io, orig_path);
+    defer orig.deinitMmap(alloc, io);
+
+    const header_len: usize = @intCast(std.mem.readInt(u64, orig.bytes[0..8], .little));
+    const header_matches = loaded.parsed.safetensors_prefix.len == 0 or
+        std.mem.eql(u8, loaded.parsed.safetensors_prefix, orig.bytes[0 .. 8 + header_len]);
+    if (!header_matches) try out.writeAll("  SAFETENSORS HEADER MISMATCH\n");
+
+    var ok: usize = 0;
+    var bad: usize = 0;
+    if (loaded.parsed.tensors.len != orig.tensors.len) {
+        try out.print("  TENSOR COUNT: archive {d}, original {d}\n", .{ loaded.parsed.tensors.len, orig.tensors.len });
+        bad += if (loaded.parsed.tensors.len > orig.tensors.len)
+            loaded.parsed.tensors.len - orig.tensors.len
+        else
+            orig.tensors.len - loaded.parsed.tensors.len;
+    }
+    for (loaded.parsed.tensors) |*t| {
+        const found: ?types.TensorView = blk: {
+            for (orig.tensors) |ot| {
+                if (std.mem.eql(u8, ot.name, t.name)) break :blk ot.view;
+            }
+            break :blk null;
+        };
+        if (found == null) {
+            try out.print("  MISSING in original: {s}\n", .{t.name});
+            bad += 1;
+            continue;
+        }
+        if (t.dtype != found.?.dtype or !std.mem.eql(u64, t.shape, found.?.shape)) {
+            try out.print("  METADATA MISMATCH: {s}\n", .{t.name});
+            bad += 1;
+            continue;
+        }
+        var off: usize = 0;
+        var matches = true;
+        for (t.blocks) |block| {
+            var stream = try archive.decodeBlock(alloc, block);
+            defer stream.deinit(alloc);
+            const data = stream.data[0 .. stream.count * stream.elemBytes()];
+            if (data.len > found.?.data.len - off or !std.mem.eql(u8, data, found.?.data[off..][0..data.len])) {
+                matches = false;
+                break;
+            }
+            off += data.len;
+        }
+        if (matches and off == found.?.data.len) {
+            ok += 1;
+        } else {
+            try out.print("  MISMATCH: {s}\n", .{t.name});
+            bad += 1;
+        }
+    }
+    try out.print("verified {d}/{d} tensors bit-exact\n", .{ ok, ok + bad });
+    try out.flush();
+    if (bad > 0 or !header_matches) std.process.exit(1);
+}
+
+// ==================== bench ====================
+
+fn renderProgram(alloc: Allocator, out: *std.ArrayList(u8), node: program.Node) Allocator.Error!void {
+    try out.appendSlice(alloc, @tagName(node.op));
+    if (node.children.len == 0) return;
+    try out.append(alloc, '(');
+    for (node.children, 0..) |c, i| {
+        if (i > 0) try out.append(alloc, ',');
+        try renderProgram(alloc, out, c);
+    }
+    try out.append(alloc, ')');
+}
+
+const DtypeStat = struct {
+    blocks: usize = 0,
+    raw: u64 = 0,
+    comp: u64 = 0,
+    shapes: std.StringHashMapUnmanaged(usize) = .empty,
+};
+
+const ShapeCount = struct { name: []const u8, n: usize };
+
+fn moreCount(_: void, a: ShapeCount, b: ShapeCount) bool {
+    return a.n > b.n;
+}
+
+fn report(alloc: Allocator, out: *std.Io.Writer, blocks: []const Block, results: []const ?search.Result) !void {
+    var arena: std.heap.ArenaAllocator = .init(alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var stats: [N_DTYPE]DtypeStat = @splat(.{});
+    var buf: std.ArrayList(u8) = .empty;
+
+    for (blocks, results) |b, maybe| {
+        const r = maybe orelse continue;
+        const s = &stats[@intFromEnum(b.dtype)];
+        s.blocks += 1;
+        s.raw += b.byteLen();
+        s.comp += r.bytes;
+
+        buf.clearRetainingCapacity();
+        try renderProgram(a, &buf, r.node);
+        const gop = try s.shapes.getOrPut(a, buf.items);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = try a.dupe(u8, buf.items);
+            gop.value_ptr.* = 0;
+        }
+        gop.value_ptr.* += 1;
+    }
+
+    var total_raw: u64 = 0;
+    var total_comp: u64 = 0;
+    for (0..N_DTYPE) |di| {
+        const s = stats[di];
+        if (s.blocks == 0) continue;
+        total_raw += s.raw;
+        total_comp += s.comp;
+
+        const dt: Dtype = @enumFromInt(di);
+        try out.print("\n{s}: {d} blocks, {d} -> {d} bytes ({d:.3}x)\n", .{
+            dt.name(), s.blocks, s.raw, s.comp, ratio(s.raw, s.comp),
+        });
+
+        var top: std.ArrayList(ShapeCount) = .empty;
+        defer top.deinit(a);
+        var it = s.shapes.iterator();
+        while (it.next()) |e| try top.append(a, .{ .name = e.key_ptr.*, .n = e.value_ptr.* });
+        std.mem.sort(ShapeCount, top.items, {}, moreCount);
+
+        for (top.items[0..@min(10, top.items.len)]) |sc| {
+            try out.print("  {d:>6}  {s}\n", .{ sc.n, sc.name });
+        }
+        try out.flush();
+    }
+
+    try out.print("\noverall: {d} -> {d} bytes ({d:.3}x)\n", .{ total_raw, total_comp, ratio(total_raw, total_comp) });
+}
+
+fn cmdBench(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: ?[]const u8, jobs: ?usize) !void {
+    const alloc = std.heap.smp_allocator;
+
+    var loaded = try safetensors.loadFromPath(alloc, io, in_path);
+    defer loaded.deinitMmap(alloc, io);
+    try checkTensors(loaded.tensors);
+
+    var pr = try loadPrior(alloc, prior_path);
+    defer pr.deinit(alloc);
+
+    const blocks = try planAll(alloc, loaded.tensors);
+    defer alloc.free(blocks);
+
+    const n_threads = threadCount(jobs);
+    try out.print("=== brevis bench: {s} ({d} tensors, {d} blocks, {d} threads) ===\n", .{
+        in_path, loaded.tensors.len, blocks.len, n_threads,
+    });
+    try out.flush();
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    const results = try synthesizeBlocks(alloc, loaded.tensors, blocks, &pr, n_threads);
+    defer freeResults(alloc, results);
+    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
+
+    try report(alloc, out, blocks, results);
+    try out.print("synthesis wall time: {d}ms\n", .{ms});
+}
+
+// ==================== baseline ====================
+
+fn cmdBaseline(io: std.Io, out: *std.Io.Writer, in_path: []const u8, jobs: ?usize) !void {
+    const alloc = std.heap.smp_allocator;
+
+    var loaded = try safetensors.loadFromPath(alloc, io, in_path);
+    defer loaded.deinitMmap(alloc, io);
+    try checkTensors(loaded.tensors);
+
+    const raw_total = rawBytes(loaded.tensors);
+    const raw_concat = try alloc.alloc(u8, @intCast(raw_total));
     defer alloc.free(raw_concat);
     var off: usize = 0;
     for (loaded.tensors) |t| {
-        @memcpy(raw_concat[off .. off + t.view.data.len], t.view.data);
+        @memcpy(raw_concat[off..][0..t.view.data.len], t.view.data);
         off += t.view.data.len;
     }
 
-    try out.print("=== brevis baseline: {s} ({d} tensors, {d} bytes raw) ===\n\n", .{ in_path, loaded.tensors.len, raw_total });
+    try out.print("=== brevis baseline: {s} ({d} tensors, {d} bytes raw) ===\n\n", .{
+        in_path, loaded.tensors.len, raw_total,
+    });
+    try out.flush();
 
-    // 1) brevis (synthesize each, build archive)
-    var results: std.ArrayList(search.Result) = .empty;
-    defer {
-        for (results.items) |*r| r.deinit(alloc);
-        results.deinit(alloc);
-    }
-    var brevis_total_bits: u64 = 0;
-    for (loaded.tensors) |t| {
-        if (!t.view.dtype.isFloat16Like()) continue;
-        const r = try search.synthesize(alloc, t.view, &.{}, .{});
-        try results.append(alloc, r);
-        brevis_total_bits += r.actual_bits;
-    }
-    var jobs: std.ArrayList(archive.TensorJob) = .empty;
-    defer jobs.deinit(alloc);
-    var idx: usize = 0;
-    for (loaded.tensors) |t| {
-        if (!t.view.dtype.isFloat16Like()) continue;
-        try jobs.append(alloc, .{
-            .name = t.name,
-            .program = &results.items[idx].program,
-            .payload = results.items[idx].payload,
-        });
-        idx += 1;
-    }
-    const brevis_bytes = try archive.buildArchiveBytes(alloc, jobs.items);
-    defer alloc.free(brevis_bytes);
+    var pr = prior.Prior.initUniform(alloc);
+    defer pr.deinit(alloc);
+    const blocks = try planAll(alloc, loaded.tensors);
+    defer alloc.free(blocks);
+    const results = try synthesizeBlocks(alloc, loaded.tensors, blocks, &pr, threadCount(jobs));
+    defer freeResults(alloc, results);
+    const brv = try buildArchive(alloc, loaded.tensors, blocks, results);
+    defer alloc.free(brv);
 
-    // 2) gzip (in-process, level 9)
-    const gz_size = try baseline.gzipSize(alloc, raw_concat);
+    const gz = try baseline.gzipSize(alloc, raw_concat);
+    const z3 = try baseline.zstdSize(alloc, io, raw_concat, 3);
+    const z19 = try baseline.zstdSize(alloc, io, raw_concat, 19);
 
-    // 3) zstd at a few levels (shell-out)
-    const zstd_3 = try baseline.zstdSize(alloc, io, raw_concat, 3);
-    const zstd_19 = try baseline.zstdSize(alloc, io, raw_concat, 19);
-
-    const f = struct {
-        fn ratio(orig: usize, comp: usize) f64 {
-            return @as(f64, @floatFromInt(orig)) / @as(f64, @floatFromInt(comp));
-        }
-    };
-
-    try out.writeAll("                       size (bytes)        ratio\n");
-    try out.writeAll("                       -------------       --------\n");
-    try out.print("raw                    {d:>13}       1.000x  (baseline)\n", .{raw_total});
-    try out.print("gzip -9                {d:>13}       {d:.3}x  (DEFLATE, in-process)\n", .{ gz_size, f.ratio(raw_total, gz_size) });
-    if (zstd_3) |z|
-        try out.print("zstd -3                {d:>13}       {d:.3}x  (zstd default)\n", .{ z, f.ratio(raw_total, z) })
+    try out.writeAll("                       size (bytes)      ratio\n");
+    try out.print("raw                    {d:>13}     1.000x\n", .{raw_total});
+    try out.print("gzip -9                {d:>13}     {d:.3}x\n", .{ gz, ratio(raw_total, gz) });
+    if (z3) |z|
+        try out.print("zstd -3                {d:>13}     {d:.3}x\n", .{ z, ratio(raw_total, z) })
     else
-        try out.writeAll("zstd -3                       (skip)        zstd not installed\n");
-    if (zstd_19) |z|
-        try out.print("zstd -19               {d:>13}       {d:.3}x  (zstd best-effort)\n", .{ z, f.ratio(raw_total, z) })
+        try out.writeAll("zstd -3                      (skip)     zstd not installed\n");
+    if (z19) |z|
+        try out.print("zstd -19               {d:>13}     {d:.3}x\n", .{ z, ratio(raw_total, z) })
     else
-        try out.writeAll("zstd -19                      (skip)        zstd not installed\n");
-    try out.print("brevis (.brv archive)  {d:>13}       {d:.3}x  (synth + entropy + shared codebooks)\n", .{ brevis_bytes.len, f.ratio(raw_total, brevis_bytes.len) });
-    try out.print("brevis (bits-only)     {d:>13}       {d:.3}x  (without container overhead)\n", .{ (brevis_total_bits + 7) / 8, f.ratio(raw_total, @as(usize, @intCast((brevis_total_bits + 7) / 8))) });
-    try out.writeAll("\nbrevis is bit-exact lossless on all reported tensors.\n");
+        try out.writeAll("zstd -19                     (skip)     zstd not installed\n");
+    try out.print("brevis (.brv)          {d:>13}     {d:.3}x\n", .{ brv.len, ratio(raw_total, brv.len) });
 }
 
-fn cmdMakeFixture(alloc: std.mem.Allocator, io: std.Io, out: *std.Io.Writer, path: []const u8) !void {
+// ==================== synthetic data ====================
+
+fn synthTensor(alloc: Allocator, dtype: Dtype, dims: []const u64, seed: u64, near_one: bool) !types.TensorView {
+    var n: usize = 1;
+    for (dims) |d| n *= @intCast(d);
+
+    const buf = try alloc.alloc(u8, n * dtype.elemSize());
+    errdefer alloc.free(buf);
+    var prng: std.Random.DefaultPrng = .init(seed);
+    const r = prng.random();
+
+    var counter: u32 = 0;
+    for (0..n) |i| {
+        const f: f32 = if (near_one) 1.0 + r.floatNorm(f32) * 0.02 else r.floatNorm(f32) * 0.02;
+        switch (dtype) {
+            .f16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @bitCast(@as(f16, @floatCast(f))), .little),
+            .bf16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @truncate(@as(u32, @bitCast(f)) >> 16), .little),
+            .f32 => std.mem.writeInt(u32, buf[i * 4 ..][0..4], @bitCast(f), .little),
+            .u8 => buf[i] = r.intRangeAtMost(u8, 0, 31),
+            .i8 => buf[i] = @bitCast(r.intRangeAtMost(i8, -16, 15)),
+            .u16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], r.intRangeAtMost(u16, 0, 1023), .little),
+            .i16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @bitCast(r.intRangeAtMost(i16, -512, 511)), .little),
+            .u32 => {
+                counter +%= r.intRangeAtMost(u32, 0, 7);
+                std.mem.writeInt(u32, buf[i * 4 ..][0..4], counter, .little);
+            },
+            .i32 => std.mem.writeInt(u32, buf[i * 4 ..][0..4], @bitCast(r.intRangeAtMost(i32, -512, 511)), .little),
+        }
+    }
+
+    const shape = try alloc.dupe(u64, dims);
+    return .{ .data = buf, .shape = shape, .dtype = dtype, .owns_data = true, .owns_shape = true };
+}
+
+const FixtureSpec = struct { name: []const u8, dtype: Dtype, dims: []const u64, near_one: bool = false };
+
+const fixtures = [_]FixtureSpec{
+    .{ .name = "attn.q_proj.weight", .dtype = .f16, .dims = &.{ 512, 512 } },
+    .{ .name = "norm.gamma", .dtype = .f16, .dims = &.{4096}, .near_one = true },
+    .{ .name = "embed.weight", .dtype = .bf16, .dims = &.{ 1024, 256 } },
+    .{ .name = "ffn.up.weight", .dtype = .f32, .dims = &.{ 256, 256 } },
+    .{ .name = "quant.scales", .dtype = .i8, .dims = &.{8192} },
+    .{ .name = "router.ids", .dtype = .u32, .dims = &.{4096} },
+};
+
+fn makeFixtureTensors(alloc: Allocator, views: *std.ArrayList(types.TensorView), tensors: *std.ArrayList(safetensors.Tensor)) !void {
+    for (fixtures, 0..) |spec, i| {
+        try views.append(alloc, try synthTensor(alloc, spec.dtype, spec.dims, i, spec.near_one));
+    }
+    for (fixtures, views.items) |spec, v| {
+        try tensors.append(alloc, .{ .name = spec.name, .view = v });
+    }
+}
+
+fn cmdMakeFixture(alloc: Allocator, io: std.Io, out: *std.Io.Writer, path: []const u8) !void {
     var views: std.ArrayList(types.TensorView) = .empty;
     defer {
         for (views.items) |*v| v.deinit(alloc);
         views.deinit(alloc);
     }
-
-    try views.append(alloc, try makeFp16Synthetic(alloc, 512, 512, 0.02, 0, false));
-    try views.append(alloc, try makeFp16Synthetic(alloc, 4096, 1, 0.01, 1, true));
-    try views.append(alloc, try makeFp16Synthetic(alloc, 1024, 512, 0.05, 2, false));
-    try views.append(alloc, try makeFp16Synthetic(alloc, 768, 768, 0.02, 3, false));
-
-    const names = [_][]const u8{
-        "attn_proj.weight",
-        "norm_1.gamma",
-        "embed.weight",
-        "ffn_in.weight",
-    };
+    var tensors: std.ArrayList(safetensors.Tensor) = .empty;
+    defer tensors.deinit(alloc);
+    try makeFixtureTensors(alloc, &views, &tensors);
 
     var outs: std.ArrayList(safetensors.TensorOut) = .empty;
     defer outs.deinit(alloc);
-    for (names, views.items) |n, v| try outs.append(alloc, .{ .name = n, .view = v });
+    for (tensors.items) |t| try outs.append(alloc, .{ .name = t.name, .view = t.view });
+
     try safetensors.saveToPath(alloc, io, path, outs.items);
-    try out.print("wrote fixture: {s} ({d} tensors)\n", .{ path, outs.items.len });
+    try out.print("wrote fixture {s} ({d} tensors)\n", .{ path, outs.items.len });
 }
 
-fn makeFp16Synthetic(alloc: std.mem.Allocator, d0: u64, d1: u64, sigma: f32, seed: u64, near_one: bool) !types.TensorView {
-    const n: usize = @intCast(d0 * d1);
-    const buf = try alloc.alloc(u8, n * 2);
-    var prng: std.Random.DefaultPrng = .init(seed);
-    const r = prng.random();
-    for (0..n) |i| {
-        const v: f16 = if (near_one)
-            @floatCast(1.0 + r.floatNorm(f32) * sigma)
-        else
-            @floatCast(r.floatNorm(f32) * sigma);
-        const u: u16 = @bitCast(v);
-        std.mem.writeInt(u16, buf[i * 2 ..][0..2], u, .little);
-    }
-    const shape = if (d1 == 1) blk: {
-        const s = try alloc.alloc(u64, 1);
-        s[0] = d0;
-        break :blk s;
-    } else blk: {
-        const s = try alloc.alloc(u64, 2);
-        s[0] = d0;
-        s[1] = d1;
-        break :blk s;
-    };
-    return .{
-        .data = buf,
-        .shape = shape,
-        .dtype = .f16,
-        .owns_data = true,
-        .owns_shape = true,
-    };
-}
+fn cmdDemo(io: std.Io, out: *std.Io.Writer) !void {
+    const alloc = std.heap.smp_allocator;
 
-// ---------- compress (parallel) ----------
-const CompressWorker = struct {
-    next: std.atomic.Value(usize),
-    tensors: []const safetensors.Tensor,
-    results: []?search.Result, // nullable: null = skipped
-    work_alloc: std.mem.Allocator,
-
-    fn run(self: *CompressWorker) void {
-        while (true) {
-            const idx = self.next.fetchAdd(1, .acq_rel);
-            if (idx >= self.tensors.len) return;
-            const t = self.tensors[idx];
-            if (!t.view.dtype.isFloat16Like()) {
-                self.results[idx] = null;
-                continue;
-            }
-            const r = search.synthesize(self.work_alloc, t.view, &.{}, .{}) catch {
-                self.results[idx] = null;
-                continue;
-            };
-            self.results[idx] = r;
-        }
-    }
-};
-
-fn cmdCompress(alloc: std.mem.Allocator, io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path: []const u8) !void {
-    _ = alloc;
-    const work_alloc = std.heap.smp_allocator;
-
-    var loaded = try safetensors.loadFromPath(work_alloc, io, in_path);
-    defer loaded.deinitMmap(work_alloc, io);
-
-    const n_threads: usize = std.Thread.getCpuCount() catch 8;
-    try out.print("loaded {d} tensors from {s} (compressing on {d} threads)\n", .{ loaded.tensors.len, in_path, n_threads });
-    try out.flush();
-
-    const results = try work_alloc.alloc(?search.Result, loaded.tensors.len);
+    var views: std.ArrayList(types.TensorView) = .empty;
     defer {
-        for (results) |maybe_r| {
-            if (maybe_r) |r_const| {
-                var r = r_const;
-                r.deinit(work_alloc);
-            }
-        }
-        work_alloc.free(results);
+        for (views.items) |*v| v.deinit(alloc);
+        views.deinit(alloc);
     }
-    for (results) |*r| r.* = null;
+    var tensors: std.ArrayList(safetensors.Tensor) = .empty;
+    defer tensors.deinit(alloc);
+    try makeFixtureTensors(alloc, &views, &tensors);
 
-    var worker: CompressWorker = .{
-        .next = .init(0),
-        .tensors = loaded.tensors,
-        .results = results,
-        .work_alloc = work_alloc,
-    };
+    var pr = prior.Prior.initUniform(alloc);
+    defer pr.deinit(alloc);
 
-    const t_start = std.Io.Timestamp.now(io, .awake);
-    const threads = try work_alloc.alloc(std.Thread, n_threads);
-    defer work_alloc.free(threads);
-    for (threads) |*th| th.* = try std.Thread.spawn(.{}, CompressWorker.run, .{&worker});
-    for (threads) |th| th.join();
-    const synth_ms = t_start.durationTo(.now(io, .awake)).toMilliseconds();
-    try out.print("synthesis done in {d}ms wall\n", .{synth_ms});
+    const blocks = try planAll(alloc, tensors.items);
+    defer alloc.free(blocks);
 
-    var total_raw: u64 = 0;
-    var total_compressed: u64 = 0;
-    for (loaded.tensors, 0..) |t, idx| {
-        if (results[idx]) |r| {
-            total_raw += r.raw_bits;
-            total_compressed += r.actual_bits;
-            try out.print("  {s:<40} {s:<35} {d:.3}x\n", .{ t.name, r.template_summary, r.compression_ratio });
-        } else {
-            try out.print("  skip {s}: dtype {s} (only fp16/bf16 supported in MVP)\n", .{ t.name, t.view.dtype.name() });
-        }
-    }
+    try out.print("=== brevis demo: {d} synthetic tensors, {d} blocks ===\n", .{ tensors.items.len, blocks.len });
     try out.flush();
 
-    var jobs: std.ArrayList(archive.TensorJob) = .empty;
-    defer jobs.deinit(work_alloc);
-    for (loaded.tensors, 0..) |t, idx| {
-        // Take a stable pointer into the results array; if we copied
-        // results[idx] to a local, &r.program would be a dangling pointer.
-        if (results[idx] != null) {
-            const r_ptr: *search.Result = &results[idx].?;
-            try jobs.append(work_alloc, .{
-                .name = t.name,
-                .program = &r_ptr.program,
-                .payload = r_ptr.payload,
-            });
-        }
-    }
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    const results = try synthesizeBlocks(alloc, tensors.items, blocks, &pr, threadCount(null));
+    defer freeResults(alloc, results);
+    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
 
-    const bytes = try archive.buildArchiveBytes(work_alloc, jobs.items);
-    defer work_alloc.free(bytes);
-
-    // End-to-end verify before writing the archive (cheap and worth it).
-    {
-        var arc = try archive.parseArchive(work_alloc, bytes);
-        defer arc.deinit(work_alloc);
-        var ok: usize = 0;
-        for (arc.tensors) |*at| {
-            const orig = blk: {
-                for (loaded.tensors) |ot| if (std.mem.eql(u8, ot.name, at.name)) break :blk ot.view;
-                return error.MissingOriginal;
-            };
-            var back = try program.decompressTensor(work_alloc, &at.program, &.{});
-            defer back.deinit(work_alloc);
-            if (!std.mem.eql(u8, orig.data, back.data)) {
-                try out.print("VERIFY FAIL: {s}\n", .{at.name});
-                return error.RoundtripFailed;
-            }
-            ok += 1;
-        }
-        try out.print("verified {d}/{d} tensors bit-exact before writing\n", .{ ok, arc.tensors.len });
-    }
-
-    const cwd = std.Io.Dir.cwd();
-    const f = try cwd.createFile(io, out_path, .{});
-    defer f.close(io);
-    var wb: [4096]u8 = undefined;
-    var wf = f.writer(io, &wb);
-    // chunked write for large archives (mirror loadFromPath)
-    const chunk: usize = 1 << 30;
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const n = @min(chunk, bytes.len - off);
-        try wf.interface.writeAll(bytes[off .. off + n]);
-        off += n;
-    }
-    try wf.interface.flush();
-
-    try out.print("\nwrote {s} ({d} bytes)\n", .{ out_path, bytes.len });
-    if (total_raw > 0) {
-        const ratio: f64 = @as(f64, @floatFromInt(total_raw)) / @as(f64, @floatFromInt(total_compressed));
-        try out.print("overall: {d} -> {d} bits ({d:.3}x); archive on disk: {d} bytes\n",
-            .{ total_raw, total_compressed, ratio, bytes.len });
-    }
-    try out.flush();
-}
-
-// ---------- decompress ----------
-fn cmdDecompress(alloc: std.mem.Allocator, io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path: []const u8) !void {
-    const cwd = std.Io.Dir.cwd();
-    const f = try cwd.openFile(io, in_path, .{});
-    defer f.close(io);
-    const stat = try f.stat(io);
-    const bytes = try alloc.alloc(u8, @intCast(stat.size));
-    defer alloc.free(bytes);
-    var rb: [4096]u8 = undefined;
-    var rdr = f.reader(io, &rb);
-    _ = try rdr.interface.readSliceAll(bytes);
-
-    var arc = try archive.parseArchive(alloc, bytes);
-    defer arc.deinit(alloc);
-
-    var out_views: std.ArrayList(types.TensorView) = .empty;
-    defer {
-        for (out_views.items) |*v| v.deinit(alloc);
-        out_views.deinit(alloc);
-    }
-    var out_tensors: std.ArrayList(safetensors.TensorOut) = .empty;
-    defer out_tensors.deinit(alloc);
-
-    for (arc.tensors) |*t| {
-        const view = try program.decompressTensor(alloc, &t.program, &.{});
-        try out_views.append(alloc, view);
-        try out_tensors.append(alloc, .{ .name = t.name, .view = view });
-    }
-
-    try safetensors.saveToPath(alloc, io, out_path, out_tensors.items);
-    try out.print("decompressed {d} tensors -> {s}\n", .{ arc.tensors.len, out_path });
-}
-
-// ---------- bench ----------
-//
-// Parallel implementation: a fixed pool of workers atomically pulls the next
-// tensor index from a counter, synthesizes it, and stores the result in a
-// shared slice indexed by tensor position. The main thread then prints in
-// order. We use `smp_allocator` for the per-task work (threadsafe in
-// ReleaseFast); the `safetensors.Loaded` is read-only across workers.
-const TensorJobResult = struct {
-    done: bool = false,
-    skipped: bool = false,
-    skip_reason: []const u8 = "",
-    name: []const u8 = "",
-    nbytes: usize = 0,
-    summary: []u8 = &.{}, // owned
-    ratio: f64 = 0,
-    raw_bits: u64 = 0,
-    actual_bits: u64 = 0,
-    elapsed_ms: i64 = 0,
-};
-
-const BenchWorker = struct {
-    next: std.atomic.Value(usize),
-    tensors: []const safetensors.Tensor,
-    results: []TensorJobResult,
-    work_alloc: std.mem.Allocator,
-    io: std.Io,
-
-    fn run(self: *BenchWorker) void {
-        while (true) {
-            const idx = self.next.fetchAdd(1, .acq_rel);
-            if (idx >= self.tensors.len) return;
-            const t = self.tensors[idx];
-            self.results[idx].name = t.name;
-            self.results[idx].nbytes = t.view.data.len;
-            if (!t.view.dtype.isFloat16Like()) {
-                self.results[idx].skipped = true;
-                self.results[idx].skip_reason = t.view.dtype.name();
-                self.results[idx].done = true;
-                continue;
-            }
-            const ts = std.Io.Timestamp.now(self.io, .awake);
-            var r = search.synthesize(self.work_alloc, t.view, &.{}, .{}) catch |e| {
-                self.results[idx].skipped = true;
-                const msg = std.fmt.allocPrint(self.work_alloc, "synth-err:{t}", .{e}) catch "synth-err";
-                self.results[idx].skip_reason = msg;
-                self.results[idx].done = true;
-                continue;
-            };
-            const elapsed_ms = ts.durationTo(.now(self.io, .awake)).toMilliseconds();
-            self.results[idx].summary = self.work_alloc.dupe(u8, r.template_summary) catch &.{};
-            self.results[idx].ratio = r.compression_ratio;
-            self.results[idx].raw_bits = r.raw_bits;
-            self.results[idx].actual_bits = r.actual_bits;
-            self.results[idx].elapsed_ms = elapsed_ms;
-            self.results[idx].done = true;
-            r.deinit(self.work_alloc);
-        }
-    }
-};
-
-fn cmdBench(alloc: std.mem.Allocator, io: std.Io, out: *std.Io.Writer, in_path: []const u8) !void {
-    _ = alloc;
-    // Use smp_allocator for everything heavy — threadsafe by construction.
-    const work_alloc = std.heap.smp_allocator;
-
-    var loaded = try safetensors.loadFromPath(work_alloc, io, in_path);
-    defer loaded.deinitMmap(work_alloc, io);
-
-    const n_threads: usize = std.Thread.getCpuCount() catch 8;
-
-    try out.print("=== brevis bench: {s} ({d} tensors, {d} threads) ===\n", .{ in_path, loaded.tensors.len, n_threads });
-    try out.writeAll("name                                     bytes        program                                     ratio\n");
-    try out.writeAll("---------------------------------------- ------------ ------------------------------------------- -------\n");
-    try out.flush();
-
-    const results = try work_alloc.alloc(TensorJobResult, loaded.tensors.len);
-    defer {
-        for (results) |r| {
-            if (r.summary.len > 0) work_alloc.free(r.summary);
-            if (r.skipped and r.skip_reason.len > 0 and !std.mem.eql(u8, r.skip_reason, r.name)) {
-                // Skip reasons that are dtype names are static; only free synth-err strings (heuristic: starts with "synth-err").
-                if (std.mem.startsWith(u8, r.skip_reason, "synth-err")) work_alloc.free(@constCast(r.skip_reason));
-            }
-        }
-        work_alloc.free(results);
-    }
-    for (results) |*r| r.* = .{};
-
-    var worker: BenchWorker = .{
-        .next = .init(0),
-        .tensors = loaded.tensors,
-        .results = results,
-        .work_alloc = work_alloc,
-        .io = io,
-    };
-
-    const t_start = std.Io.Timestamp.now(io, .awake);
-    const threads = try work_alloc.alloc(std.Thread, n_threads);
-    defer work_alloc.free(threads);
-    for (threads) |*th| th.* = try std.Thread.spawn(.{}, BenchWorker.run, .{&worker});
-
-    // Print results in tensor order as they complete (poll).
-    var printed: usize = 0;
-    while (printed < results.len) {
-        if (!@atomicLoad(bool, &results[printed].done, .acquire)) {
-            io.sleep(.fromNanoseconds(20 * std.time.ns_per_ms), .awake) catch {};
-            continue;
-        }
-        const r = results[printed];
-        if (r.skipped) {
-            try out.print("[{d:>3}/{d}] {s:<32} {d:>12} (skip: {s})\n",
-                .{ printed + 1, results.len, r.name, r.nbytes, r.skip_reason });
-        } else {
-            try out.print("[{d:>3}/{d}] {s:<32} {d:>12} {s:<43} {d:.3}x  ({d}ms)\n",
-                .{ printed + 1, results.len, r.name, r.nbytes, r.summary, r.ratio, r.elapsed_ms });
-        }
-        try out.flush();
-        printed += 1;
-    }
-    for (threads) |th| th.join();
-
-    var total_raw: u64 = 0;
-    var total_compressed: u64 = 0;
-    for (results) |r| {
-        total_raw += r.raw_bits;
-        total_compressed += r.actual_bits;
-    }
-    const total_elapsed_ms = t_start.durationTo(.now(io, .awake)).toMilliseconds();
-    if (total_raw > 0) {
-        const ratio: f64 = @as(f64, @floatFromInt(total_raw)) / @as(f64, @floatFromInt(total_compressed));
-        try out.print("\noverall: {d} -> {d} bits ({d:.3}x) in {d}ms wall\n", .{ total_raw, total_compressed, ratio, total_elapsed_ms });
-        try out.flush();
-    }
-}
-
-// ---------- verify ----------
-fn cmdVerify(alloc: std.mem.Allocator, io: std.Io, out: *std.Io.Writer, brv_path: []const u8, orig_path: []const u8) !void {
-    const cwd = std.Io.Dir.cwd();
-    const f = try cwd.openFile(io, brv_path, .{});
-    defer f.close(io);
-    const stat = try f.stat(io);
-    const bytes = try alloc.alloc(u8, @intCast(stat.size));
-    defer alloc.free(bytes);
-    var rb: [4096]u8 = undefined;
-    var rdr = f.reader(io, &rb);
-    _ = try rdr.interface.readSliceAll(bytes);
-
-    var arc = try archive.parseArchive(alloc, bytes);
-    defer arc.deinit(alloc);
-
-    var orig = try safetensors.loadFromPath(alloc, io, orig_path);
-    defer orig.deinit(alloc);
-
-    var ok_count: usize = 0;
-    var fail_count: usize = 0;
-    for (arc.tensors) |*t| {
-        var found: ?types.TensorView = null;
-        for (orig.tensors) |ot| {
-            if (std.mem.eql(u8, ot.name, t.name)) {
-                found = ot.view;
-                break;
-            }
-        }
-        if (found == null) {
-            try out.print("  MISSING in original: {s}\n", .{t.name});
-            fail_count += 1;
-            continue;
-        }
-        var back = try program.decompressTensor(alloc, &t.program, &.{});
-        defer back.deinit(alloc);
-        const matches = std.mem.eql(u8, found.?.data, back.data);
-        if (matches) {
-            ok_count += 1;
-        } else {
-            try out.print("  MISMATCH: {s}\n", .{t.name});
-            fail_count += 1;
-        }
-    }
-    try out.print("verified {d}/{d} tensors bit-exact\n", .{ ok_count, ok_count + fail_count });
-    if (fail_count > 0) std.process.exit(1);
-}
-
-// ---------- demo ----------
-fn cmdDemo(alloc: std.mem.Allocator, out: *std.Io.Writer) !void {
-    try out.writeAll("=== brevis demo: synthetic Transformer-like tensors ===\n\n");
-    try runOne(alloc, out, "attention_proj", 512 * 512, 0.02, 0, false);
-    try runOne(alloc, out, "layernorm_gamma", 4096, 0.01, 1, true);
-    try runOne(alloc, out, "embedding", 1024 * 512, 0.05, 2, false);
-}
-
-fn runOne(alloc: std.mem.Allocator, out: *std.Io.Writer, name: []const u8, n: usize, sigma: f32, seed: u64, near_one: bool) !void {
-    const buf = try alloc.alloc(u8, n * 2);
-    var prng: std.Random.DefaultPrng = .init(seed);
-    const r = prng.random();
-    if (near_one) {
-        for (0..n) |i| {
-            const v: f16 = @floatCast(1.0 + r.floatNorm(f32) * sigma);
-            const u: u16 = @bitCast(v);
-            std.mem.writeInt(u16, buf[i * 2 ..][0..2], u, .little);
-        }
-    } else {
-        for (0..n) |i| {
-            const v: f16 = @floatCast(r.floatNorm(f32) * sigma);
-            const u: u16 = @bitCast(v);
-            std.mem.writeInt(u16, buf[i * 2 ..][0..2], u, .little);
-        }
-    }
-    const shape = try alloc.alloc(u64, 1);
-    shape[0] = n;
-    var t: types.TensorView = .{
-        .data = buf,
-        .shape = shape,
-        .dtype = .f16,
-        .owns_data = true,
-        .owns_shape = true,
-    };
-    defer t.deinit(alloc);
-
-    var res = try search.synthesize(alloc, t, &.{}, .{});
-    defer res.deinit(alloc);
-    try out.print("{s:<24} n={d:<8}  best={s:<32}  ratio={d:.3}x  verified={any}\n",
-        .{ name, n, res.template_summary, res.compression_ratio, res.verified });
+    try report(alloc, out, blocks, results);
+    try out.print("synthesis wall time: {d}ms\n", .{ms});
 }

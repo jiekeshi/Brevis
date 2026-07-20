@@ -1,15 +1,4 @@
-//! Core data types: dtypes, streams, tensor views.
-//!
-//! A Stream is a 1-D byte buffer with a logical "bits per element". This is
-//! how data flows between ops in the DSL. We always store the raw bytes;
-//! `bits_per_elem` is metadata for entropy coders and bit-pack helpers.
-//!
-//! A TensorView wraps a typed multi-dimensional buffer. We deliberately don't
-//! own the data here — ops that produce new tensors return owned buffers and
-//! the caller frees them.
-
 const std = @import("std");
-
 pub const Allocator = std.mem.Allocator;
 
 pub const Dtype = enum(u8) {
@@ -19,17 +8,35 @@ pub const Dtype = enum(u8) {
     u8 = 3,
     u16 = 4,
     u32 = 5,
+    i8 = 6,
+    i16 = 7,
+    i32 = 8,
 
     pub fn elemSize(self: Dtype) usize {
         return switch (self) {
-            .f16, .bf16, .u16 => 2,
-            .f32, .u32 => 4,
-            .u8 => 1,
+            .u8, .i8 => 1,
+            .f16, .bf16, .u16, .i16 => 2,
+            .f32, .u32, .i32 => 4,
         };
     }
 
-    pub fn isFloat16Like(self: Dtype) bool {
-        return self == .f16 or self == .bf16;
+    pub fn bitWidth(self: Dtype) u8 {
+        return @intCast(self.elemSize() * 8);
+    }
+
+    pub fn isFloat(self: Dtype) bool {
+        return self == .f16 or self == .bf16 or self == .f32;
+    }
+
+    pub const FloatFields = struct { exp: u8, mant: u8, total: u8 };
+
+    pub fn floatFields(self: Dtype) ?FloatFields {
+        return switch (self) {
+            .f16 => .{ .exp = 5, .mant = 10, .total = 16 },
+            .bf16 => .{ .exp = 8, .mant = 7, .total = 16 },
+            .f32 => .{ .exp = 8, .mant = 23, .total = 32 },
+            else => null,
+        };
     }
 
     pub fn name(self: Dtype) []const u8 {
@@ -40,6 +47,9 @@ pub const Dtype = enum(u8) {
             .u8 => "U8",
             .u16 => "U16",
             .u32 => "U32",
+            .i8 => "I8",
+            .i16 => "I16",
+            .i32 => "I32",
         };
     }
 
@@ -50,26 +60,37 @@ pub const Dtype = enum(u8) {
         if (std.mem.eql(u8, s, "U8")) return .u8;
         if (std.mem.eql(u8, s, "U16")) return .u16;
         if (std.mem.eql(u8, s, "U32")) return .u32;
+        if (std.mem.eql(u8, s, "I8")) return .i8;
+        if (std.mem.eql(u8, s, "I16")) return .i16;
+        if (std.mem.eql(u8, s, "I32")) return .i32;
         return null;
     }
 };
 
-/// A 1-D buffer of `count` elements. Each element occupies `bits_per_elem`
-/// logical bits but is *physically* stored in the smallest power-of-two byte
-/// width that fits — so an exponent stream with 5 bits/elem still uses 1 byte
-/// per element in `data`. Compactness is the entropy coder's job.
+pub inline fn roundUpToPow2(bits: u8) u8 {
+    if (bits <= 8) return 8;
+    if (bits <= 16) return 16;
+    return 32;
+}
+
+/// A 1-D buffer of `count` elements, each `bits_per_elem` wide. Elements are
+/// stored at the smallest power-of-two byte width that fits; bit-level packing
+/// is the terminal coder's job.
 pub const Stream = struct {
-    data: []u8, // owned; caller frees with the stream's allocator
-    count: usize, // number of logical elements
-    bits_per_elem: u8, // 1, 2, .., 32
+    data: []u8,
+    count: usize,
+    bits_per_elem: u8,
     owns_data: bool = true,
 
-    pub fn elemBytes(self: Stream) usize {
-        return @divExact(roundUpToPow2(self.bits_per_elem), 8);
+    pub inline fn elemBytes(self: Stream) usize {
+        return roundUpToPow2(self.bits_per_elem) / 8;
     }
 
-    pub fn nbytes(self: Stream) usize {
-        return self.data.len;
+    pub fn init(alloc: Allocator, count: usize, bits_per_elem: u8) !Stream {
+        const w = roundUpToPow2(bits_per_elem) / 8;
+        const buf = try alloc.alloc(u8, count * w);
+        @memset(buf, 0);
+        return .{ .data = buf, .count = count, .bits_per_elem = bits_per_elem };
     }
 
     pub fn deinit(self: *Stream, alloc: Allocator) void {
@@ -77,45 +98,47 @@ pub const Stream = struct {
         self.data = &.{};
     }
 
-    pub fn cloneAlloc(self: Stream, alloc: Allocator) !Stream {
-        const buf = try alloc.alloc(u8, self.data.len);
-        @memcpy(buf, self.data);
-        return .{ .data = buf, .count = self.count, .bits_per_elem = self.bits_per_elem };
-    }
-
-    /// Read element i as a u32 (zero-extended).
-    pub fn getU32(self: Stream, i: usize) u32 {
-        const bpe = roundUpToPow2(self.bits_per_elem);
-        return switch (bpe) {
-            8 => @intCast(self.data[i]),
-            16 => @intCast(std.mem.readInt(u16, self.data[i * 2 ..][0..2], .little)),
-            32 => std.mem.readInt(u32, self.data[i * 4 ..][0..4], .little),
-            else => unreachable,
+    pub inline fn getU32(self: Stream, i: usize) u32 {
+        return switch (self.elemBytes()) {
+            1 => self.data[i],
+            2 => std.mem.readInt(u16, self.data[i * 2 ..][0..2], .little),
+            else => std.mem.readInt(u32, self.data[i * 4 ..][0..4], .little),
         };
     }
 
-    pub fn setU32(self: Stream, i: usize, v: u32) void {
-        const bpe = roundUpToPow2(self.bits_per_elem);
-        switch (bpe) {
-            8 => self.data[i] = @intCast(v & 0xFF),
-            16 => std.mem.writeInt(u16, self.data[i * 2 ..][0..2], @intCast(v & 0xFFFF), .little),
-            32 => std.mem.writeInt(u32, self.data[i * 4 ..][0..4], v, .little),
-            else => unreachable,
+    pub inline fn setU32(self: *Stream, i: usize, v: u32) void {
+        switch (self.elemBytes()) {
+            1 => self.data[i] = @truncate(v),
+            2 => std.mem.writeInt(u16, self.data[i * 2 ..][0..2], @truncate(v), .little),
+            else => std.mem.writeInt(u32, self.data[i * 4 ..][0..4], v, .little),
         }
+    }
+
+    pub inline fn mask(self: Stream) u32 {
+        if (self.bits_per_elem >= 32) return 0xFFFF_FFFF;
+        return (@as(u32, 1) << @intCast(self.bits_per_elem)) - 1;
+    }
+
+    pub fn dupe(self: Stream, alloc: Allocator) !Stream {
+        return .{
+            .data = try alloc.dupe(u8, self.data),
+            .count = self.count,
+            .bits_per_elem = self.bits_per_elem,
+        };
     }
 };
 
-/// A typed n-dim view onto bytes. `shape` is little-endian-row-major.
+/// A typed n-dim view onto bytes. `shape` is row-major.
 pub const TensorView = struct {
-    data: []u8, // raw bytes; len = prod(shape) * dtype.elemSize()
+    data: []u8,
     shape: []const u64,
     dtype: Dtype,
     owns_data: bool = false,
     owns_shape: bool = false,
 
-    pub fn numel(self: TensorView) u64 {
-        var n: u64 = 1;
-        for (self.shape) |d| n *= d;
+    pub fn numel(self: TensorView) usize {
+        var n: usize = 1;
+        for (self.shape) |d| n *= @intCast(d);
         return n;
     }
 
@@ -136,10 +159,44 @@ pub const TensorView = struct {
     }
 };
 
-pub fn roundUpToPow2(bits: u8) u8 {
-    if (bits == 0) return 0;
-    if (bits <= 8) return 8;
-    if (bits <= 16) return 16;
-    if (bits <= 32) return 32;
-    @panic("bits_per_elem > 32 unsupported");
+pub const TARGET_BLOCK_BYTES: usize = 256 * 1024;
+
+/// A contiguous element range of one tensor: the unit of program synthesis.
+pub const Block = struct {
+    tensor_idx: u32,
+    elem_offset: usize,
+    elem_count: usize,
+    dtype: Dtype,
+
+    pub fn byteLen(self: Block) usize {
+        return self.elem_count * self.dtype.elemSize();
+    }
+
+    /// Non-owning stream view over this block's bytes inside `tensor_data`.
+    pub fn asStream(self: Block, tensor_data: []u8) Stream {
+        const es = self.dtype.elemSize();
+        return .{
+            .data = tensor_data[self.elem_offset * es ..][0 .. self.elem_count * es],
+            .count = self.elem_count,
+            .bits_per_elem = self.dtype.bitWidth(),
+            .owns_data = false,
+        };
+    }
+};
+
+/// Split a tensor into ~TARGET_BLOCK_BYTES blocks, aligned to `inner` when possible.
+pub fn planBlocks(alloc: Allocator, tensor_idx: u32, dtype: Dtype, numel: usize, inner: usize) ![]Block {
+    var per = TARGET_BLOCK_BYTES / dtype.elemSize();
+    if (inner > 0 and per >= inner) per -= per % inner;
+    if (per == 0 or per > numel) per = numel;
+
+    const n = (numel + per - 1) / per;
+    const out = try alloc.alloc(Block, n);
+    var off: usize = 0;
+    for (out) |*b| {
+        const c = @min(per, numel - off);
+        b.* = .{ .tensor_idx = tensor_idx, .elem_offset = off, .elem_count = c, .dtype = dtype };
+        off += c;
+    }
+    return out;
 }

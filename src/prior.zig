@@ -1,126 +1,290 @@
-//! PHOG-lite: a hand-tuned probabilistic prior over DSL productions
-//! conditioned on the input's statistical features.
-//!
-//! A real PHOG (Probabilistic Higher-Order Grammar — Bielik, Raychev, Vechev 2016)
-//! learns rule probabilities from a corpus by conditioning each production on a
-//! tree-context summary. We don't have a corpus of labelled-best programs, so
-//! we encode a few well-known rules of thumb instead:
-//!
-//!   * exponent streams of trained weights have local correlation
-//!     → delta_encode usually helps
-//!   * mantissa streams in fp16 are near-uniform
-//!     → only entropy coding helps, structural transforms usually hurt
-//!   * sign streams are very skewed (≈50/50 if zero-centered)
-//!     → huffman gives 1 bit/elem (the floor); other transforms add overhead
-//!   * exp streams have <= 8 bits → bitplane_split can help isolate the
-//!     near-constant high bits
-//!
-//! The prior returns log2-probability mass that we ADD to the admissible
-//! lower bound when ranking candidates. A larger negative log means lower
-//! probability and so a higher cost penalty.
+//! PHOG-style prior over DSL productions. Each expansion site is summarised by
+//! a `Context` (tree position + bucketed statistics of the stream being
+//! expanded); scores are conditional on the productions legal at that hole and
+//! measured as -log2(p) in 1/1024 bits.
 
 const std = @import("std");
 const types = @import("types.zig");
-const program = @import("program.zig");
+const ops = @import("ops.zig");
+
+const Allocator = std.mem.Allocator;
 const Stream = types.Stream;
+const Dtype = types.Dtype;
 
-pub const Features = struct {
-    bits_per_elem: u8,
-    count: usize,
-    entropy_bits: f64, // 0..bits_per_elem
-    unique_count: u32, // distinct symbols seen
-    autocorr_decile: f64, // 0..1, fraction of |x[i]-x[i-1]| <= 1 (rough local-corr proxy)
+pub const N_PROD: usize = 64;
 
-    pub fn fromStream(s: Stream) Features {
-        if (s.count == 0) return .{
-            .bits_per_elem = s.bits_per_elem,
-            .count = 0,
-            .entropy_bits = 0,
-            .unique_count = 0,
-            .autocorr_decile = 0,
+const SAMPLE_MAX: usize = 64 * 1024;
+const MAGIC = "BRVP";
+const VERSION: u32 = 1;
+
+pub const Context = struct {
+    slot: u8 = 0,
+    depth: u8 = 0,
+    parent_op: u8 = 0,
+    dtype: u8 = 0,
+    bpe_bucket: u8 = 0,
+    entropy_bucket: u8 = 0,
+    zero_bucket: u8 = 0,
+    delta_bucket: u8 = 0,
+
+    pub fn fromStream(s: Stream, dtype: Dtype, slot: u8, depth: u8, parent_op: u8) Context {
+        var ctx: Context = .{
+            .slot = slot,
+            .depth = depth,
+            .parent_op = parent_op,
+            .dtype = @intFromEnum(dtype),
+            .bpe_bucket = bpeBucket(s.bits_per_elem),
         };
+        if (s.count == 0) return ctx;
 
-        var counts: [65536]u32 = undefined;
-        @memset(&counts, 0);
-        var unique: u32 = 0;
-        for (0..s.count) |i| {
-            const v = s.getU32(i) & 0xFFFF;
-            if (counts[v] == 0) unique += 1;
-            counts[v] += 1;
-        }
-        const total_f: f64 = @floatFromInt(s.count);
-        var H: f64 = 0;
-        for (counts) |c| {
-            if (c == 0) continue;
-            const p = @as(f64, @floatFromInt(c)) / total_f;
-            H += -p * std.math.log2(p);
-        }
+        const n = @min(s.count, SAMPLE_MAX);
+        const m = s.mask();
 
-        var close: u32 = 0;
-        var i: usize = 1;
-        while (i < s.count) : (i += 1) {
-            const a = @as(i64, s.getU32(i));
-            const b = @as(i64, s.getU32(i - 1));
-            const d = if (a > b) a - b else b - a;
-            if (d <= 1) close += 1;
-        }
-        const ac: f64 = if (s.count > 1) @as(f64, @floatFromInt(close)) / @as(f64, @floatFromInt(s.count - 1)) else 0;
+        // Folded to 16 bits: at most SAMPLE_MAX distinct symbols are observable
+        // anyway, and the buckets are coarse.
+        var hist: [1 << 16]u32 = undefined;
+        @memset(&hist, 0);
 
-        return .{
-            .bits_per_elem = s.bits_per_elem,
-            .count = s.count,
-            .entropy_bits = H,
-            .unique_count = unique,
-            .autocorr_decile = ac,
-        };
+        var zeros: usize = 0;
+        for (0..n) |i| {
+            const v = s.getU32(i) & m;
+            if (v == 0) zeros += 1;
+            hist[fold(v)] += 1;
+        }
+        const h0 = entropy(&hist, n);
+
+        @memset(&hist, 0);
+        var prev = s.getU32(0) & m;
+        hist[fold(prev)] += 1;
+        for (1..n) |i| {
+            const v = s.getU32(i) & m;
+            hist[fold((v -% prev) & m)] += 1;
+            prev = v;
+        }
+        const h_delta = entropy(&hist, n);
+
+        const bpe: f64 = @floatFromInt(s.bits_per_elem);
+        const zero_frac = @as(f64, @floatFromInt(zeros)) / @as(f64, @floatFromInt(n));
+        const delta_ratio = if (h0 > 0) h_delta / h0 else 1.0;
+
+        ctx.entropy_bucket = @intFromFloat(std.math.clamp(h0 / bpe * 8.0, 0.0, 7.0));
+        ctx.zero_bucket = @intFromFloat(std.math.clamp(zero_frac * 4.0, 0.0, 3.0));
+        ctx.delta_bucket = @intFromFloat(std.math.clamp(delta_ratio * 2.0, 0.0, 3.0));
+        return ctx;
+    }
+
+    /// Level 0 uses every field, level 1 drops the statistics, level 2 keeps
+    /// only the tree position.
+    pub fn hash(self: Context, level: u2) u64 {
+        var b: [9]u8 = @splat(0);
+        b[0] = level;
+        b[1] = self.slot;
+        b[2] = self.parent_op;
+        if (level < 2) {
+            b[3] = self.depth;
+            b[4] = self.dtype;
+            b[5] = self.bpe_bucket;
+        }
+        if (level == 0) {
+            b[6] = self.entropy_bucket;
+            b[7] = self.zero_bucket;
+            b[8] = self.delta_bucket;
+        }
+        return std.hash.XxHash64.hash(0, &b);
     }
 };
 
-/// Return a "log-probability" score (always ≤ 0) for choosing this op as the
-/// root of a stream subprogram given the input stream features.
-/// More negative = less likely.
-pub fn streamRuleScore(op: program.OpKind, f: Features) f64 {
-    return switch (op) {
-        .raw => -2.0, // always usable but rarely optimal — ~25% prior
-        .huffman => switch (f.unique_count) {
-            0 => -10.0,
-            1...16 => -0.3, // strongly prefers low-cardinality alphabets
-            17...64 => -1.0,
-            else => -2.0,
-        },
-        .rans => switch (f.unique_count) {
-            0 => -10.0,
-            1 => -3.0,
-            2...16 => -0.7,
-            17...256 => -0.5, // close-to-Shannon performance dominates here
-            else => -1.5,
-        },
-        .delta_encode => blk: {
-            // Boost when local correlation high
-            if (f.autocorr_decile > 0.5) break :blk -0.3;
-            if (f.autocorr_decile > 0.2) break :blk -1.0;
-            break :blk -3.0;
-        },
-        .bitplane_split => blk: {
-            // Best when bits_per_elem > 1 and the alphabet is heavily skewed,
-            // because the high-order planes will be near-constant.
-            if (f.bits_per_elem <= 1) break :blk -100.0; // useless on 1-bit
-            if (f.entropy_bits / @as(f64, @floatFromInt(f.bits_per_elem)) < 0.5) break :blk -0.5;
-            break :blk -2.5;
-        },
-        else => -10.0,
-    };
+fn fold(v: u32) usize {
+    return (v ^ (v >> 16)) & 0xFFFF;
 }
 
-/// Convert a log-probability score (in nats of -log(p)) into bits to add to
-/// the heuristic. Cap to a bounded penalty so admissibility on small streams
-/// isn't catastrophically violated.
-pub fn priorBitsPenalty(log_score: f64, count: usize) u64 {
-    // Bits = -log2(prior) but expressed cheaply. We weight by sqrt(count)
-    // so the prior matters less for huge streams (where data dominates) and
-    // more for tiny ones (where the choice is mostly heuristic).
-    const sqrt_count: f64 = std.math.sqrt(@as(f64, @floatFromInt(@max(count, 1))));
-    const penalty = -log_score * sqrt_count * 0.5;
-    if (penalty < 0) return 0;
-    return @intFromFloat(@min(penalty, 1.0e9));
+fn bpeBucket(bpe: u8) u8 {
+    if (bpe <= 1) return 0;
+    if (bpe <= 8) return 1;
+    if (bpe <= 16) return 2;
+    return 3;
 }
+
+fn entropy(hist: []const u32, n: usize) f64 {
+    const total: f64 = @floatFromInt(n);
+    var h: f64 = 0;
+    for (hist) |c| {
+        if (c == 0) continue;
+        const p = @as(f64, @floatFromInt(c)) / total;
+        h -= p * std.math.log2(p);
+    }
+    return h;
+}
+
+pub const Prior = struct {
+    levels: [3]std.AutoHashMapUnmanaged(u64, [N_PROD]u32),
+
+    pub fn initUniform(alloc: Allocator) Prior {
+        _ = alloc;
+        return .{ .levels = .{ .empty, .empty, .empty } };
+    }
+
+    pub fn deinit(self: *Prior, alloc: Allocator) void {
+        for (&self.levels) |*m| m.deinit(alloc);
+    }
+
+    pub fn isUniform(self: Prior) bool {
+        for (self.levels) |level| if (level.count() != 0) return false;
+        return true;
+    }
+
+    pub fn score(self: Prior, ctx: Context, op: ops.OpKind) u32 {
+        const idx: usize = @intFromEnum(op);
+        std.debug.assert(idx < N_PROD);
+        for (0..3) |lv| {
+            if (self.levels[lv].get(ctx.hash(@intCast(lv)))) |row| return row[idx];
+        }
+        return ops.UNIFORM_SCORE;
+    }
+
+    pub fn scoreSet(self: Prior, ctx: Context, productions: []const ops.OpKind, out: []u32) void {
+        std.debug.assert(productions.len == out.len and productions.len > 0);
+        var floor: u32 = std.math.maxInt(u32);
+        for (productions) |op| floor = @min(floor, self.score(ctx, op));
+
+        var sum: f64 = 0;
+        for (productions) |op| {
+            const delta: f64 = @floatFromInt(self.score(ctx, op) - floor);
+            sum += std.math.exp2(-delta / 1024.0);
+        }
+        const log_sum = std.math.log2(sum) * 1024.0;
+        for (productions, out) |op, *dst| {
+            const delta: f64 = @floatFromInt(self.score(ctx, op) - floor);
+            dst.* = @intFromFloat(@round(delta + log_sum));
+        }
+    }
+
+    pub fn save(self: Prior, alloc: Allocator, path: []const u8) !void {
+        var out: std.ArrayList(u8) = .empty;
+        defer out.deinit(alloc);
+
+        try out.appendSlice(alloc, MAGIC);
+        try wU32(alloc, &out, VERSION);
+        for (0..3) |lv| {
+            try wU32(alloc, &out, @intCast(self.levels[lv].count()));
+            var it = self.levels[lv].iterator();
+            while (it.next()) |e| {
+                try wU64(alloc, &out, e.key_ptr.*);
+                for (e.value_ptr.*) |s| try wU32(alloc, &out, s);
+            }
+        }
+
+        var threaded: std.Io.Threaded = .init(alloc, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+        const f = try std.Io.Dir.cwd().createFile(io, path, .{});
+        defer f.close(io);
+        var wb: [4096]u8 = undefined;
+        var w = f.writer(io, &wb);
+        try w.interface.writeAll(out.items);
+        try w.interface.flush();
+    }
+
+    pub fn load(alloc: Allocator, path: []const u8) !Prior {
+        var threaded: std.Io.Threaded = .init(alloc, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+        const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(1 << 30));
+        defer alloc.free(bytes);
+
+        var r: Reader = .{ .b = bytes };
+        if (!std.mem.eql(u8, try r.take(4), MAGIC)) return error.BadMagic;
+        if ((try r.u32v()) != VERSION) return error.BadVersion;
+
+        var p = Prior.initUniform(alloc);
+        errdefer p.deinit(alloc);
+        for (0..3) |lv| {
+            const n = try r.u32v();
+            if (@as(u64, n) * (8 + N_PROD * 4) > r.b.len - r.pos) return error.Truncated;
+            try p.levels[lv].ensureTotalCapacity(alloc, n);
+            for (0..n) |_| {
+                const key = try r.u64v();
+                var row: [N_PROD]u32 = undefined;
+                for (&row) |*s| s.* = try r.u32v();
+                p.levels[lv].putAssumeCapacity(key, row);
+            }
+        }
+        return p;
+    }
+};
+
+pub const Counts = struct {
+    levels: [3]std.AutoHashMapUnmanaged(u64, [N_PROD]f64),
+
+    pub fn init(alloc: Allocator) Counts {
+        _ = alloc;
+        return .{ .levels = .{ .empty, .empty, .empty } };
+    }
+
+    pub fn deinit(self: *Counts, alloc: Allocator) void {
+        for (&self.levels) |*m| m.deinit(alloc);
+    }
+
+    pub fn add(self: *Counts, alloc: Allocator, ctx: Context, op: ops.OpKind, w: f64) !void {
+        const idx: usize = @intFromEnum(op);
+        std.debug.assert(idx < N_PROD);
+        for (0..3) |lv| {
+            const gop = try self.levels[lv].getOrPut(alloc, ctx.hash(@intCast(lv)));
+            if (!gop.found_existing) gop.value_ptr.* = @splat(0);
+            gop.value_ptr[idx] += w;
+        }
+    }
+
+    /// Laplace-smoothed (α=1) production probabilities as -log2(p) * 1024.
+    pub fn toPrior(self: Counts, alloc: Allocator) !Prior {
+        var p = Prior.initUniform(alloc);
+        errdefer p.deinit(alloc);
+        for (0..3) |lv| {
+            try p.levels[lv].ensureTotalCapacity(alloc, self.levels[lv].count());
+            var it = self.levels[lv].iterator();
+            while (it.next()) |e| {
+                const productions = std.enums.values(ops.OpKind);
+                var total: f64 = @floatFromInt(productions.len);
+                for (productions) |op| total += e.value_ptr.*[@intFromEnum(op)];
+                var row: [N_PROD]u32 = @splat(ops.UNIFORM_SCORE);
+                for (productions) |op| {
+                    const idx: usize = @intFromEnum(op);
+                    const c = e.value_ptr.*[idx];
+                    const prob = (c + 1.0) / total;
+                    row[idx] = @intFromFloat(@round(@min(-std.math.log2(prob) * 1024.0, 1.0e9)));
+                }
+                p.levels[lv].putAssumeCapacity(e.key_ptr.*, row);
+            }
+        }
+        return p;
+    }
+};
+
+fn wU32(alloc: Allocator, out: *std.ArrayList(u8), v: u32) Allocator.Error!void {
+    var b: [4]u8 = undefined;
+    std.mem.writeInt(u32, &b, v, .little);
+    try out.appendSlice(alloc, &b);
+}
+
+fn wU64(alloc: Allocator, out: *std.ArrayList(u8), v: u64) Allocator.Error!void {
+    var b: [8]u8 = undefined;
+    std.mem.writeInt(u64, &b, v, .little);
+    try out.appendSlice(alloc, &b);
+}
+
+const Reader = struct {
+    b: []const u8,
+    pos: usize = 0,
+
+    fn take(self: *Reader, n: usize) error{Truncated}![]const u8 {
+        if (n > self.b.len - self.pos) return error.Truncated;
+        defer self.pos += n;
+        return self.b[self.pos..][0..n];
+    }
+    fn u32v(self: *Reader) error{Truncated}!u32 {
+        return std.mem.readInt(u32, (try self.take(4))[0..4], .little);
+    }
+    fn u64v(self: *Reader) error{Truncated}!u64 {
+        return std.mem.readInt(u64, (try self.take(8))[0..8], .little);
+    }
+};

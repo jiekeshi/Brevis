@@ -1,638 +1,674 @@
-//! Best-first synthesis with admissible heuristic + PHOG-lite prior.
-//!
-//! True A* over a small grammar: we enumerate the candidate space
-//! (bounded-depth derivations of the DSL grammar), score each candidate by
-//! the sum of admissible Shannon-entropy lower bounds at its leaves plus a
-//! prior-penalty term, then iterate from best to worst; for each, realize
-//! the actual encoding and measure cost. We stop as soon as the next
-//! candidate's lower bound is ≥ the best already-realized actual cost
-//! (correctness of A*: the heuristic is admissible, so no later candidate
-//! can beat it).
-//!
-//! Cross-tensor reference: `tensor_xor(base_id, sub_program)` is included as
-//! a top-level production whenever `bases.len > 0`.
-//!
-//! Grammar:
-//!   T_PROG := tensor_raw
-//!           | tensor_xor(b) -> T_BODY                (per base b)
-//!           | split_float -> S_PROG x S_PROG x S_PROG
-//!   T_BODY := tensor_raw
-//!           | split_float -> S_PROG x S_PROG x S_PROG
-//!   S_PROG := raw | huffman | rans
-//!           | delta_encode -> S_TERMINAL
-//!           | bitplane_split -> S_TERMINAL ... (n times, all same)
-//!   S_TERMINAL := raw | huffman | rans
+//! PHOG-guided A*: grammar description length orders expansion; an independent
+//! encoded-byte lower bound prunes programs that cannot beat the incumbent.
 
 const std = @import("std");
 const types = @import("types.zig");
-const codec = @import("codec.zig");
 const ops = @import("ops.zig");
+const codec = @import("codec.zig");
 const program = @import("program.zig");
 const prior = @import("prior.zig");
-const phog = @import("phog.zig");
 
-const Allocator = types.Allocator;
+const Allocator = std.mem.Allocator;
 const Stream = types.Stream;
-const TensorView = types.TensorView;
+const Dtype = types.Dtype;
 const Node = program.Node;
-const OpKind = program.OpKind;
+const OpKind = ops.OpKind;
 
-pub const Result = struct {
-    program: Node,
-    payload: []u8, // owned, concatenated leaf payloads
-    actual_bits: u64, // payload bits + side_info bits
-    raw_bits: u64,
-    compression_ratio: f64,
-    verified: bool,
-    template_summary: []u8, // owned text — short description
-    /// The TensorShape the search/fast-path actually picked. Used by
-    /// `brevis collect-training` to extract PHOG training examples.
-    chosen_shape: TensorShape,
-
-    pub fn deinit(self: *Result, alloc: Allocator) void {
-        self.program.deinit(alloc);
-        alloc.free(self.payload);
-        alloc.free(self.template_summary);
-    }
-};
+/// Smallest serialized size any node can have.
+const MIN_NODE_BYTES: u64 = 5;
+/// Exact serialized header size: op | params | side tag | n_children.
+const NODE_HDR: usize = 7;
+const ROOT_PARENT: u8 = 255;
+const MAX_ARITY: usize = 32;
+const MAX_PRODUCTIONS: usize = 32;
 
 pub const Options = struct {
-    max_candidates: usize = 4096,
-    /// Hard ceiling on # of full-realize attempts. Empirically the optimal
-    /// candidate is in the top 3 with the current heuristic + prior on real
-    /// model weights, so 4 is plenty.
-    realize_top_k: usize = 4,
-    use_prior: bool = true,
-    verbose: bool = false,
-    /// If true, decompress every realized candidate and bit-compare against
-    /// input. Only needed when debugging op correctness — the encoder/decoder
-    /// pair is exercised by the unit tests, and a single end-to-end verify
-    /// before writing the archive is much cheaper.
-    verify_each_realization: bool = false,
-    /// Tensor-type fast-path: classify the input by shape/dtype/statistics
-    /// and use a fixed program tree without enumerating candidates. Disable
-    /// to force exhaustive search.
-    use_fast_path: bool = true,
+    enumerate_all: bool = false,
+    max_expansions: usize = ops.MAX_EXPANSIONS,
+    /// Ignored when collecting candidates within the expansion budget.
+    max_realizations: usize = ops.MAX_REALIZATIONS,
+    max_nodes: usize = ops.MAX_NODES,
+    max_depth: u8 = ops.K_TRANSFORM_LAYERS,
+    /// Search on at most this many elements, then realize the winner on the
+    /// full block. Every candidate costs O(sample), not O(block). 0 disables.
+    sample_elems: usize = ops.SEARCH_SAMPLE_ELEMS,
 };
 
-pub const TerminalChoice = enum { raw, huffman, rans };
+pub const Result = struct {
+    node: Node,
+    payload: []u8,
+    bytes: usize,
+    expanded: usize,
 
-pub const StreamSubprogShape = union(enum) {
-    terminal: TerminalChoice,
-    delta: TerminalChoice, // delta_encode -> terminal
-    bitplane: TerminalChoice, // bitplane_split -> all planes use this terminal
-};
-
-pub const TensorShape = union(enum) {
-    raw,
-    xor: struct { base_id: u32, body: TensorBody },
-    split: struct { s_sign: StreamSubprogShape, s_exp: StreamSubprogShape, s_mant: StreamSubprogShape },
-};
-
-pub const TensorBody = enum { raw, split_default }; // for inside tensor_xor; "split_default" = split + best-per-stream pre-baked
-
-/// Flat enum identifying which of the 9 stream-subprogram productions was
-/// chosen — used by PHOG training data and inference.
-pub const StreamProduction = enum(u8) {
-    raw = 0,
-    huffman = 1,
-    rans = 2,
-    delta_raw = 3,
-    delta_huffman = 4,
-    delta_rans = 5,
-    bp_raw = 6,
-    bp_huffman = 7,
-    bp_rans = 8,
-
-    pub fn fromShape(s: StreamSubprogShape) StreamProduction {
-        return switch (s) {
-            .terminal => |t| switch (t) { .raw => .raw, .huffman => .huffman, .rans => .rans },
-            .delta => |t| switch (t) { .raw => .delta_raw, .huffman => .delta_huffman, .rans => .delta_rans },
-            .bitplane => |t| switch (t) { .raw => .bp_raw, .huffman => .bp_huffman, .rans => .bp_rans },
-        };
-    }
-
-    pub fn toShape(self: StreamProduction) StreamSubprogShape {
-        return switch (self) {
-            .raw => .{ .terminal = .raw },
-            .huffman => .{ .terminal = .huffman },
-            .rans => .{ .terminal = .rans },
-            .delta_raw => .{ .delta = .raw },
-            .delta_huffman => .{ .delta = .huffman },
-            .delta_rans => .{ .delta = .rans },
-            .bp_raw => .{ .bitplane = .raw },
-            .bp_huffman => .{ .bitplane = .huffman },
-            .bp_rans => .{ .bitplane = .rans },
-        };
-    }
-
-    pub fn name(self: StreamProduction) []const u8 {
-        return switch (self) {
-            .raw => "raw",
-            .huffman => "huffman",
-            .rans => "rans",
-            .delta_raw => "delta_raw",
-            .delta_huffman => "delta_huffman",
-            .delta_rans => "delta_rans",
-            .bp_raw => "bp_raw",
-            .bp_huffman => "bp_huffman",
-            .bp_rans => "bp_rans",
-        };
+    pub fn deinit(self: *Result, alloc: Allocator) void {
+        self.node.deinit(alloc);
+        alloc.free(self.payload);
+        self.payload = &.{};
     }
 };
 
-pub const TProgProduction = enum(u8) {
-    tensor_raw = 0,
-    split_float = 1,
-    tensor_xor = 2,
+pub const Plan = struct {
+    root: Node,
+    expanded: usize,
 
-    pub fn name(self: TProgProduction) []const u8 {
-        return switch (self) {
-            .tensor_raw => "tensor_raw",
-            .split_float => "split_float",
-            .tensor_xor => "tensor_xor",
-        };
+    pub fn deinit(self: *Plan, alloc: Allocator) void {
+        self.root.deinit(alloc);
     }
 };
 
-/// What the search picked, in a flat form suitable for PHOG training.
-pub const ChoiceTrace = struct {
-    t_prog: TProgProduction,
-    s_sign: ?StreamProduction = null, // present iff t_prog == split_float
-    s_exp: ?StreamProduction = null,
-    s_mant: ?StreamProduction = null,
+// ==================== partial programs ====================
 
-    pub fn fromShape(shape: TensorShape) ChoiceTrace {
-        return switch (shape) {
-            .raw => .{ .t_prog = .tensor_raw },
-            .xor => .{ .t_prog = .tensor_xor }, // we don't model xor sub-tree productions yet
-            .split => |s| .{
-                .t_prog = .split_float,
-                .s_sign = .fromShape(s.s_sign),
-                .s_exp = .fromShape(s.s_exp),
-                .s_mant = .fromShape(s.s_mant),
+const Hole = struct {
+    depth: u8,
+    slot: u8,
+    parent_op: u8,
+    /// Bits this hole is guaranteed to cost. Non-zero only once transforms are
+    /// no longer legal here: above that layer a reversible transform can drive
+    /// the empirical entropy arbitrarily low, so the only honest bound is 0.
+    lb_bits: u64,
+};
+
+const PNode = union(enum) {
+    hole: Hole,
+    filled: struct { op: OpKind, params: u32, kids: []PNode },
+
+    fn deinit(self: *PNode, alloc: Allocator) void {
+        switch (self.*) {
+            .hole => {},
+            .filled => |*f| {
+                for (f.kids) |*k| k.deinit(alloc);
+                if (f.kids.len > 0) alloc.free(f.kids);
+                f.kids = &.{};
             },
+        }
+    }
+
+    fn clone(self: PNode, alloc: Allocator) Allocator.Error!PNode {
+        const f = switch (self) {
+            .hole => return self,
+            .filled => |f| f,
         };
+        const kids = try alloc.alloc(PNode, f.kids.len);
+        var filled: usize = 0;
+        errdefer {
+            for (kids[0..filled]) |*k| k.deinit(alloc);
+            alloc.free(kids);
+        }
+        for (f.kids, 0..) |k, i| {
+            kids[i] = try k.clone(alloc);
+            filled = i + 1;
+        }
+        return .{ .filled = .{ .op = f.op, .params = f.params, .kids = kids } };
     }
 };
 
-fn allStreamShapes() [9]StreamSubprogShape {
-    return .{
-        .{ .terminal = .raw },
-        .{ .terminal = .huffman },
-        .{ .terminal = .rans },
-        .{ .delta = .raw },
-        .{ .delta = .huffman },
-        .{ .delta = .rans },
-        .{ .bitplane = .raw },
-        .{ .bitplane = .huffman },
-        .{ .bitplane = .rans },
-    };
+const Partial = struct {
+    root: PNode,
+    p: u64,
+    f: u64,
+    g_bytes: usize,
+    lb_sum: u64,
+    n_nodes: usize,
+    n_holes: usize,
+
+    fn deinit(self: *Partial, alloc: Allocator) void {
+        self.root.deinit(alloc);
+    }
+};
+
+fn cmpPartial(_: void, a: Partial, b: Partial) std.math.Order {
+    if (a.f != b.f) return std.math.order(a.f, b.f);
+    const ab = boundBytes(a.g_bytes, a.lb_sum, a.n_holes);
+    const bb = boundBytes(b.g_bytes, b.lb_sum, b.n_holes);
+    if (ab != bb) return std.math.order(ab, bb);
+    return std.math.order(a.p, b.p);
 }
 
-fn buildTerminal(t: TerminalChoice) Node {
-    return .{ .op = switch (t) {
-        .raw => .raw,
-        .huffman => .huffman,
-        .rans => .rans,
-    } };
+const Queue = std.PriorityQueue(Partial, void, cmpPartial);
+
+// ==================== bounds ====================
+
+/// Empirical zeroth-order entropy of `s` in bits, rounded down.
+fn shannonBits(alloc: Allocator, s: Stream) !u64 {
+    if (s.count == 0) return 0;
+    var hist = try codec.buildHistogram(alloc, s);
+    defer hist.deinit(alloc);
+    return codec.entropyBits(hist, s.count);
 }
 
-fn buildStreamSubprog(alloc: Allocator, shape: StreamSubprogShape, n_planes: u8) !Node {
-    return switch (shape) {
-        .terminal => |t| buildTerminal(t),
-        .delta => |t| blk: {
-            const kid = try alloc.alloc(Node, 1);
-            kid[0] = buildTerminal(t);
-            break :blk .{ .op = .delta_encode, .children = kid };
+fn holeBits(alloc: Allocator, s: Stream, depth: u8) !u64 {
+    if (depth < ops.K_TRANSFORM_LAYERS) return 0;
+    return shannonBits(alloc, s);
+}
+
+fn lowerBound(lb_sum: u64, n_holes: usize) u64 {
+    return lb_sum + @as(u64, n_holes) * MIN_NODE_BYTES * 8;
+}
+
+fn boundBytes(g_bytes: usize, lb_sum: u64, n_holes: usize) usize {
+    return g_bytes + @as(usize, @intCast((lowerBound(lb_sum, n_holes) + 7) / 8));
+}
+
+/// Serialized bytes a terminal contributes: node header + side info + the
+/// length-prefixed payload. Never encodes; see codec's closed-form section.
+/// Returns null when the production cannot apply to this stream.
+fn terminalCost(alloc: Allocator, prod: OpKind, params: u32, s: Stream, hist: codec.Histogram) !?usize {
+    var payload: u64 = 0;
+    var side: usize = 0;
+    switch (prod) {
+        .raw => {
+            payload = s.data.len;
+            side = 9;
         },
-        .bitplane => |t| blk: {
-            const kids = try alloc.alloc(Node, n_planes);
-            for (kids) |*c| c.* = buildTerminal(t);
-            break :blk .{ .op = .bitplane_split, .children = kids };
+        .bitpack => {
+            payload = (codec.bitpackCostBits(s, @intCast(params & 0xFF)) + 7) / 8;
+            side = 9;
         },
-    };
-}
-
-fn buildTensorSplit(
-    alloc: Allocator,
-    s_sign: StreamSubprogShape,
-    s_exp: StreamSubprogShape,
-    s_mant: StreamSubprogShape,
-    exp_bits: u8,
-    mant_bits: u8,
-) !Node {
-    const kids = try alloc.alloc(Node, 3);
-    kids[0] = try buildStreamSubprog(alloc, s_sign, 1);
-    kids[1] = try buildStreamSubprog(alloc, s_exp, exp_bits);
-    kids[2] = try buildStreamSubprog(alloc, s_mant, mant_bits);
-    return .{ .op = .split_float, .children = kids };
-}
-
-fn buildTensorBody(
-    alloc: Allocator,
-    body: TensorBody,
-    exp_bits: u8,
-    mant_bits: u8,
-) !Node {
-    return switch (body) {
-        .raw => .{ .op = .tensor_raw },
-        .split_default => try buildTensorSplit(alloc, .{ .terminal = .huffman }, .{ .delta = .huffman }, .{ .terminal = .rans }, exp_bits, mant_bits),
-    };
-}
-
-fn buildCandidate(
-    alloc: Allocator,
-    shape: TensorShape,
-    exp_bits: u8,
-    mant_bits: u8,
-) !Node {
-    return switch (shape) {
-        .raw => .{ .op = .tensor_raw },
-        .xor => |x| blk: {
-            const kid = try alloc.alloc(Node, 1);
-            kid[0] = try buildTensorBody(alloc, x.body, exp_bits, mant_bits);
-            break :blk .{ .op = .tensor_xor, .base_id = x.base_id, .children = kid };
+        .huffman => {
+            var t = try codec.huffmanFromHist(alloc, hist, s.bits_per_elem);
+            defer t.deinit(alloc);
+            payload = codec.huffmanPayloadBytes(t, hist);
+            side = 13 + 5 * t.entries.len;
         },
-        .split => |s| try buildTensorSplit(alloc, s.s_sign, s.s_exp, s.s_mant, exp_bits, mant_bits),
-    };
-}
-
-/// Heuristic lower bound for a stream subprogram on a known input stream.
-/// This is the sum of leaf Shannon-entropy estimates plus a tiny constant for
-/// each non-terminal's side_info overhead.
-fn streamHeuristicBits(alloc: Allocator, shape: StreamSubprogShape, s: Stream) !u64 {
-    return switch (shape) {
-        .terminal => |t| switch (t) {
-            .raw => @as(u64, s.data.len) * 8,
-            .huffman => codec.huffmanCostBits(s),
-            .rans => codec.ransCostBits(s),
-        },
-        .delta => |t| blk: {
-            // Run delta_encode to know what the inner terminal will see.
-            const r = try ops.deltaEncodeForward(alloc, s);
-            defer {
-                var dd = r.out;
-                dd.deinit(alloc);
-            }
-            const inner: u64 = switch (t) {
-                .raw => @as(u64, r.out.data.len) * 8,
-                .huffman => codec.huffmanCostBits(r.out),
-                .rans => codec.ransCostBits(r.out),
+        .rans => {
+            var t = codec.ransFromHist(alloc, hist, s.count) catch |e| switch (e) {
+                error.AlphabetTooLarge => return null,
+                else => return e,
             };
-            // delta side_info: ~8 bytes
-            break :blk inner + 64;
+            defer t.deinit(alloc);
+            payload = codec.ransLowerBytes(t, hist);
+            side = 13 + 8 * t.symbols.len;
         },
-        .bitplane => |t| blk: {
-            // Bitplane on a 1-bit stream is degenerate.
-            if (s.bits_per_elem <= 1) break :blk @as(u64, std.math.maxInt(u32));
-            // Compute per-plane Shannon entropy in a single pass over the
-            // source stream — no allocation. For each bit position b, a plane
-            // is a binary stream of `count` bits; the cost is just
-            // count * H(p_b) where p_b = (popcount of bit b) / count.
-            var ones: [32]u64 = .{0} ** 32;
-            const bpe: u8 = s.bits_per_elem;
-            var i: usize = 0;
-            while (i < s.count) : (i += 1) {
-                const v = s.getU32(i);
-                var b: u6 = 0;
-                while (b < bpe) : (b += 1) {
-                    ones[b] += (v >> @intCast(b)) & 1;
-                }
-            }
-            const n_f: f64 = @floatFromInt(s.count);
-            var sum: u64 = 0;
-            var b: u6 = 0;
-            while (b < bpe) : (b += 1) {
-                const p: f64 = @as(f64, @floatFromInt(ones[b])) / n_f;
-                if (p == 0 or p == 1) {
-                    // Constant plane: huffman/rans cost ~ table overhead only.
-                    sum += switch (t) {
-                        .raw => @as(u64, s.count),
-                        .huffman, .rans => 16, // 1 entry: ~2 bytes
-                    };
-                    continue;
-                }
-                const H: f64 = -p * std.math.log2(p) - (1.0 - p) * std.math.log2(1.0 - p);
-                const data_bits: u64 = @intFromFloat(@ceil(H * n_f));
-                sum += switch (t) {
-                    .raw => @as(u64, s.count),
-                    .huffman => data_bits + 48, // 2 codebook entries × ~24 bits
-                    .rans => data_bits + 36,
-                };
-            }
-            break :blk sum + 64; // bitplane structural overhead
-        },
+        else => unreachable,
+    }
+    return NODE_HDR + side + 8 + @as(usize, @intCast(payload));
+}
+
+/// Serialized side body size, tag byte excluded. Mirrors program.writeSide.
+fn sideBody(side: ops.SideInfo) usize {
+    return switch (side) {
+        .none => 0,
+        .terminal, .rle, .split => 9,
+        .huffman => |h| 13 + 5 * h.table.entries.len,
+        .rans => |r| 13 + 8 * r.table.symbols.len,
+        .codebook => |c| 13 + 4 * c.syms.len,
+        .sfloat => 9,
     };
 }
 
-fn streamPriorBits(shape: StreamSubprogShape, s: Stream) u64 {
-    const f = prior.Features.fromStream(s);
-    const op_root: OpKind = switch (shape) {
-        .terminal => |t| switch (t) {
-            .raw => .raw,
-            .huffman => .huffman,
-            .rans => .rans,
-        },
-        .delta => .delta_encode,
-        .bitplane => .bitplane_split,
+// ==================== productions ====================
+
+fn legalProductions(hole_bpe: u8, depth: u8, dtype: Dtype, is_root: bool, out: *std.ArrayList(OpKind)) void {
+    out.appendAssumeCapacity(.raw);
+    out.appendAssumeCapacity(.bitpack);
+    if (hole_bpe <= ops.MAX_ENTROPY_BPE) {
+        out.appendAssumeCapacity(.huffman);
+        out.appendAssumeCapacity(.rans);
+    }
+    if (depth >= ops.K_TRANSFORM_LAYERS) return;
+
+    const elementwise = [_]OpKind{
+        .xor_const, .add_const_mod, .xor_prev,    .diff_mod, .zigzag,
+        .gray,      .rotate_bits,   .bit_reverse, .rle,      .deinterleave,
     };
-    return prior.priorBitsPenalty(prior.streamRuleScore(op_root, f), s.count);
+    for (elementwise) |op| out.appendAssumeCapacity(op);
+
+    if (hole_bpe > 1) {
+        out.appendAssumeCapacity(.split_field);
+        out.appendAssumeCapacity(.topk_codebook);
+        out.appendAssumeCapacity(.bit_plane);
+    }
+    if (hole_bpe > 8) out.appendAssumeCapacity(.byte_plane);
+    if (is_root and dtype.isFloat()) out.appendAssumeCapacity(.split_float);
 }
 
-const RankedCandidate = struct {
-    shape: TensorShape,
-    score_bits: u64, // lower bound + prior penalty
-};
+const Feat = struct { mode: u32, max_bits: u8 };
 
-const ByScore = struct {
-    fn less(_: void, a: RankedCandidate, b: RankedCandidate) std.math.Order {
-        return std.math.order(a.score_bits, b.score_bits);
+fn featOf(hist: codec.Histogram) Feat {
+    var acc: u32 = 0;
+    var mode: u32 = 0;
+    var best: u64 = 0;
+    for (hist.pairs) |p| {
+        acc |= p.sym;
+        if (p.count > best) {
+            best = p.count;
+            mode = p.sym;
+        }
     }
-};
+    return .{ .mode = mode, .max_bits = if (acc == 0) 1 else @intCast(32 - @clz(acc)) };
+}
 
-/// PHOG-driven program prediction. Replaces the older hand-tuned
-/// `fastPathShape`. Predicts each grammar production from a learned
-/// (count-based MLE + Laplace-smoothed) conditional distribution
-/// `P(production | context)`. See `tools/train_phog.py`.
-///
-/// Returns null if the dtype isn't supported by PHOG (callers fall back to
-/// full A* search).
-fn phogPredict(input: TensorView) ?TensorShape {
-    if (!input.dtype.isFloat16Like()) return null;
-    const log2n: u8 = @intCast(std.math.log2_int(u64, @max(input.numel(), 1)));
+/// One parameterisation per production, derived from the hole's own data.
+/// Null means the op degenerates into the identity here and is skipped.
+fn chooseParams(op: OpKind, s: Stream, dtype: Dtype, f: Feat) ?u32 {
+    const k = s.bits_per_elem;
+    return switch (op) {
+        .bitpack => @min(f.max_bits, k),
+        .xor_const => if (f.mode == 0) null else f.mode,
+        .add_const_mod => blk: {
+            const m = s.mask();
+            const c = (m -% f.mode +% 1) & m;
+            break :blk if (c == 0) null else c;
+        },
+        .rotate_bits => if (k < 2) null else @as(u32, k / 2),
+        .split_field => blk: {
+            if (k < 2) break :blk null;
+            if (dtype.floatFields()) |ff| {
+                if (ff.total == k) break :blk @as(u32, ff.mant) | (@as(u32, ff.exp) << 8);
+            }
+            const start: u32 = k / 2;
+            break :blk start | ((@as(u32, k) - start) << 8);
+        },
+        .topk_codebook => 15,
+        .deinterleave => if (s.count < 2) null else 2 | (1 << 16),
+        .split_float => blk: {
+            const ff = dtype.floatFields() orelse break :blk null;
+            break :blk if (ff.total == k) @intFromEnum(dtype) else null;
+        },
+        else => 0,
+    };
+}
 
-    const t_choice = phog.predictRoot(input.dtype, log2n, input.shape.len) orelse return null;
-    switch (t_choice) {
-        .tensor_raw => return .raw,
-        .tensor_xor => return null, // not handled in fast path; let A* try
-        .split_float => {
-            const s_sign = phog.predictStream(0, input.dtype, log2n, input.shape.len) orelse return null;
-            const s_exp = phog.predictStream(1, input.dtype, log2n, input.shape.len) orelse return null;
-            const s_mant = phog.predictStream(2, input.dtype, log2n, input.shape.len) orelse return null;
-            return .{ .split = .{
-                .s_sign = s_sign.toShape(),
-                .s_exp = s_exp.toShape(),
-                .s_mant = s_mant.toShape(),
-            } };
+// ==================== skeleton -> program ====================
+
+fn toNode(alloc: Allocator, sk: PNode) Allocator.Error!Node {
+    const f = sk.filled;
+    const kids = try alloc.alloc(Node, f.kids.len);
+    var filled: usize = 0;
+    errdefer {
+        for (kids[0..filled]) |*c| c.deinit(alloc);
+        alloc.free(kids);
+    }
+    for (f.kids, 0..) |k, i| {
+        kids[i] = try toNode(alloc, k);
+        filled = i + 1;
+    }
+    return .{ .op = f.op, .params = f.params, .children = kids };
+}
+
+fn dropPayloads(alloc: Allocator, n: *Node) void {
+    if (n.payload_owned) alloc.free(n.payload);
+    n.payload = &.{};
+    n.payload_owned = false;
+    for (n.children) |*c| dropPayloads(alloc, c);
+}
+
+fn dropRuntime(alloc: Allocator, node: *Node) void {
+    if (node.payload_owned) alloc.free(node.payload);
+    node.payload = &.{};
+    node.payload_owned = false;
+    node.side.deinit(alloc);
+    for (node.children) |*child| dropRuntime(alloc, child);
+}
+
+/// Encode for real: exact bytes = bytecode + packed payload. The returned
+/// node's payloads are non-owning views into `payload`.
+fn encodeReal(alloc: Allocator, sk: PNode, in: Stream) !Result {
+    var node = try toNode(alloc, sk);
+    errdefer node.deinit(alloc);
+    try program.execute(alloc, &node, in);
+
+    const payload = try program.collectPayload(alloc, node);
+    errdefer alloc.free(payload);
+    const bc = try program.serialize(alloc, node);
+    const bytes = payload.len + bc.len;
+    alloc.free(bc);
+
+    dropPayloads(alloc, &node);
+    try program.distributePayload(&node, payload);
+    return .{ .node = node, .payload = payload, .bytes = bytes, .expanded = 0 };
+}
+
+fn fitParams(alloc: Allocator, node: *Node, in: Stream, dtype: Dtype) !void {
+    switch (node.op) {
+        .bitpack => {
+            var acc: u32 = 0;
+            for (0..in.count) |i| acc |= in.getU32(i);
+            node.params = if (acc == 0) 1 else @intCast(32 - @clz(acc));
+        },
+        .xor_const, .add_const_mod => {
+            var hist = try codec.buildHistogram(alloc, in);
+            defer hist.deinit(alloc);
+            if (chooseParams(node.op, in, dtype, featOf(hist))) |params| node.params = params;
+        },
+        else => {},
+    }
+}
+
+fn fitAndExecute(alloc: Allocator, node: *Node, in: Stream, dtype: Dtype) !void {
+    try fitParams(alloc, node, in, dtype);
+    if (node.op.isTerminal()) return program.execute(alloc, node, in);
+
+    var outs: std.ArrayList(Stream) = .empty;
+    defer {
+        for (outs.items) |*s| s.deinit(alloc);
+        outs.deinit(alloc);
+    }
+    try ops.forward(alloc, node.op, node.params, in, &outs, &node.side);
+    std.debug.assert(outs.items.len == node.children.len);
+    for (node.children, outs.items) |*child, out| try fitAndExecute(alloc, child, out, dtype);
+}
+
+fn encodeTemplate(alloc: Allocator, template: Node, in: Stream, dtype: Dtype) !Result {
+    var node = try template.clone(alloc);
+    errdefer node.deinit(alloc);
+    dropRuntime(alloc, &node);
+    try fitAndExecute(alloc, &node, in, dtype);
+
+    const payload = try program.collectPayload(alloc, node);
+    errdefer alloc.free(payload);
+    const bytecode = try program.serialize(alloc, node);
+    const bytes = payload.len + bytecode.len;
+    alloc.free(bytecode);
+
+    dropPayloads(alloc, &node);
+    try program.distributePayload(&node, payload);
+    return .{ .node = node, .payload = payload, .bytes = bytes, .expanded = 0 };
+}
+
+pub fn encode(alloc: Allocator, plan: *const Plan, in: Stream, dtype: Dtype) !Result {
+    var result = encodeTemplate(alloc, plan.root, in, dtype) catch |err| switch (err) {
+        error.AlphabetTooLarge, error.SymbolNotInTable => return encodeTemplate(alloc, .{ .op = .raw }, in, dtype),
+        else => return err,
+    };
+    if (plan.root.op == .raw or result.bytes < in.data.len + 24) return result;
+    result.deinit(alloc);
+    return encodeTemplate(alloc, .{ .op = .raw }, in, dtype);
+}
+
+// ==================== tree navigation ====================
+
+fn firstHolePath(alloc: Allocator, sk: PNode, path: *std.ArrayList(u8)) !bool {
+    switch (sk) {
+        .hole => return true,
+        .filled => |f| {
+            for (f.kids, 0..) |k, i| {
+                try path.append(alloc, @intCast(i));
+                if (try firstHolePath(alloc, k, path)) return true;
+                _ = path.pop();
+            }
+            return false;
         },
     }
 }
 
-pub fn synthesize(
+fn nodePtr(root: *PNode, path: []const u8) *PNode {
+    var cur = root;
+    for (path) |i| cur = &cur.filled.kids[i];
+    return cur;
+}
+
+/// Replay the transforms along `path` to rebuild the stream feeding that hole.
+/// Partials store hole metadata only, never streams, so memory stays O(depth).
+fn streamAt(alloc: Allocator, root: PNode, in: Stream, path: []const u8) !Stream {
+    var cur = try in.dupe(alloc);
+    errdefer cur.deinit(alloc);
+    var sk = root;
+
+    for (path) |idx| {
+        const f = sk.filled;
+        var outs: std.ArrayList(Stream) = .empty;
+        defer {
+            for (outs.items) |*s| s.deinit(alloc);
+            outs.deinit(alloc);
+        }
+        var side: ops.SideInfo = .none;
+        defer side.deinit(alloc);
+
+        try ops.forward(alloc, f.op, f.params, cur, &outs, &side);
+        const taken = outs.items[idx];
+        outs.items[idx].owns_data = false;
+        cur.deinit(alloc);
+        cur = taken;
+        sk = f.kids[idx];
+    }
+    return cur;
+}
+
+// ==================== search ====================
+
+pub fn synthesizePlan(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const prior.Prior, opts: Options) !Plan {
+    var sample: ?Stream = null;
+    defer if (sample) |*stream| stream.deinit(alloc);
+    if (opts.sample_elems > 0 and in.count > opts.sample_elems)
+        sample = try sampleStream(alloc, in, opts.sample_elems);
+
+    var picked = try run(alloc, sample orelse in, dtype, pr, opts, null);
+    dropRuntime(alloc, &picked.node);
+    alloc.free(picked.payload);
+    return .{ .root = picked.node, .expanded = picked.expanded };
+}
+
+pub fn synthesize(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const prior.Prior, opts: Options) !Result {
+    var plan = try synthesizePlan(alloc, in, dtype, pr, opts);
+    defer plan.deinit(alloc);
+    var result = try encode(alloc, &plan, in, dtype);
+    result.expanded = plan.expanded;
+    return result;
+}
+
+/// Contiguous windows spread over the block. Contiguity matters: strided
+/// sampling would break neighbour relations and make xor_prev/diff_mod look
+/// useless when they are in fact the right answer.
+fn sampleStream(alloc: Allocator, in: Stream, want: usize) !Stream {
+    const n_win: usize = 4;
+    const per = @max(want / n_win, 1);
+    const total = @min(want, in.count);
+    var out = try Stream.init(alloc, total, in.bits_per_elem);
+    errdefer out.deinit(alloc);
+
+    const stride = if (n_win > 1) (in.count - per) / (n_win - 1) else 0;
+    var w: usize = 0;
+    var o: usize = 0;
+    while (w < n_win and o < total) : (w += 1) {
+        const base = @min(w * stride, in.count - per);
+        var i: usize = 0;
+        while (i < per and o < total) : (i += 1) {
+            out.setU32(o, in.getU32(base + i));
+            o += 1;
+        }
+    }
+    return out;
+}
+
+/// Complete candidates reached within the expansion budget, ascending by bytes.
+pub fn synthesizeAll(alloc: Allocator, in: Stream, dtype: Dtype, opts: Options) ![]Result {
+    var uniform = prior.Prior.initUniform(alloc);
+    defer uniform.deinit(alloc);
+
+    var all: std.ArrayList(Result) = .empty;
+    errdefer {
+        for (all.items) |*r| r.deinit(alloc);
+        all.deinit(alloc);
+    }
+    var best = try run(alloc, in, dtype, &uniform, opts, &all);
+    var best_in_all = false;
+    errdefer if (!best_in_all) best.deinit(alloc);
+    try all.append(alloc, best);
+    best_in_all = true;
+
+    for (all.items) |*r| r.expanded = best.expanded;
+    std.mem.sort(Result, all.items, {}, lessBytes);
+    return all.toOwnedSlice(alloc);
+}
+
+fn lessBytes(_: void, a: Result, b: Result) bool {
+    return a.bytes < b.bytes;
+}
+
+fn run(
     alloc: Allocator,
-    input: TensorView,
-    bases: []const TensorView,
+    in: Stream,
+    dtype: Dtype,
+    pr: *const prior.Prior,
     opts: Options,
+    all: ?*std.ArrayList(Result),
 ) !Result {
-    const raw_bits: u64 = @as(u64, input.data.len) * 8;
+    const uniform = pr.isUniform();
+    const min_score: u32 = if (uniform) ops.UNIFORM_SCORE else 0;
+    const raw_sk: PNode = .{ .filled = .{ .op = .raw, .params = 0, .kids = &.{} } };
+    var incumbent = try encodeReal(alloc, raw_sk, in);
+    errdefer incumbent.deinit(alloc);
 
-    // Fast path: skip search entirely when the tensor matches a known good
-    // profile and the caller hasn't disabled it. Falls through to the search
-    // if there's no fast-path match (e.g. cross-tensor refs are requested).
-    if (opts.use_fast_path and bases.len == 0) {
-        if (phogPredict(input)) |shape| {
-            const exp_bits: u8 = if (input.dtype == .f16) 5 else 8;
-            const mant_bits: u8 = if (input.dtype == .f16) 10 else 7;
-            var node = try buildCandidate(alloc, shape, exp_bits, mant_bits);
-            errdefer node.deinit(alloc);
-            try program.compressTensor(alloc, &node, input, bases);
-            const payload = try program.collectPayloadBytes(alloc, &node);
-            errdefer alloc.free(payload);
-            const program_bytes = try program.serializeProgram(alloc, &node);
-            defer alloc.free(program_bytes);
-            const total_bits: u64 = @as(u64, payload.len) * 8 + @as(u64, program_bytes.len) * 8;
-            const summary = try summarizeShape(alloc, shape);
-            return .{
-                .program = node,
-                .payload = payload,
-                .actual_bits = total_bits,
-                .raw_bits = raw_bits,
-                .compression_ratio = @as(f64, @floatFromInt(raw_bits)) / @as(f64, @floatFromInt(total_bits)),
-                .verified = true,
-                .template_summary = summary,
-                .chosen_shape = shape,
-            };
+    var q: Queue = .empty;
+    defer {
+        while (q.pop()) |popped| {
+            var p = popped;
+            p.deinit(alloc);
         }
+        q.deinit(alloc);
     }
 
-    // Step 1: precompute streams from split_float once so heuristic
-    // evaluation across all 729 split candidates is fast.
-    var sf: ?struct { sign: Stream, exp: Stream, mant: Stream, info: ops.SplitFloatInfo } = null;
-    if (input.dtype.isFloat16Like()) {
-        const r = try ops.splitFloatForward(alloc, input);
-        sf = .{ .sign = r.sign, .exp = r.exp, .mant = r.mant, .info = r.info };
-    }
-    defer if (sf) |*s| {
-        s.sign.deinit(alloc);
-        s.exp.deinit(alloc);
-        s.mant.deinit(alloc);
-    };
+    var prods: std.ArrayList(OpKind) = .empty;
+    defer prods.deinit(alloc);
+    try prods.ensureTotalCapacity(alloc, MAX_PRODUCTIONS);
 
-    // Step 2: precompute heuristic+prior bits per stream-shape per slot.
-    // 3 slots × 9 shapes = 27 entries.
-    var sign_costs: [9]u64 = undefined;
-    var exp_costs: [9]u64 = undefined;
-    var mant_costs: [9]u64 = undefined;
-    if (sf) |s| {
-        const shapes = allStreamShapes();
-        for (shapes, 0..) |shape, i| {
-            sign_costs[i] = (try streamHeuristicBits(alloc, shape, s.sign)) +
-                (if (opts.use_prior) streamPriorBits(shape, s.sign) else 0);
-            exp_costs[i] = (try streamHeuristicBits(alloc, shape, s.exp)) +
-                (if (opts.use_prior) streamPriorBits(shape, s.exp) else 0);
-            mant_costs[i] = (try streamHeuristicBits(alloc, shape, s.mant)) +
-                (if (opts.use_prior) streamPriorBits(shape, s.mant) else 0);
-        }
-    }
+    var path: std.ArrayList(u8) = .empty;
+    defer path.deinit(alloc);
 
-    // Step 3: enumerate candidates with their scores.
-    var heap: std.PriorityQueue(RankedCandidate, void, ByScore.less) = .empty;
-    defer heap.deinit(alloc);
+    const root_bits = try holeBits(alloc, in, 0);
+    try q.push(alloc, .{
+        .root = .{ .hole = .{
+            .depth = 0,
+            .slot = 0,
+            .parent_op = ROOT_PARENT,
+            .lb_bits = root_bits,
+        } },
+        .p = 0,
+        .f = min_score,
+        .g_bytes = 0,
+        .lb_sum = root_bits,
+        .n_nodes = 0,
+        .n_holes = 1,
+    });
 
-    // tensor_raw — always available
-    try heap.push(alloc, .{ .shape = .raw, .score_bits = raw_bits + 64 });
-
-    // split_float — if fp16/bf16
-    if (sf) |s| {
-        const shapes = allStreamShapes();
-        // Domain pruning: bitplane / delta on huge mantissa streams are
-        // never optimal in practice (mantissa is near-uniform; bitplane just
-        // pays N×alloc cost to discover that). Skip them above a threshold.
-        const huge_mant: bool = s.mant.count > 200_000;
-        const huge_exp: bool = s.exp.count > 200_000;
-        for (shapes, 0..) |s_sign, i| {
-            // Bitplane on 1-bit sign is always degenerate.
-            if (s_sign == .bitplane) continue;
-            for (shapes, 0..) |s_exp, j| {
-                if (huge_exp and s_exp == .delta and (s_exp.delta == .raw)) continue;
-                for (shapes, 0..) |s_mant, k| {
-                    if (huge_mant and s_mant == .bitplane) continue;
-                    if (huge_mant and s_mant == .delta) continue;
-                    const score = sign_costs[i] + exp_costs[j] + mant_costs[k] + 256;
-                    try heap.push(alloc, .{
-                        .shape = .{ .split = .{ .s_sign = s_sign, .s_exp = s_exp, .s_mant = s_mant } },
-                        .score_bits = score,
-                    });
-                }
-            }
-        }
-    }
-
-    // tensor_xor — for each base, with body=split_default OR raw
-    for (bases, 0..) |base, b| {
-        if (base.dtype != input.dtype) continue;
-        if (base.shape.len != input.shape.len) continue;
-        var same_shape = true;
-        for (base.shape, input.shape) |x, y| if (x != y) {
-            same_shape = false;
-            break;
-        };
-        if (!same_shape) continue;
-
-        // Heuristic for tensor_xor: XOR residual then evaluate as if split_float
-        // would work on it. Cheap upper bound: do the xor, run split_float
-        // forward, evaluate cheap heuristic for "split + huffman per stream".
-        const xor_r = try ops.tensorXorForward(alloc, input, base);
-        var residual = xor_r.residual;
-        defer residual.deinit(alloc);
-
-        if (residual.dtype.isFloat16Like()) {
-            const r2 = try ops.splitFloatForward(alloc, residual);
-            var rs = r2.sign;
-            var re = r2.exp;
-            var rm = r2.mant;
-            defer rs.deinit(alloc);
-            defer re.deinit(alloc);
-            defer rm.deinit(alloc);
-            const cs = try streamHeuristicBits(alloc, .{ .terminal = .huffman }, rs);
-            const ce = try streamHeuristicBits(alloc, .{ .delta = .huffman }, re);
-            const cm = try streamHeuristicBits(alloc, .{ .terminal = .rans }, rm);
-            const score = cs + ce + cm + 384;
-            try heap.push(alloc, .{
-                .shape = .{ .xor = .{ .base_id = @intCast(b), .body = .split_default } },
-                .score_bits = score,
-            });
-            // Also try tensor_xor + tensor_raw on residual
-            try heap.push(alloc, .{
-                .shape = .{ .xor = .{ .base_id = @intCast(b), .body = .raw } },
-                .score_bits = @as(u64, residual.data.len) * 8 + 128,
-            });
-        }
-    }
-
-    // Step 4: realize candidates from best to worst, prune when impossible to beat.
-    var best_result: ?Result = null;
-    errdefer if (best_result) |*r| r.deinit(alloc);
-
+    var expanded: usize = 0;
     var realized: usize = 0;
-    while (heap.pop()) |cand| {
-        if (best_result) |b| if (cand.score_bits >= b.actual_bits) {
-            if (opts.verbose) std.debug.print("  prune: cand score {d} >= best {d}\n", .{ cand.score_bits, b.actual_bits });
-            break;
-        };
-        if (realized >= opts.realize_top_k) break;
-        realized += 1;
+    while (q.pop()) |popped| {
+        var part = popped;
 
-        const exp_bits: u8 = if (input.dtype == .f16) 5 else 8;
-        const mant_bits: u8 = if (input.dtype == .f16) 10 else 7;
-
-        var node = try buildCandidate(alloc, cand.shape, exp_bits, mant_bits);
-        program.compressTensor(alloc, &node, input, bases) catch {
-            node.deinit(alloc);
-            continue;
-        };
-
-        if (opts.verify_each_realization) {
-            var back = program.decompressTensor(alloc, &node, bases) catch {
-                node.deinit(alloc);
-                continue;
-            };
-            defer back.deinit(alloc);
-            const ok = std.mem.eql(u8, input.data, back.data);
-            if (!ok) {
-                node.deinit(alloc);
-                continue;
+        if (part.n_holes == 0) {
+            if (!opts.enumerate_all and realized >= opts.max_realizations) {
+                part.deinit(alloc);
+                break;
             }
-        }
-
-        const payload = try program.collectPayloadBytes(alloc, &node);
-        const program_bytes = try program.serializeProgram(alloc, &node);
-        defer alloc.free(program_bytes);
-        const total_bits: u64 = @as(u64, payload.len) * 8 + @as(u64, program_bytes.len) * 8;
-
-        const summary = try summarizeShape(alloc, cand.shape);
-
-        if (opts.verbose) {
-            std.debug.print("  realize: shape={s} score={d} actual_bits={d} ratio={d:.3}\n",
-                .{ summary, cand.score_bits, total_bits, @as(f64, @floatFromInt(raw_bits)) / @as(f64, @floatFromInt(total_bits)) });
-        }
-
-        if (best_result) |*b| {
-            if (total_bits < b.actual_bits) {
-                b.deinit(alloc);
-                best_result = .{
-                    .program = node,
-                    .payload = payload,
-                    .actual_bits = total_bits,
-                    .raw_bits = raw_bits,
-                    .compression_ratio = @as(f64, @floatFromInt(raw_bits)) / @as(f64, @floatFromInt(total_bits)),
-                    .verified = true,
-                    .template_summary = summary,
-                    .chosen_shape = cand.shape,
-                };
+            realized += 1;
+            var res = encodeReal(alloc, part.root, in) catch |e| switch (e) {
+                error.AlphabetTooLarge => {
+                    part.deinit(alloc);
+                    continue;
+                },
+                else => return e,
+            };
+            std.debug.assert(res.bytes >= part.g_bytes); // g_bytes is a lower bound
+            part.deinit(alloc);
+            if (res.bytes < incumbent.bytes) {
+                if (all) |l| try l.append(alloc, incumbent) else incumbent.deinit(alloc);
+                incumbent = res;
             } else {
-                node.deinit(alloc);
-                alloc.free(payload);
-                alloc.free(summary);
+                if (all) |l| try l.append(alloc, res) else res.deinit(alloc);
             }
-        } else {
-            best_result = .{
-                .program = node,
-                .payload = payload,
-                .actual_bits = total_bits,
-                .raw_bits = raw_bits,
-                .compression_ratio = @as(f64, @floatFromInt(raw_bits)) / @as(f64, @floatFromInt(total_bits)),
-                .verified = true,
-                .template_summary = summary,
-                .chosen_shape = cand.shape,
-            };
+            continue;
+        }
+
+        if (expanded >= opts.max_expansions) {
+            part.deinit(alloc);
+            break;
+        }
+        expanded += 1;
+        defer part.deinit(alloc);
+
+        path.clearRetainingCapacity();
+        const found = try firstHolePath(alloc, part.root, &path);
+        std.debug.assert(found);
+        const hole = nodePtr(&part.root, path.items).hole;
+
+        var hs = try streamAt(alloc, part.root, in, path.items);
+        defer hs.deinit(alloc);
+
+        var hist = try codec.buildHistogram(alloc, hs);
+        defer hist.deinit(alloc);
+
+        const feat = featOf(hist);
+        const ctx = if (uniform)
+            prior.Context{}
+        else
+            prior.Context.fromStream(hs, dtype, hole.slot, hole.depth, hole.parent_op);
+
+        prods.clearRetainingCapacity();
+        legalProductions(hs.bits_per_elem, hole.depth, dtype, hole.depth == 0, &prods);
+        var scores: [MAX_PRODUCTIONS]u32 = undefined;
+        if (uniform)
+            @memset(scores[0..prods.items.len], ops.UNIFORM_SCORE)
+        else
+            pr.scoreSet(ctx, prods.items, scores[0..prods.items.len]);
+
+        for (prods.items, scores[0..prods.items.len]) |prod, score| {
+            if (hs.count == 0 and prod != .raw) continue;
+            const params = chooseParams(prod, hs, dtype, feat) orelse continue;
+            const a = ops.arity(prod, hs.bits_per_elem);
+            std.debug.assert(a <= MAX_ARITY);
+            if (part.n_nodes + part.n_holes + a > opts.max_nodes) continue;
+            if (a > 0 and hole.depth + 1 > opts.max_depth) continue;
+
+            var kid_bits: [MAX_ARITY]u64 = undefined;
+            var add: usize = undefined;
+
+            if (prod.isTerminal()) {
+                // Closed-form: never encode. Exact for raw/bitpack/huffman,
+                // a strict lower bound for rans.
+                add = terminalCost(alloc, prod, params, hs, hist) catch |e| switch (e) {
+                    error.AlphabetTooLarge => continue,
+                    else => return e,
+                } orelse continue;
+            } else if (prod.isAlphabetPermutation()) {
+                // Histogram is permuted, entropy identical: no forward needed.
+                add = NODE_HDR;
+                kid_bits[0] = try holeBits(alloc, hs, hole.depth + 1);
+            } else {
+                var outs: std.ArrayList(Stream) = .empty;
+                defer {
+                    for (outs.items) |*s| s.deinit(alloc);
+                    outs.deinit(alloc);
+                }
+                var side: ops.SideInfo = .none;
+                defer side.deinit(alloc);
+                try ops.forward(alloc, prod, params, hs, &outs, &side);
+                add = NODE_HDR + sideBody(side);
+                for (outs.items, 0..) |s, i| kid_bits[i] = try holeBits(alloc, s, hole.depth + 1);
+            }
+
+            const g = part.g_bytes + add;
+            const n_holes = part.n_holes - 1 + a;
+            var lb_sum = part.lb_sum - hole.lb_bits;
+            for (kid_bits[0..a]) |b| lb_sum += b;
+
+            if (!opts.enumerate_all and boundBytes(g, lb_sum, n_holes) >= incumbent.bytes) continue;
+
+            var root = try part.root.clone(alloc);
+            errdefer root.deinit(alloc);
+            const kids = try alloc.alloc(PNode, a);
+            for (kids, 0..) |*k, i| k.* = .{ .hole = .{
+                .depth = hole.depth + 1,
+                .slot = @intCast(i),
+                .parent_op = @intFromEnum(prod),
+                .lb_bits = kid_bits[i],
+            } };
+            nodePtr(&root, path.items).* = .{ .filled = .{ .op = prod, .params = params, .kids = kids } };
+
+            const p = part.p + score;
+            try q.push(alloc, .{
+                .root = root,
+                .p = p,
+                .f = p + @as(u64, n_holes) * min_score,
+                .g_bytes = g,
+                .lb_sum = lb_sum,
+                .n_nodes = part.n_nodes + 1,
+                .n_holes = n_holes,
+            });
         }
     }
 
-    if (best_result) |r| return r;
-    return error.NoValidCandidate;
-}
-
-fn summarizeShape(alloc: Allocator, shape: TensorShape) ![]u8 {
-    return switch (shape) {
-        .raw => alloc.dupe(u8, "tensor_raw"),
-        .xor => |x| blk: {
-            const body = if (x.body == .raw) "raw" else "split+huff/delta+huff/rans";
-            break :blk std.fmt.allocPrint(alloc, "tensor_xor(b={d})->{s}", .{ x.base_id, body });
-        },
-        .split => |s| std.fmt.allocPrint(alloc, "split({s},{s},{s})", .{
-            shapeName(s.s_sign), shapeName(s.s_exp), shapeName(s.s_mant),
-        }),
-    };
-}
-
-fn shapeName(s: StreamSubprogShape) []const u8 {
-    return switch (s) {
-        .terminal => |t| switch (t) {
-            .raw => "raw",
-            .huffman => "huff",
-            .rans => "rans",
-        },
-        .delta => |t| switch (t) {
-            .raw => "delta+raw",
-            .huffman => "delta+huff",
-            .rans => "delta+rans",
-        },
-        .bitplane => |t| switch (t) {
-            .raw => "bp+raw",
-            .huffman => "bp+huff",
-            .rans => "bp+rans",
-        },
-    };
+    incumbent.expanded = expanded;
+    return incumbent;
 }
