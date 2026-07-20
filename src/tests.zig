@@ -481,6 +481,42 @@ test "program: serialize/deserialize roundtrip" {
     }
 }
 
+test "program: rejects an invalid rans table" {
+    const a = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(7);
+    var in = try runStream(a, prng.random(), 256, 8);
+    defer in.deinit(a);
+    var node: Node = .{ .op = .rans };
+    defer node.deinit(a);
+    try program.execute(a, &node, in);
+
+    const bytecode = try program.serialize(a, node);
+    defer a.free(bytecode);
+    const first_freq = 1 + 4 + 1 + 8 + 1 + 4 + 4;
+    std.mem.writeInt(u32, bytecode[first_freq..][0..4], 0, .little);
+    try std.testing.expectError(error.InvalidRansTable, program.deserialize(a, bytecode));
+}
+
+test "program: empty rans table roundtrip" {
+    const a = std.testing.allocator;
+    var in = try Stream.init(a, 0, 8);
+    defer in.deinit(a);
+    var node: Node = .{ .op = .rans };
+    defer node.deinit(a);
+    try program.execute(a, &node, in);
+
+    const bytecode = try program.serialize(a, node);
+    defer a.free(bytecode);
+    const payload = try program.collectPayload(a, node);
+    defer a.free(payload);
+    var restored = try program.deserialize(a, bytecode);
+    defer restored.deinit(a);
+    try program.distributePayload(&restored, payload);
+    var out = try program.decode(a, restored);
+    defer out.deinit(a);
+    try expectStreamsEqual(in, out);
+}
+
 test "prior: scores normalize over legal productions" {
     const a = std.testing.allocator;
     const legal = [_]OpKind{ .raw, .bitpack, .huffman, .rans };
@@ -828,10 +864,6 @@ test "program: f32 mantissa splits into byte planes an entropy coder accepts" {
 
 // ==================== archive ====================
 
-fn readU32(b: []const u8, off: usize) u32 {
-    return std.mem.readInt(u32, b[off..][0..4], .little);
-}
-
 const ArchiveDecodeJob = struct {
     block: archive.ParsedBlock,
     stream: ?Stream = null,
@@ -885,6 +917,9 @@ test "archive: multi-tensor multi-block roundtrip" {
 
     const bytes = try archive.build(a, &metas, jobs.items, &.{});
     defer a.free(bytes);
+    var frame_bytes: usize = archive.HEADER.len;
+    for (results.items) |result| frame_bytes += result.bytes + 12;
+    try expectEqual(frame_bytes, @as(usize, @intCast(std.mem.readInt(u64, bytes[bytes.len - 8 ..][0..8], .little))));
 
     var parsed = try archive.parse(a, bytes);
     defer parsed.deinit();
@@ -895,24 +930,25 @@ test "archive: multi-tensor multi-block roundtrip" {
         try std.testing.expectEqualStrings(meta.name, pt.name);
         try expectEqual(meta.dtype, pt.dtype);
         try std.testing.expectEqualSlices(u64, meta.shape, pt.shape);
-        try expectEqual(@as(usize, meta.n_blocks), pt.blocks.len);
-        for (pt.blocks) |blk| {
+        try expectEqual(meta.n_blocks, pt.n_blocks);
+        var pos: usize = 0;
+        for (0..pt.n_blocks) |_| {
+            const blk = try archive.nextBlock(pt.frames, &pos);
             var back = try archive.decodeBlock(a, blk);
             defer back.deinit(a);
             try expectStreamsEqual(blocks.items[bi], back);
             bi += 1;
         }
+        try expectEqual(pt.frames.len, pos);
     }
     try expectEqual(blocks.items.len, bi);
 }
 
-test "archive: program and table dictionaries deduplicate" {
+test "archive: self-contained frames decode concurrently" {
     const a = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(0xDED0);
     const rng = prng.random();
 
-    // Three blocks of equal shape; the first two carry identical data, so their
-    // huffman tables coincide. All three share one stripped bytecode.
     var streams: [3]Stream = undefined;
     streams[0] = try randStream(a, rng, 256, 8, true);
     streams[1] = try streams[0].dupe(a);
@@ -939,26 +975,17 @@ test "archive: program and table dictionaries deduplicate" {
     const bytes = try archive.build(a, &metas, &jobs, &.{});
     defer a.free(bytes);
 
-    const index_off: usize = @intCast(std.mem.readInt(u64, bytes[bytes.len - 8 ..][0..8], .little));
-    const n_tables = readU32(bytes, index_off + 8);
-    try expectEqual(@as(u32, 2), n_tables);
-
-    var pos: usize = index_off + 12;
-    for (0..n_tables) |_| {
-        const kind = bytes[pos];
-        const n = readU32(bytes, pos + 1);
-        pos += 5 + n * @as(usize, if (kind == @intFromEnum(archive.TableKind.huffman)) 5 else 8);
-    }
-    try expectEqual(@as(u32, 1), readU32(bytes, pos));
-
     var parsed = try archive.parse(a, bytes);
     defer parsed.deinit();
-    try expect(parsed.tensors[0].blocks[0].node == parsed.tensors[0].blocks[1].node);
-    try expect(parsed.tensors[0].blocks[0].tables.ptr == parsed.tensors[0].blocks[1].tables.ptr);
+    var pos: usize = 0;
+    var parsed_blocks: [3]archive.ParsedBlock = undefined;
+    for (&parsed_blocks) |*block| block.* = try archive.nextBlock(parsed.tensors[0].frames, &pos);
+    try expectEqual(parsed.tensors[0].frames.len, pos);
+    try std.testing.expectEqualSlices(u8, parsed_blocks[0].bytecode, parsed_blocks[1].bytecode);
 
     var decode_jobs: [3]ArchiveDecodeJob = undefined;
     var threads: [3]std.Thread = undefined;
-    for (&decode_jobs, parsed.tensors[0].blocks) |*job, block| job.* = .{ .block = block };
+    for (&decode_jobs, parsed_blocks) |*job, block| job.* = .{ .block = block };
     for (&threads, &decode_jobs) |*thread, *job| thread.* = try std.Thread.spawn(.{}, ArchiveDecodeJob.run, .{job});
     for (threads) |thread| thread.join();
     for (&decode_jobs, streams) |*job, s| {
@@ -1026,11 +1053,14 @@ test "archive: original safetensors prefix and data order are byte-exact" {
     defer restored.deinit(a);
     try restored.appendSlice(a, parsed.safetensors_prefix);
     for (parsed.tensors) |tensor| {
-        for (tensor.blocks) |block| {
+        var pos: usize = 0;
+        for (0..tensor.n_blocks) |_| {
+            const block = try archive.nextBlock(tensor.frames, &pos);
             var stream = try archive.decodeBlock(a, block);
             defer stream.deinit(a);
             try restored.appendSlice(a, stream.data);
         }
+        try expectEqual(tensor.frames.len, pos);
     }
     try std.testing.expectEqualSlices(u8, source, restored.items);
 }

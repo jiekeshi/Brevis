@@ -307,6 +307,7 @@ pub const DeserializeError = Allocator.Error || error{
     InvalidOpcode,
     InvalidSideTag,
     InvalidDtype,
+    InvalidRansTable,
 };
 
 const Reader = struct {
@@ -396,13 +397,16 @@ fn readSide(alloc: Allocator, r: *Reader) DeserializeError!ops.SideInfo {
             errdefer alloc.free(symbols);
             const info = try alloc.alloc(codec.RansSymbol, n);
             errdefer alloc.free(info);
-            var cum: u32 = 0;
+            var cum: u64 = 0;
             for (symbols, info) |*s, *inf| {
                 s.* = try r.u32v();
                 inf.freq = try r.u32v();
-                inf.cum = cum;
+                if (inf.freq == 0 or cum + inf.freq > codec.RANS_PROB_SCALE) return error.InvalidRansTable;
+                inf.cum = @intCast(cum);
                 cum += inf.freq;
             }
+            if ((n == 0 and count != 0) or (n > 0 and cum != codec.RANS_PROB_SCALE))
+                return error.InvalidRansTable;
             return .{ .rans = .{
                 .table = .{ .symbols = symbols, .info = info },
                 .count = count,

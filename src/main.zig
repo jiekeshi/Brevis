@@ -215,6 +215,88 @@ fn runWorkers(alloc: Allocator, n_threads: usize, job: anytype, comptime run: an
     for (threads) |thread| thread.join();
 }
 
+fn BatchPool(comptime Job: type) type {
+    return struct {
+        const Self = @This();
+
+        alloc: Allocator,
+        io: std.Io,
+        threads: []std.Thread,
+        mutex: std.Io.Mutex = .init,
+        ready: std.Io.Condition = .init,
+        done: std.Io.Condition = .init,
+        job: ?*Job = null,
+        epoch: usize = 0,
+        finished: usize = 0,
+        stopping: bool = false,
+
+        fn init(self: *Self, alloc: Allocator, io: std.Io, n_threads: usize) !void {
+            self.* = .{
+                .alloc = alloc,
+                .io = io,
+                .threads = if (n_threads > 1) try alloc.alloc(std.Thread, n_threads) else &.{},
+            };
+            var spawned: usize = 0;
+            errdefer {
+                self.stop();
+                for (self.threads[0..spawned]) |thread| thread.join();
+                if (self.threads.len > 0) alloc.free(self.threads);
+            }
+            for (self.threads) |*thread| {
+                thread.* = try std.Thread.spawn(.{}, worker, .{self});
+                spawned += 1;
+            }
+        }
+
+        fn deinit(self: *Self) void {
+            self.stop();
+            for (self.threads) |thread| thread.join();
+            if (self.threads.len > 0) self.alloc.free(self.threads);
+        }
+
+        fn run(self: *Self, job: *Job) void {
+            if (self.threads.len == 0) return Job.run(job);
+            self.mutex.lockUncancelable(self.io);
+            self.job = job;
+            self.finished = 0;
+            self.epoch += 1;
+            self.ready.broadcast(self.io);
+            while (self.finished < self.threads.len) self.done.waitUncancelable(self.io, &self.mutex);
+            self.mutex.unlock(self.io);
+        }
+
+        fn stop(self: *Self) void {
+            self.mutex.lockUncancelable(self.io);
+            self.stopping = true;
+            self.ready.broadcast(self.io);
+            self.mutex.unlock(self.io);
+        }
+
+        fn worker(self: *Self) void {
+            var seen: usize = 0;
+            while (true) {
+                self.mutex.lockUncancelable(self.io);
+                while (!self.stopping and self.epoch == seen)
+                    self.ready.waitUncancelable(self.io, &self.mutex);
+                if (self.stopping) {
+                    self.mutex.unlock(self.io);
+                    return;
+                }
+                seen = self.epoch;
+                const job = self.job.?;
+                self.mutex.unlock(self.io);
+
+                Job.run(job);
+
+                self.mutex.lockUncancelable(self.io);
+                self.finished += 1;
+                if (self.finished == self.threads.len) self.done.signal(self.io);
+                self.mutex.unlock(self.io);
+            }
+        }
+    };
+}
+
 fn synthesizePlans(
     alloc: Allocator,
     tensors: []const safetensors.Tensor,
@@ -248,12 +330,15 @@ fn synthesizePlans(
     return plans;
 }
 
+const EncodePool = BatchPool(EncodeJob);
+
 fn encodeBlocks(
     alloc: Allocator,
     tensors: []const safetensors.Tensor,
     blocks: []const Block,
     plans: []const ?search.Plan,
     n_threads: usize,
+    pool: ?*EncodePool,
 ) ![]?search.Result {
     const results = try alloc.alloc(?search.Result, blocks.len);
     errdefer freeResults(alloc, results);
@@ -269,7 +354,7 @@ fn encodeBlocks(
     };
     if (blocks.len > 0) {
         const n = @max(@as(usize, 1), @min(n_threads, blocks.len));
-        try runWorkers(alloc, n, &encode_job, EncodeJob.run);
+        if (pool) |p| p.run(&encode_job) else try runWorkers(alloc, n, &encode_job, EncodeJob.run);
     }
 
     if (encode_job.fails.load(.acquire) > 0) return error.SynthesisFailed;
@@ -285,7 +370,7 @@ fn synthesizeBlocks(
 ) ![]?search.Result {
     const plans = try synthesizePlans(alloc, tensors, pr, n_threads);
     defer freePlans(alloc, plans);
-    return encodeBlocks(alloc, tensors, blocks, plans, n_threads);
+    return encodeBlocks(alloc, tensors, blocks, plans, n_threads, null);
 }
 
 fn freeResults(alloc: Allocator, results: []?search.Result) void {
@@ -581,27 +666,31 @@ fn cmdCompress(
     var writer = atomic.file.writer(io, &file_buf);
     try writer.interface.writeAll(&archive.HEADER);
 
-    var builder = archive.Builder.init(alloc);
-    defer builder.deinit();
+    var encode_pool: EncodePool = undefined;
+    try encode_pool.init(alloc, io, n_threads);
+    defer encode_pool.deinit();
+
     var file_off: u64 = archive.HEADER.len;
     const batch_size = @max(@as(usize, 1), n_threads) * 16;
     var first: usize = 0;
     while (first < blocks.len) {
         const last = @min(first + batch_size, blocks.len);
         const batch = blocks[first..last];
-        const results = try encodeBlocks(alloc, loaded.tensors, batch, plans, n_threads);
+        const results = try encodeBlocks(alloc, loaded.tensors, batch, plans, n_threads, &encode_pool);
         defer freeResults(alloc, results);
         for (results) |maybe_result| {
-            var result = maybe_result.?;
-            try builder.add(.{ .node = &result.node, .payload = result.payload }, file_off);
+            const result = maybe_result.?;
+            const frame_header = try archive.frameHeader(alloc, result.node, result.payload.len);
+            defer alloc.free(frame_header);
+            try writer.interface.writeAll(frame_header);
             try writer.interface.writeAll(result.payload);
-            file_off += result.payload.len;
+            file_off += frame_header.len + result.payload.len;
         }
         first = last;
     }
 
     const header_len: usize = @intCast(std.mem.readInt(u64, loaded.bytes[0..8], .little));
-    const tail = try builder.finish(metas, file_off, loaded.bytes[0 .. 8 + header_len]);
+    const tail = try archive.makeFooter(alloc, metas, file_off, loaded.bytes[0 .. 8 + header_len]);
     defer alloc.free(tail);
     try writer.interface.writeAll(tail);
     try writer.interface.flush();
@@ -636,7 +725,14 @@ const DecodeJob = struct {
     }
 };
 
-fn decodeBlocks(alloc: Allocator, blocks: []const archive.ParsedBlock, n_threads: usize) ![]?Stream {
+const DecodePool = BatchPool(DecodeJob);
+
+fn decodeBlocks(
+    alloc: Allocator,
+    blocks: []const archive.ParsedBlock,
+    n_threads: usize,
+    pool: ?*DecodePool,
+) ![]?Stream {
     const streams = try alloc.alloc(?Stream, blocks.len);
     errdefer freeStreams(alloc, streams);
     for (streams) |*stream| stream.* = null;
@@ -650,7 +746,7 @@ fn decodeBlocks(alloc: Allocator, blocks: []const archive.ParsedBlock, n_threads
     };
     if (blocks.len > 0) {
         const n = @min(n_threads, blocks.len);
-        if (n == 1) job.run() else try runWorkers(alloc, n, &job, DecodeJob.run);
+        if (pool) |p| p.run(&job) else if (n == 1) job.run() else try runWorkers(alloc, n, &job, DecodeJob.run);
     }
     if (job.fails.load(.acquire) > 0) return error.DecompressionFailed;
     return streams;
@@ -668,6 +764,9 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
 
     const n_threads = @max(@as(usize, 1), threadCount(jobs));
     const t0 = std.Io.Timestamp.now(io, .awake);
+    var decode_pool: DecodePool = undefined;
+    try decode_pool.init(alloc, io, n_threads);
+    defer decode_pool.deinit();
 
     const metas = try alloc.alloc(safetensors.TensorMeta, loaded.parsed.tensors.len);
     defer alloc.free(metas);
@@ -699,10 +798,14 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
     for (loaded.parsed.tensors, metas) |tensor, meta| {
         var written: usize = 0;
         const batch_size = n_threads * 16;
-        var first: usize = 0;
-        while (first < tensor.blocks.len) {
-            const last = @min(first + batch_size, tensor.blocks.len);
-            const streams = try decodeBlocks(alloc, tensor.blocks[first..last], n_threads);
+        var frame_pos: usize = 0;
+        var remaining: usize = tensor.n_blocks;
+        while (remaining > 0) {
+            const n = @min(batch_size, remaining);
+            const blocks = try alloc.alloc(archive.ParsedBlock, n);
+            defer alloc.free(blocks);
+            for (blocks) |*block| block.* = try archive.nextBlock(tensor.frames, &frame_pos);
+            const streams = try decodeBlocks(alloc, blocks, n_threads, &decode_pool);
             defer freeStreams(alloc, streams);
             for (streams) |maybe_stream| {
                 const stream = maybe_stream.?;
@@ -710,8 +813,9 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
                 try writer.interface.writeAll(data);
                 written += data.len;
             }
-            first = last;
+            remaining -= n;
         }
+        std.debug.assert(frame_pos == tensor.frames.len);
         if (written != meta.byte_len) return error.ShapeDataMismatch;
     }
     try writer.interface.flush();
@@ -762,7 +866,9 @@ fn cmdVerify(alloc: Allocator, io: std.Io, out: *std.Io.Writer, brv_path: []cons
         }
         var off: usize = 0;
         var matches = true;
-        for (t.blocks) |block| {
+        var frame_pos: usize = 0;
+        for (0..t.n_blocks) |_| {
+            const block = try archive.nextBlock(t.frames, &frame_pos);
             var stream = try archive.decodeBlock(alloc, block);
             defer stream.deinit(alloc);
             const data = stream.data[0 .. stream.count * stream.elemBytes()];
@@ -772,6 +878,7 @@ fn cmdVerify(alloc: Allocator, io: std.Io, out: *std.Io.Writer, brv_path: []cons
             }
             off += data.len;
         }
+        std.debug.assert(frame_pos == t.frames.len);
         if (matches and off == found.?.data.len) {
             ok += 1;
         } else {
