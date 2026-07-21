@@ -121,6 +121,37 @@ Output order and per-tensor lengths are checked before and after writing.
 
 [`eval/brevis_benchmarking.py`](eval/brevis_benchmarking.py) is the repeated Brevis-system harness. It integrity-binds one shard to the tiered manifest, builds and hashes a ReleaseFast binary by default, requires a clean tree, times input-local calibration separately, and benchmarks raw-terminal, fixed, uniform, and PHOG configurations in paired orders. All timed archive compression/decompression pipelines finish before the independent diagnostic replays begin, so a method's search replay cannot precondition a timed archive task. Each operation records process-level time and peak RSS, and every decode is followed by a complete untimed byte comparison. The harness checks measured archive reproducibility, exact size projection, and every realized program-bytecode digest against an independent scan of the actual `.brv` frames. For each configuration, the first complete successful warmup report, or the first complete successful measured report when there is no such warmup, supplies the single canonical schema-4 `tensors`/`blocks` detail. Matching repetitions retain every other top-level field, including internal timing, plus a semantic SHA-256 and a checkpoint-local canonical reference. The fingerprint excludes only the two internal wall times and machine-local input/prior paths. A mismatch retains its full detail and invalidates the run, so repeated diagnostics cannot be counted as independent tensors. Runs that disable integrity, clean-tree, or harness-build gates are machine-labelled `pilot` and are ineligible for formal results.
 
+[`eval/campaign_runner.py`](eval/campaign_runner.py) expands the frozen matrix
+into hash-addressed comparison tasks and executes at most one selected task.
+Formal Brevis and generic-codec tasks share a fixed advisory machine lock. The
+generic branch runs the exact 19-row registry once, requires a clean bound
+commit and unset codec overrides, checks a 30% disk reserve before and after the
+run, and publishes an immutable raw checkpoint plus a separate validation
+receipt. The receipt distinguishes a trustworthy failed attempt, method
+success, and eligibility for formal aggregation. Planning is read-only by
+default; execution regenerates and revalidates the selected task rather than
+trusting a saved plan.
+
+```bash
+python3 eval/campaign_runner.py \
+  --campaign small-core-system-v1 --model-tag small-bert-f32 \
+  --cache-root eval/cache \
+  --staging-root eval/cache/formal-staging/frozen-v1 \
+  --plan-output /tmp/brevis-bert-plan.json
+
+TASK_SHA256=$(jq -r '.tasks[0].task_semantic_sha256' /tmp/brevis-bert-plan.json)
+python3 eval/campaign_runner.py \
+  --campaign small-core-system-v1 --model-tag small-bert-f32 \
+  --cache-root eval/cache \
+  --staging-root eval/cache/formal-staging/frozen-v1 \
+  --execute-one "$TASK_SHA256"
+```
+
+Use the same filters and roots for planning and execution. Do not pass the
+already-created plan path to the execution command. A plan or result written
+inside the repository must be under a Git-ignored directory; formal execution
+otherwise fails before measurement.
+
 ```bash
 python3 eval/benchmarking.py eval/cache/.../model.safetensors \
   --output eval/results/generic-small-bert.json \
@@ -151,6 +182,29 @@ does not expose.
 python3 eval/analyze_generated_dsl.py \
   eval/cache/formal-staging/small-bert-f32-core-system-v1.json \
   --output-dir eval/cache/formal-staging/small-bert-f32-dsl
+```
+
+[`eval/summarize_generated_dsl.py`](eval/summarize_generated_dsl.py) validates
+one or more formal DSL-analysis directories and aggregates program length,
+depth, bytecode, operator/terminal combinations, tensor strata, and
+search-counter relationships without treating technical repetitions as new
+tensors. [`eval/summarize_generic_benchmarks.py`](eval/summarize_generic_benchmarks.py)
+accepts only raw/validation-receipt pairs from the formal generic campaign. It
+rechecks every iteration and archive digest, keeps bzip2's equivalent `-9` and
+`--best` labels visible but gives them one independent-observation identity,
+and reports per-input, pooled per-model, model-equal, and raw-byte views. For a
+multi-shard model, serial wall time is the sum of shard means and peak RSS is
+the maximum over measured shard trials; no unsupported cross-shard standard
+deviation is synthesized.
+
+```bash
+python3 eval/summarize_generated_dsl.py \
+  eval/results/formal/system/small-core-system-v1/small-bert-f32/model.safetensors \
+  --output /tmp/bert-dsl-aggregate.json
+
+python3 eval/summarize_generic_benchmarks.py \
+  --pair /path/to/task.json /path/to/task.validation.json \
+  --output /tmp/generic-aggregate.json
 ```
 
 The evaluator rebuilds the ReleaseFast binary so recorded source settings match the executable. Existing result files predate this schema and must be rerun before comparison with the current planner.

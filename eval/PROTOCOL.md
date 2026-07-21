@@ -350,6 +350,44 @@ CLI invocation. Bzip2's default `-9` and ratio-oriented `--best` rows are exact
 aliases. Retain both preregistered labels, but do not count them as independent
 configurations in an aggregate or interpret their equality as replication.
 
+`campaign_runner.py` is the formal entry point for the frozen campaign matrix.
+Planning expands each comparison group into one canonical JSON task whose
+SHA-256 binds the Git commit, runner and harness bytes, experiment matrix,
+model manifest, source identity, full method specifications, scheduling, and
+configuration. Execution accepts exactly one task hash, regenerates that task
+from the live files, and refuses semantic drift. Brevis-system and generic
+tasks share `/tmp/brevis-machine-benchmark.lock`; this `fcntl.flock` lock is
+advisory and protects only cooperating runner processes in the same filesystem
+namespace.
+
+For the generic track, one task contains all 19 registry rows in one harness
+call with one warmup and six seed-2701 measured repetitions. Formal execution
+requires the task-bound clean commit, unset codec-specific environment
+overrides, exact executable provenance, and 30% free-space gates before and
+after the run. The work and checkpoint share one filesystem. The preflight
+estimate is conservative, not a mathematical codec-output bound, and cannot
+reserve space against unrelated writers. Raw checkpoints and their adjacent
+`.validation.json` receipts are both no-overwrite artifacts. Postvalidation
+reloads the raw bytes from disk rather than trusting the harness return value.
+It rechecks the seeded 133-iteration schedule, every command and round trip,
+stable measured archive bytes and hashes, source/manifest provenance, scripts,
+executables, environment, and the post-run disk gate. A structured method
+failure remains preserved; only a receipt with `attempt_contract_valid`,
+`result_success`, and `formal_eligible` all true can enter formal aggregation.
+
+`summarize_generic_benchmarks.py` independently revalidates each raw/receipt
+pair. Multiple inputs must use the same implementation, matrix, manifest,
+campaign, configuration, executable bytes and versions, and stable host timing
+environment. It rejects duplicate logical shards and conflicting source
+identities. Archive size, ratio, and saving pool bytes across a model before
+model-equal aggregation. Under the declared serial shard execution model,
+complete-model wall time is the sum of per-shard measured means, throughput is
+total raw bytes divided by that sum, and peak RSS is the maximum observed
+measured-trial RSS. Because shard repetitions are not paired with each other,
+the tool does not synthesize a complete-model standard deviation. The two
+bzip2 level-9 spellings remain visible but share one independent configuration
+identity and must produce identical archives.
+
 `brevis_benchmarking.py` implements repeated Brevis runs with independent
 calibration, a canonical measured prior, paired method orders, process-level
 RSS, complete archives, and post-timing byte verification. It executes every
