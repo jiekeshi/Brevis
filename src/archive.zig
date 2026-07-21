@@ -15,6 +15,15 @@ const FOOTER_MAGIC: [4]u8 = .{ 'B', 'R', 'V', 'F' };
 pub const BlockJob = struct { node: *Node, payload: []const u8 };
 pub const TensorMeta = struct { name: []const u8, dtype: Dtype, shape: []const u64, n_blocks: u32 };
 
+/// A frame with no bytecode is a back-reference: this block's content already
+/// appears at `ref`, so only the pointer is stored.
+pub fn refFrame(ref: u64) [12]u8 {
+    var b: [12]u8 = undefined;
+    std.mem.writeInt(u32, b[0..4], 0, .little);
+    std.mem.writeInt(u64, b[4..12], ref, .little);
+    return b;
+}
+
 pub fn frameHeader(alloc: Allocator, node: Node, payload_len: usize) ![]u8 {
     const bytecode = try program.serialize(alloc, node);
     defer alloc.free(bytecode);
@@ -95,12 +104,13 @@ pub const ParsedTensor = struct {
     name: []u8,
     dtype: Dtype,
     shape: []u64,
-    frames: []const u8,
+    frame_start: usize,
     n_blocks: u32,
 };
 
 pub const Parsed = struct {
     tensors: []ParsedTensor,
+    frames: []const u8,
     safetensors_prefix: []const u8,
     arena: std.heap.ArenaAllocator,
 
@@ -123,7 +133,12 @@ pub const Loaded = struct {
 pub fn nextBlock(frames: []const u8, pos: *usize) !ParsedBlock {
     var r: Reader = .{ .b = frames, .pos = pos.* };
     const program_len = std.math.cast(usize, try r.u32v()) orelse return error.Truncated;
-    if (program_len == 0) return error.InvalidProgram;
+    if (program_len == 0) {
+        var ref = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
+        pos.* = r.pos;
+        if (ref >= pos.*) return error.InvalidProgram; // references point strictly backwards
+        return nextBlock(frames, &ref);
+    }
     const bytecode = try r.take(program_len);
     const payload_len = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
     const payload = try r.take(payload_len);
@@ -201,20 +216,19 @@ pub fn parse(alloc: Allocator, bytes: []const u8) !Parsed {
         tensor.shape = try a.alloc(u64, ndim);
         for (tensor.shape) |*dim| dim.* = try r.u64v();
         tensor.n_blocks = try r.u32v();
-        tensor.frames = &.{};
+        tensor.frame_start = 0;
     }
     if (r.pos != footer) return error.TrailingIndexData;
 
     const frames = bytes[HEADER.len..index_off];
     var pos: usize = 0;
     for (tensors) |*tensor| {
-        const first = pos;
+        tensor.frame_start = pos;
         for (0..tensor.n_blocks) |_| _ = try nextBlock(frames, &pos);
-        tensor.frames = frames[first..pos];
     }
     if (pos != frames.len) return error.TrailingFrameData;
 
-    return .{ .tensors = tensors, .safetensors_prefix = safetensors_prefix, .arena = arena };
+    return .{ .tensors = tensors, .frames = frames, .safetensors_prefix = safetensors_prefix, .arena = arena };
 }
 
 pub fn loadFromPath(alloc: Allocator, io: std.Io, path: []const u8) !Loaded {

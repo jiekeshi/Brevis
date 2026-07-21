@@ -11,10 +11,12 @@ pub const Dtype = enum(u8) {
     i8 = 6,
     i16 = 7,
     i32 = 8,
+    f8_e4m3 = 9,
+    f8_e5m2 = 10,
 
     pub fn elemSize(self: Dtype) usize {
         return switch (self) {
-            .u8, .i8 => 1,
+            .u8, .i8, .f8_e4m3, .f8_e5m2 => 1,
             .f16, .bf16, .u16, .i16 => 2,
             .f32, .u32, .i32 => 4,
         };
@@ -25,7 +27,7 @@ pub const Dtype = enum(u8) {
     }
 
     pub fn isFloat(self: Dtype) bool {
-        return self == .f16 or self == .bf16 or self == .f32;
+        return self.floatFields() != null;
     }
 
     pub const FloatFields = struct { exp: u8, mant: u8, total: u8 };
@@ -35,6 +37,8 @@ pub const Dtype = enum(u8) {
             .f16 => .{ .exp = 5, .mant = 10, .total = 16 },
             .bf16 => .{ .exp = 8, .mant = 7, .total = 16 },
             .f32 => .{ .exp = 8, .mant = 23, .total = 32 },
+            .f8_e4m3 => .{ .exp = 4, .mant = 3, .total = 8 },
+            .f8_e5m2 => .{ .exp = 5, .mant = 2, .total = 8 },
             else => null,
         };
     }
@@ -50,6 +54,8 @@ pub const Dtype = enum(u8) {
             .i8 => "I8",
             .i16 => "I16",
             .i32 => "I32",
+            .f8_e4m3 => "F8_E4M3",
+            .f8_e5m2 => "F8_E5M2",
         };
     }
 
@@ -63,6 +69,8 @@ pub const Dtype = enum(u8) {
         if (std.mem.eql(u8, s, "I8")) return .i8;
         if (std.mem.eql(u8, s, "I16")) return .i16;
         if (std.mem.eql(u8, s, "I32")) return .i32;
+        if (std.mem.eql(u8, s, "F8_E4M3")) return .f8_e4m3;
+        if (std.mem.eql(u8, s, "F8_E5M2")) return .f8_e5m2;
         return null;
     }
 };

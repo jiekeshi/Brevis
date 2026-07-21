@@ -201,10 +201,11 @@ fn sideBody(side: ops.SideInfo) usize {
 fn legalProductions(hole_bpe: u8, depth: u8, dtype: Dtype, is_root: bool, out: *std.ArrayList(OpKind)) void {
     out.appendAssumeCapacity(.raw);
     out.appendAssumeCapacity(.bitpack);
-    if (hole_bpe <= ops.MAX_ENTROPY_BPE) {
-        out.appendAssumeCapacity(.huffman);
-        out.appendAssumeCapacity(.rans);
-    }
+    // rANS only: it reaches the entropy where Huffman pays an integer-bit
+    // penalty, and although its table costs more per symbol, that is decided on
+    // the sample where the table is over-weighted -- so offering both makes the
+    // search pick the weaker coder. Measured uniformly better on bf16 and i8.
+    if (hole_bpe <= ops.MAX_ENTROPY_BPE) out.appendAssumeCapacity(.rans);
     if (depth >= ops.K_TRANSFORM_LAYERS) return;
 
     const elementwise = [_]OpKind{
@@ -473,15 +474,15 @@ fn sampleStream(alloc: Allocator, in: Stream, want: usize) !Stream {
 
 /// Complete candidates reached within the expansion budget, ascending by bytes.
 pub fn synthesizeAll(alloc: Allocator, in: Stream, dtype: Dtype, opts: Options) ![]Result {
-    var uniform = prior.Prior.initUniform(alloc);
-    defer uniform.deinit(alloc);
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(alloc);
 
     var all: std.ArrayList(Result) = .empty;
     errdefer {
         for (all.items) |*r| r.deinit(alloc);
         all.deinit(alloc);
     }
-    var best = try run(alloc, in, dtype, &uniform, opts, &all);
+    var best = try run(alloc, in, dtype, &untrained, opts, &all);
     var best_in_all = false;
     errdefer if (!best_in_all) best.deinit(alloc);
     try all.append(alloc, best);
@@ -504,8 +505,11 @@ fn run(
     opts: Options,
     all: ?*std.ArrayList(Result),
 ) !Result {
-    const uniform = pr.isUniform();
-    const min_score: u32 = if (uniform) ops.UNIFORM_SCORE else 0;
+    // Flat per-hole completion charge. It must not come from the prior: the
+    // normalisation in `scoreSet` makes the likeliest production free, so a
+    // prior-derived floor collapses to zero exactly where the prior is
+    // confident, and the frontier fills with half-built trees again.
+    const min_score: u32 = 8192;
     const raw_sk: PNode = .{ .filled = .{ .op = .raw, .params = 0, .kids = &.{} } };
     var incumbent = try encodeReal(alloc, raw_sk, in);
     errdefer incumbent.deinit(alloc);
@@ -590,18 +594,12 @@ fn run(
         defer hist.deinit(alloc);
 
         const feat = featOf(hist);
-        const ctx = if (uniform)
-            prior.Context{}
-        else
-            prior.Context.fromStream(hs, dtype, hole.slot, hole.depth, hole.parent_op);
+        const ctx = prior.Context.fromStream(hs, dtype, hole.slot, hole.depth, hole.parent_op);
 
         prods.clearRetainingCapacity();
         legalProductions(hs.bits_per_elem, hole.depth, dtype, hole.depth == 0, &prods);
         var scores: [MAX_PRODUCTIONS]u32 = undefined;
-        if (uniform)
-            @memset(scores[0..prods.items.len], ops.UNIFORM_SCORE)
-        else
-            pr.scoreSet(ctx, prods.items, scores[0..prods.items.len]);
+        pr.scoreSet(ctx, prods.items, scores[0..prods.items.len]);
 
         for (prods.items, scores[0..prods.items.len]) |prod, score| {
             if (hs.count == 0 and prod != .raw) continue;

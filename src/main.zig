@@ -15,7 +15,7 @@ const Dtype = types.Dtype;
 const Block = types.Block;
 const Stream = types.Stream;
 
-const N_DTYPE: usize = 9;
+const N_DTYPE: usize = @typeInfo(Dtype).@"enum".fields.len;
 const ROOT_PARENT: u8 = 255;
 /// Calibration candidate enumeration is superlinear in block length; a prefix this
 /// long already saturates the context statistics.
@@ -88,7 +88,7 @@ pub fn main(init: std.process.Init) !void {
         try cmdBench(io, out, p[0], opt_prior, opt_jobs);
     } else if (std.mem.eql(u8, cmd, "baseline")) {
         if (p.len != 1) try usage(err);
-        try cmdBaseline(io, out, p[0], opt_jobs);
+        try cmdBaseline(io, out, p[0], opt_prior, opt_jobs);
     } else if (std.mem.eql(u8, cmd, "demo")) {
         try cmdDemo(io, out);
     } else if (std.mem.eql(u8, cmd, "make-fixture")) {
@@ -106,11 +106,11 @@ fn usage(w: *std.Io.Writer) !noreturn {
         \\brevis — bit-exact lossless tensor compression via program synthesis
         \\
         \\  brevis calibrate   <model.safetensors> <prior.bin> [--blocks N]
-        \\  brevis compress    <model.safetensors> <out.brv> [--prior p.bin] [--jobs N]
+        \\  brevis compress    <model.safetensors> <out.brv> --prior <p.bin> [--jobs N]
         \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
         \\  brevis verify      <in.brv> <orig.safetensors>
-        \\  brevis bench       <model.safetensors> [--prior p.bin] [--jobs N]
-        \\  brevis baseline    <model.safetensors> [--jobs N]
+        \\  brevis bench       <model.safetensors> --prior <p.bin> [--jobs N]
+        \\  brevis baseline    <model.safetensors> --prior <p.bin> [--jobs N]
         \\  brevis demo
         \\  brevis make-fixture <out.safetensors>
         \\
@@ -142,8 +142,7 @@ fn planAll(alloc: Allocator, tensors: []const safetensors.Tensor) ![]Block {
 }
 
 fn loadPrior(alloc: Allocator, path: ?[]const u8) !prior.Prior {
-    if (path) |pth| return prior.Prior.load(alloc, pth);
-    return prior.Prior.initUniform(alloc);
+    return prior.Prior.load(alloc, path orelse return error.PriorRequired);
 }
 
 const PlanJob = struct {
@@ -183,12 +182,14 @@ const EncodeJob = struct {
     blocks: []const Block,
     results: []?search.Result,
     plans: []const ?search.Plan,
+    dups: []const ?u32,
     alloc: Allocator,
 
     fn run(self: *EncodeJob) void {
         while (true) {
             const i = self.next.fetchAdd(1, .acq_rel);
             if (i >= self.blocks.len) return;
+            if (self.dups.len > 0 and self.dups[i] != null) continue;
             const b = self.blocks[i];
             const s = b.asStream(self.tensors[b.tensor_idx].view.data);
             const plan = &self.plans[b.tensor_idx].?;
@@ -339,6 +340,7 @@ fn encodeBlocks(
     plans: []const ?search.Plan,
     n_threads: usize,
     pool: ?*EncodePool,
+    dups: []const ?u32,
 ) ![]?search.Result {
     const results = try alloc.alloc(?search.Result, blocks.len);
     errdefer freeResults(alloc, results);
@@ -350,6 +352,7 @@ fn encodeBlocks(
         .blocks = blocks,
         .results = results,
         .plans = plans,
+        .dups = dups,
         .alloc = alloc,
     };
     if (blocks.len > 0) {
@@ -370,7 +373,57 @@ fn synthesizeBlocks(
 ) ![]?search.Result {
     const plans = try synthesizePlans(alloc, tensors, pr, n_threads);
     defer freePlans(alloc, plans);
-    return encodeBlocks(alloc, tensors, blocks, plans, n_threads, null);
+    return encodeBlocks(alloc, tensors, blocks, plans, n_threads, null, &.{});
+}
+
+fn blockBytes(tensors: []const safetensors.Tensor, b: Block) []const u8 {
+    return b.asStream(tensors[b.tensor_idx].view.data).data;
+}
+
+const HashJob = struct {
+    next: std.atomic.Value(usize),
+    tensors: []const safetensors.Tensor,
+    blocks: []const Block,
+    hashes: []u64,
+
+    fn run(self: *HashJob) void {
+        while (true) {
+            const i = self.next.fetchAdd(1, .acq_rel);
+            if (i >= self.blocks.len) return;
+            self.hashes[i] = std.hash.XxHash3.hash(0, blockBytes(self.tensors, self.blocks[i]));
+        }
+    }
+};
+
+/// Maps each block to the earlier block holding identical bytes, or null. Hashes
+/// only nominate candidates; equality is confirmed against the source so a
+/// collision can never corrupt the archive.
+fn findDuplicates(
+    alloc: Allocator,
+    tensors: []const safetensors.Tensor,
+    blocks: []const Block,
+    n_threads: usize,
+) ![]?u32 {
+    const hashes = try alloc.alloc(u64, blocks.len);
+    defer alloc.free(hashes);
+    var job: HashJob = .{ .next = .init(0), .tensors = tensors, .blocks = blocks, .hashes = hashes };
+    if (blocks.len > 0) try runWorkers(alloc, @max(1, @min(n_threads, blocks.len)), &job, HashJob.run);
+
+    const dups = try alloc.alloc(?u32, blocks.len);
+    errdefer alloc.free(dups);
+    var first: std.AutoHashMapUnmanaged(u64, u32) = .empty;
+    defer first.deinit(alloc);
+    for (blocks, dups, 0..) |b, *dup, i| {
+        dup.* = null;
+        const gop = try first.getOrPut(alloc, hashes[i]);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = @intCast(i);
+            continue;
+        }
+        const src = gop.value_ptr.*;
+        if (std.mem.eql(u8, blockBytes(tensors, blocks[src]), blockBytes(tensors, b))) dup.* = src;
+    }
+    return dups;
 }
 
 fn freeResults(alloc: Allocator, results: []?search.Result) void {
@@ -655,15 +708,20 @@ fn cmdCompress(
     try out.flush();
 
     const t0 = std.Io.Timestamp.now(io, .awake);
+    const dups = try findDuplicates(alloc, loaded.tensors, blocks, n_threads);
+    defer alloc.free(dups);
     const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads);
     defer freePlans(alloc, plans);
     const metas = try tensorMetas(alloc, loaded.tensors, blocks);
     defer alloc.free(metas);
+    const frame_off = try alloc.alloc(u64, blocks.len);
+    defer alloc.free(frame_off);
 
     var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
     defer atomic.deinit(io);
-    var file_buf: [64 * 1024]u8 = undefined;
-    var writer = atomic.file.writer(io, &file_buf);
+    const file_buf = try alloc.alloc(u8, 4 << 20);
+    defer alloc.free(file_buf);
+    var writer = atomic.file.writer(io, file_buf);
     try writer.interface.writeAll(&archive.HEADER);
 
     var encode_pool: EncodePool = undefined;
@@ -671,14 +729,23 @@ fn cmdCompress(
     defer encode_pool.deinit();
 
     var file_off: u64 = archive.HEADER.len;
+    var n_dup: usize = 0;
     const batch_size = @max(@as(usize, 1), n_threads) * 16;
     var first: usize = 0;
     while (first < blocks.len) {
         const last = @min(first + batch_size, blocks.len);
         const batch = blocks[first..last];
-        const results = try encodeBlocks(alloc, loaded.tensors, batch, plans, n_threads, &encode_pool);
+        const results = try encodeBlocks(alloc, loaded.tensors, batch, plans, n_threads, &encode_pool, dups[first..last]);
         defer freeResults(alloc, results);
-        for (results) |maybe_result| {
+        for (results, first..) |maybe_result, bi| {
+            frame_off[bi] = file_off - archive.HEADER.len;
+            if (dups[bi]) |src| {
+                const frame = archive.refFrame(frame_off[src]);
+                try writer.interface.writeAll(&frame);
+                file_off += frame.len;
+                n_dup += 1;
+                continue;
+            }
             const result = maybe_result.?;
             const frame_header = try archive.frameHeader(alloc, result.node, result.payload.len);
             defer alloc.free(frame_header);
@@ -699,7 +766,7 @@ fn cmdCompress(
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
 
     const raw = rawBytes(loaded.tensors);
-    try out.print("synthesized and wrote in {d}ms\n", .{ms});
+    try out.print("synthesized and wrote in {d}ms ({d} of {d} blocks deduplicated)\n", .{ ms, n_dup, blocks.len });
     try out.print("wrote {s}: {d} -> {d} bytes ({d:.3}x)\n", .{ out_path, raw, written, ratio(raw, written) });
 }
 
@@ -757,6 +824,50 @@ fn freeStreams(alloc: Allocator, streams: []?Stream) void {
     alloc.free(streams);
 }
 
+/// Drains decoded batches on a background thread so the next batch decodes
+/// while the current one is still going to disk. One writer at a time keeps
+/// the output ordered.
+const WritePipe = struct {
+    alloc: Allocator,
+    writer: *std.Io.Writer,
+    thread: ?std.Thread = null,
+    batch: []?Stream = &.{},
+    written: u64 = 0,
+    err: ?anyerror = null,
+
+    fn drain(self: *WritePipe) void {
+        for (self.batch) |maybe| {
+            const stream = maybe.?;
+            const data = stream.data[0 .. stream.count * stream.elemBytes()];
+            self.writer.writeAll(data) catch |e| {
+                self.err = e;
+                return;
+            };
+            self.written += data.len;
+        }
+    }
+
+    fn join(self: *WritePipe) void {
+        const thread = self.thread orelse return;
+        thread.join();
+        self.thread = null;
+        freeStreams(self.alloc, self.batch);
+        self.batch = &.{};
+    }
+
+    fn submit(self: *WritePipe, batch: []?Stream) !void {
+        self.join();
+        if (self.err) |e| return e;
+        self.batch = batch;
+        self.thread = try std.Thread.spawn(.{}, drain, .{self});
+    }
+
+    fn finish(self: *WritePipe) !void {
+        self.join();
+        if (self.err) |e| return e;
+    }
+};
+
 fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path: []const u8, jobs: ?usize) !void {
     const alloc = std.heap.smp_allocator;
     var loaded = try archive.loadFromPath(alloc, io, in_path);
@@ -782,8 +893,9 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
     }
     var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
     defer atomic.deinit(io);
-    var file_buf: [64 * 1024]u8 = undefined;
-    var writer = atomic.file.writer(io, &file_buf);
+    const file_buf = try alloc.alloc(u8, 4 << 20);
+    defer alloc.free(file_buf);
+    var writer = atomic.file.writer(io, file_buf);
     if (loaded.parsed.safetensors_prefix.len > 0) {
         try writer.interface.writeAll(loaded.parsed.safetensors_prefix);
     } else {
@@ -795,29 +907,30 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
         try writer.interface.writeAll(header);
     }
 
+    // Blocks are stored tensor by tensor, so one pass over all frames emits the
+    // payload in order; per-tensor lengths are checked against the total.
+    var expected: u64 = 0;
+    var remaining: usize = 0;
     for (loaded.parsed.tensors, metas) |tensor, meta| {
-        var written: usize = 0;
-        const batch_size = n_threads * 16;
-        var frame_pos: usize = 0;
-        var remaining: usize = tensor.n_blocks;
-        while (remaining > 0) {
-            const n = @min(batch_size, remaining);
-            const blocks = try alloc.alloc(archive.ParsedBlock, n);
-            defer alloc.free(blocks);
-            for (blocks) |*block| block.* = try archive.nextBlock(tensor.frames, &frame_pos);
-            const streams = try decodeBlocks(alloc, blocks, n_threads, &decode_pool);
-            defer freeStreams(alloc, streams);
-            for (streams) |maybe_stream| {
-                const stream = maybe_stream.?;
-                const data = stream.data[0 .. stream.count * stream.elemBytes()];
-                try writer.interface.writeAll(data);
-                written += data.len;
-            }
-            remaining -= n;
-        }
-        std.debug.assert(frame_pos == tensor.frames.len);
-        if (written != meta.byte_len) return error.ShapeDataMismatch;
+        remaining += tensor.n_blocks;
+        expected += meta.byte_len;
     }
+
+    var pipe: WritePipe = .{ .alloc = alloc, .writer = &writer.interface };
+    defer pipe.join();
+
+    const batch_size = n_threads * 16;
+    var frame_pos: usize = 0;
+    while (remaining > 0) {
+        const n = @min(batch_size, remaining);
+        const blocks = try alloc.alloc(archive.ParsedBlock, n);
+        defer alloc.free(blocks);
+        for (blocks) |*block| block.* = try archive.nextBlock(loaded.parsed.frames, &frame_pos);
+        try pipe.submit(try decodeBlocks(alloc, blocks, n_threads, &decode_pool));
+        remaining -= n;
+    }
+    try pipe.finish();
+    if (pipe.written != expected) return error.ShapeDataMismatch;
     try writer.interface.flush();
     try atomic.replace(io);
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
@@ -866,9 +979,9 @@ fn cmdVerify(alloc: Allocator, io: std.Io, out: *std.Io.Writer, brv_path: []cons
         }
         var off: usize = 0;
         var matches = true;
-        var frame_pos: usize = 0;
+        var frame_pos: usize = t.frame_start;
         for (0..t.n_blocks) |_| {
-            const block = try archive.nextBlock(t.frames, &frame_pos);
+            const block = try archive.nextBlock(loaded.parsed.frames, &frame_pos);
             var stream = try archive.decodeBlock(alloc, block);
             defer stream.deinit(alloc);
             const data = stream.data[0 .. stream.count * stream.elemBytes()];
@@ -878,7 +991,6 @@ fn cmdVerify(alloc: Allocator, io: std.Io, out: *std.Io.Writer, brv_path: []cons
             }
             off += data.len;
         }
-        std.debug.assert(frame_pos == t.frames.len);
         if (matches and off == found.?.data.len) {
             ok += 1;
         } else {
@@ -1000,7 +1112,7 @@ fn cmdBench(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: ?[
 
 // ==================== baseline ====================
 
-fn cmdBaseline(io: std.Io, out: *std.Io.Writer, in_path: []const u8, jobs: ?usize) !void {
+fn cmdBaseline(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: ?[]const u8, jobs: ?usize) !void {
     const alloc = std.heap.smp_allocator;
 
     var loaded = try safetensors.loadFromPath(alloc, io, in_path);
@@ -1021,7 +1133,7 @@ fn cmdBaseline(io: std.Io, out: *std.Io.Writer, in_path: []const u8, jobs: ?usiz
     });
     try out.flush();
 
-    var pr = prior.Prior.initUniform(alloc);
+    var pr = try loadPrior(alloc, prior_path);
     defer pr.deinit(alloc);
     const blocks = try planAll(alloc, loaded.tensors);
     defer alloc.free(blocks);
@@ -1066,7 +1178,7 @@ fn synthTensor(alloc: Allocator, dtype: Dtype, dims: []const u64, seed: u64, nea
             .f16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @bitCast(@as(f16, @floatCast(f))), .little),
             .bf16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @truncate(@as(u32, @bitCast(f)) >> 16), .little),
             .f32 => std.mem.writeInt(u32, buf[i * 4 ..][0..4], @bitCast(f), .little),
-            .u8 => buf[i] = r.intRangeAtMost(u8, 0, 31),
+            .u8, .f8_e4m3, .f8_e5m2 => buf[i] = r.intRangeAtMost(u8, 0, 31),
             .i8 => buf[i] = @bitCast(r.intRangeAtMost(i8, -16, 15)),
             .u16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], r.intRangeAtMost(u16, 0, 1023), .little),
             .i16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @bitCast(r.intRangeAtMost(i16, -512, 511)), .little),
@@ -1132,7 +1244,7 @@ fn cmdDemo(io: std.Io, out: *std.Io.Writer) !void {
     defer tensors.deinit(alloc);
     try makeFixtureTensors(alloc, &views, &tensors);
 
-    var pr = prior.Prior.initUniform(alloc);
+    var pr: prior.Prior = .empty;
     defer pr.deinit(alloc);
 
     const blocks = try planAll(alloc, tensors.items);

@@ -16,7 +16,7 @@ pub const MAX_ENTROPY_BPE: u8 = 16;
 pub const MAX_NODES: usize = 12;
 pub const MAX_EXPANSIONS: usize = 256;
 pub const MAX_REALIZATIONS: usize = 32;
-pub const SEARCH_SAMPLE_ELEMS: usize = 512;
+pub const SEARCH_SAMPLE_ELEMS: usize = 4096;
 pub const CALIBRATE_BLOCKS: usize = 200;
 pub const TAU: f64 = 64.0;
 pub const UNIFORM_SCORE: u32 = 1024 * 8;
@@ -721,7 +721,7 @@ fn splitFloatInv(alloc: Allocator, ins: []const Stream, dt: Dtype, count: usize)
                 const raw = (s << ssh) | (e << esh) | m;
                 o.data[i * 2 ..][0..16].* = @bitCast(raw);
             }
-        } else {
+        } else if (f.total == 32) {
             const V = @Vector(4, u32);
             const Vb = @Vector(4, u8);
             const Vs = @Vector(4, u5);

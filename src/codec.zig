@@ -78,9 +78,28 @@ pub const BitReader = struct {
         self.bit_pos += 1;
         return b;
     }
+
+    /// Next `n` bits MSB-first without advancing, zero-padded past the end.
+    /// Five bytes cover any bit offset plus a 32-bit read.
+    pub fn peek(self: BitReader, n: u5) u32 {
+        var acc: u64 = 0;
+        for (0..5) |k| {
+            const i = (self.bit_pos >> 3) + k;
+            acc = (acc << 8) | (if (i < self.bytes.len) self.bytes[i] else 0);
+        }
+        const off: u6 = @intCast(self.bit_pos & 7);
+        return @truncate((acc >> @intCast(40 - off - @as(u6, n))) & ((@as(u64, 1) << n) - 1));
+    }
+
+    pub fn skip(self: *BitReader, n: usize) void {
+        self.bit_pos += n;
+    }
 };
 
 // ==================== Canonical Huffman ====================
+
+/// Code lengths up to this decode through a flat lookup table.
+const LUT_BITS = 12;
 
 pub const HuffmanTable = struct {
     /// code_length[symbol] = bits used; 0 means "symbol unused".
@@ -431,43 +450,63 @@ pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable,
 
     if (count == 0) return s;
 
-    var codes = try huffmanCodes(alloc, table);
-    defer codes.deinit();
-
-    // Build (code,len) -> sym lookup. For our table sizes a HashMap keyed by
-    // (len << 32 | code) is plenty. But we use a per-length lookup for speed.
+    // Entries are already in canonical order, so the codes of length L occupy a
+    // contiguous run starting at `first_code[L]`, and the n-th of them is the
+    // n-th entry from `first_idx[L]`. Decoding is then array indexing per bit
+    // rather than a lookup structure.
     const max_len = table.entries[table.entries.len - 1].len;
-    var lookup = try alloc.alloc(std.AutoHashMap(u64, u32), @as(usize, max_len) + 1);
-    defer alloc.free(lookup);
-    for (lookup, 0..) |*lk, i| {
-        _ = i;
-        lk.* = .init(alloc);
-    }
-    defer for (lookup) |*lk| lk.deinit();
-
-    for (table.entries) |e| {
-        const c = codes.get(e.sym).?;
-        try lookup[e.len].put(c, e.sym);
+    var counts = [_]u32{0} ** 33;
+    var first_code = [_]u64{0} ** 33;
+    var first_idx = [_]u32{0} ** 33;
+    for (table.entries) |e| counts[e.len] += 1;
+    var code: u64 = 0;
+    var idx: u32 = 0;
+    for (1..@as(usize, max_len) + 1) |len| {
+        first_code[len] = code;
+        first_idx[len] = idx;
+        idx += counts[len];
+        code = (code + counts[len]) << 1;
     }
 
     var br = BitReader.init(payload);
 
-    var i: usize = 0;
-    while (i < count) : (i += 1) {
-        var code: u64 = 0;
+    // Codes this short fit a flat lookup: one indexed read per symbol instead of
+    // one per bit. Deeper tables fall back to walking the canonical ranges.
+    if (max_len <= LUT_BITS) {
+        var storage: [1 << LUT_BITS]u32 = undefined;
+        const lut = storage[0 .. @as(usize, 1) << @intCast(max_len)];
+        var c: u64 = 0;
+        var prev_len: u8 = table.entries[0].len;
+        for (table.entries) |e| {
+            if (e.len > prev_len) {
+                c <<= @intCast(e.len - prev_len);
+                prev_len = e.len;
+            }
+            const shift: u5 = @intCast(max_len - e.len);
+            const base: usize = @intCast(c << shift);
+            @memset(lut[base .. base + (@as(usize, 1) << shift)], (e.sym << 8) | e.len);
+            c += 1;
+        }
+        for (0..count) |i| {
+            const hit = lut[br.peek(@intCast(max_len))];
+            s.setU32(i, hit >> 8);
+            br.skip(hit & 0xFF);
+        }
+        return s;
+    }
+
+    for (0..count) |i| {
+        var c: u64 = 0;
         var len: u8 = 0;
-        var found = false;
         while (len < max_len) {
-            const bit: u64 = br.readBit();
-            code = (code << 1) | bit;
+            c = (c << 1) | br.readBit();
             len += 1;
-            if (lookup[len].get(code)) |sym| {
-                s.setU32(i, sym);
-                found = true;
+            const n = counts[len];
+            if (n != 0 and c >= first_code[len] and c - first_code[len] < n) {
+                s.setU32(i, table.entries[first_idx[len] + @as(u32, @intCast(c - first_code[len]))].sym);
                 break;
             }
-        }
-        if (!found) return error.CorruptHuffmanStream;
+        } else return error.CorruptHuffmanStream;
     }
     return s;
 }
@@ -496,7 +535,8 @@ pub fn bitpackEncode(alloc: Allocator, stream: Stream, width: u8) ![]u8 {
 pub fn bitpackDecode(alloc: Allocator, payload: []const u8, width: u8, count: usize, out_bpe: u8) !Stream {
     std.debug.assert(width > 0 and width <= 32);
 
-    var s = try Stream.init(alloc, count, out_bpe);
+    const buf = try alloc.alloc(u8, count * (types.roundUpToPow2(out_bpe) / 8));
+    var s: Stream = .{ .data = buf, .count = count, .bits_per_elem = out_bpe };
     errdefer s.deinit(alloc);
     if (count == 0) return s;
 

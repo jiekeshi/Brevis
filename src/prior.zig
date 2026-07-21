@@ -119,18 +119,13 @@ fn entropy(hist: []const u32, n: usize) f64 {
 pub const Prior = struct {
     levels: [3]std.AutoHashMapUnmanaged(u64, [N_PROD]u32),
 
-    pub fn initUniform(alloc: Allocator) Prior {
-        _ = alloc;
-        return .{ .levels = .{ .empty, .empty, .empty } };
-    }
+    /// No observations. `score` then reports every production as equally
+    /// likely, which is the correct posterior for an unseen context -- it is
+    /// not a stand-in for a trained prior.
+    pub const empty: Prior = .{ .levels = .{ .empty, .empty, .empty } };
 
     pub fn deinit(self: *Prior, alloc: Allocator) void {
         for (&self.levels) |*m| m.deinit(alloc);
-    }
-
-    pub fn isUniform(self: Prior) bool {
-        for (self.levels) |level| if (level.count() != 0) return false;
-        return true;
     }
 
     pub fn score(self: Prior, ctx: Context, op: ops.OpKind) u32 {
@@ -196,7 +191,7 @@ pub const Prior = struct {
         if (!std.mem.eql(u8, try r.take(4), MAGIC)) return error.BadMagic;
         if ((try r.u32v()) != VERSION) return error.BadVersion;
 
-        var p = Prior.initUniform(alloc);
+        var p: Prior = .empty;
         errdefer p.deinit(alloc);
         for (0..3) |lv| {
             const n = try r.u32v();
@@ -237,7 +232,7 @@ pub const Counts = struct {
 
     /// Laplace-smoothed (α=1) production probabilities as -log2(p) * 1024.
     pub fn toPrior(self: Counts, alloc: Allocator) !Prior {
-        var p = Prior.initUniform(alloc);
+        var p: Prior = .empty;
         errdefer p.deinit(alloc);
         for (0..3) |lv| {
             try p.levels[lv].ensureTotalCapacity(alloc, self.levels[lv].count());

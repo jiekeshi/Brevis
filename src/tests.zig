@@ -522,9 +522,9 @@ test "prior: scores normalize over legal productions" {
     const legal = [_]OpKind{ .raw, .bitpack, .huffman, .rans };
     var scores: [legal.len]u32 = undefined;
 
-    var uniform = prior.Prior.initUniform(a);
-    defer uniform.deinit(a);
-    uniform.scoreSet(.{}, &legal, &scores);
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
+    untrained.scoreSet(.{}, &legal, &scores);
     for (scores) |score| try expectEqual(@as(u32, 2048), score);
 
     var counts = prior.Counts.init(a);
@@ -596,18 +596,18 @@ test "search: enumeration and pruning find the same winner" {
             var in = try makeBlock(a, rng, dt, 512, kind);
             defer in.deinit(a);
 
-            var uniform = prior.Prior.initUniform(a);
-            defer uniform.deinit(a);
+            var untrained: prior.Prior = .empty;
+            defer untrained.deinit(a);
             var skewed = try skewedPrior(a, rng, in, dt);
             defer skewed.deinit(a);
 
             var ex_opts = tight;
             ex_opts.enumerate_all = true;
-            var ex = try search.synthesize(a, in, dt, &uniform, ex_opts);
+            var ex = try search.synthesize(a, in, dt, &untrained, ex_opts);
             defer ex.deinit(a);
             try expect(ex.expanded < tight.max_expansions);
 
-            for ([_]*const prior.Prior{ &uniform, &skewed }) |pr| {
+            for ([_]*const prior.Prior{ &untrained, &skewed }) |pr| {
                 var pruned = try search.synthesize(a, in, dt, pr, tight);
                 defer pruned.deinit(a);
                 try expectEqual(ex.bytes, pruned.bytes);
@@ -660,9 +660,9 @@ test "search: sampled synthesis is bit-exact on the full stream" {
         in.setU32(i, @as(u16, @bitCast(@as(f16, @floatCast(value)))));
     }
 
-    var uniform = prior.Prior.initUniform(a);
-    defer uniform.deinit(a);
-    var plan = try search.synthesizePlan(a, in, .f16, &uniform, .{});
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
+    var plan = try search.synthesizePlan(a, in, .f16, &untrained, .{});
     defer plan.deinit(a);
     var result = try search.encode(a, &plan, in, .f16);
     defer result.deinit(a);
@@ -688,9 +688,9 @@ test "search: planning memory is bounded by the sample" {
     var memory: [256 * 1024]u8 = undefined;
     var fixed = std.heap.FixedBufferAllocator.init(&memory);
     const fa = fixed.allocator();
-    var uniform = prior.Prior.initUniform(fa);
-    defer uniform.deinit(fa);
-    var plan = try search.synthesizePlan(fa, in, .u8, &uniform, .{
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(fa);
+    var plan = try search.synthesizePlan(fa, in, .u8, &untrained, .{
         .sample_elems = 512,
         .max_expansions = 1,
         .max_realizations = 1,
@@ -749,14 +749,14 @@ test "search: i8 blocks never produce split_float" {
     var prng = std.Random.DefaultPrng.init(0x18);
     const rng = prng.random();
 
-    var uniform = prior.Prior.initUniform(a);
-    defer uniform.deinit(a);
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
 
     for ([_]u8{ 0, 1, 2 }) |kind| {
         var in = try makeBlock(a, rng, .i8, 512, kind);
         defer in.deinit(a);
 
-        var r = try search.synthesize(a, in, .i8, &uniform, .{});
+        var r = try search.synthesize(a, in, .i8, &untrained, .{});
         defer r.deinit(a);
         try expect(!hasOp(r.node, .split_float));
 
@@ -804,15 +804,15 @@ test "search: f32 mantissa reaches entropy coders only through a split" {
     var prng = std.Random.DefaultPrng.init(0x32);
     const rng = prng.random();
 
-    var uniform = prior.Prior.initUniform(a);
-    defer uniform.deinit(a);
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
 
     var narrowed: usize = 0;
     for ([_]u8{ 0, 1, 2 }) |kind| {
         var in = try makeBlock(a, rng, .f32, 1024, kind);
         defer in.deinit(a);
 
-        var r = try search.synthesize(a, in, .f32, &uniform, .{});
+        var r = try search.synthesize(a, in, .f32, &untrained, .{});
         defer r.deinit(a);
         try checkEntropyWidths(a, r.node, in, false, &narrowed);
 
@@ -882,8 +882,8 @@ test "archive: multi-tensor multi-block roundtrip" {
     var prng = std.Random.DefaultPrng.init(0xA2C);
     const rng = prng.random();
 
-    var uniform = prior.Prior.initUniform(a);
-    defer uniform.deinit(a);
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
 
     const metas = [_]archive.TensorMeta{
         .{ .name = "block.0.weight", .dtype = .f16, .shape = &.{ 3, 100 }, .n_blocks = 3 },
@@ -907,7 +907,7 @@ test "archive: multi-tensor multi-block roundtrip" {
         for (0..meta.n_blocks) |_| {
             const s = try makeBlock(a, rng, meta.dtype, @intCast(meta.shape[1]), @intCast(ti));
             try blocks.append(a, s);
-            const r = try search.synthesize(a, s, meta.dtype, &uniform, .{ .max_nodes = 6, .max_depth = 2 });
+            const r = try search.synthesize(a, s, meta.dtype, &untrained, .{ .max_nodes = 6, .max_depth = 2 });
             try results.append(a, r);
         }
     }
@@ -931,15 +931,14 @@ test "archive: multi-tensor multi-block roundtrip" {
         try expectEqual(meta.dtype, pt.dtype);
         try std.testing.expectEqualSlices(u64, meta.shape, pt.shape);
         try expectEqual(meta.n_blocks, pt.n_blocks);
-        var pos: usize = 0;
+        var pos: usize = pt.frame_start;
         for (0..pt.n_blocks) |_| {
-            const blk = try archive.nextBlock(pt.frames, &pos);
+            const blk = try archive.nextBlock(parsed.frames, &pos);
             var back = try archive.decodeBlock(a, blk);
             defer back.deinit(a);
             try expectStreamsEqual(blocks.items[bi], back);
             bi += 1;
         }
-        try expectEqual(pt.frames.len, pos);
     }
     try expectEqual(blocks.items.len, bi);
 }
@@ -979,8 +978,7 @@ test "archive: self-contained frames decode concurrently" {
     defer parsed.deinit();
     var pos: usize = 0;
     var parsed_blocks: [3]archive.ParsedBlock = undefined;
-    for (&parsed_blocks) |*block| block.* = try archive.nextBlock(parsed.tensors[0].frames, &pos);
-    try expectEqual(parsed.tensors[0].frames.len, pos);
+    for (&parsed_blocks) |*block| block.* = try archive.nextBlock(parsed.frames, &pos);
     try std.testing.expectEqualSlices(u8, parsed_blocks[0].bytecode, parsed_blocks[1].bytecode);
 
     var decode_jobs: [3]ArchiveDecodeJob = undefined;
@@ -1053,14 +1051,13 @@ test "archive: original safetensors prefix and data order are byte-exact" {
     defer restored.deinit(a);
     try restored.appendSlice(a, parsed.safetensors_prefix);
     for (parsed.tensors) |tensor| {
-        var pos: usize = 0;
+        var pos: usize = tensor.frame_start;
         for (0..tensor.n_blocks) |_| {
-            const block = try archive.nextBlock(tensor.frames, &pos);
+            const block = try archive.nextBlock(parsed.frames, &pos);
             var stream = try archive.decodeBlock(a, block);
             defer stream.deinit(a);
             try restored.appendSlice(a, stream.data);
         }
-        try expectEqual(tensor.frames.len, pos);
     }
     try std.testing.expectEqualSlices(u8, source, restored.items);
 }

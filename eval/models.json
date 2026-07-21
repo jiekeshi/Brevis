@@ -18,6 +18,13 @@
     "repo": "RedHatAI/SmolLM-135M-Instruct-quantized.w8a8",
     "revision": "0407d4a4dcc9601d11cf028866ee2272c5233557",
     "file": "model.safetensors",
-    "note": "clean INT8 weights + BF16 scales/embeddings — mixed-dtype path"
+    "note": "clean INT8 weights + BF16 scales/embeddings — mixed-dtype path; tied embedding is stored twice, so it also exercises dedup"
+  },
+  {
+    "tag": "bf16-7b",
+    "repo": "Qwen/Qwen2.5-7B",
+    "revision": "d149729398750b98c0af14eb82c78cfe92750796",
+    "file": "model-00001-of-00004.safetensors",
+    "note": "7B-scale BF16 shard (3.9 GB), untied embeddings — throughput and scaling at realistic size"
   }
 ]
