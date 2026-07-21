@@ -1,0 +1,470 @@
+[
+  {
+    "tag": "small-bert-f32",
+    "tier": "small",
+    "execution_stage": 1,
+    "scope": "complete_weight_variant",
+    "repo": "google-bert/bert-base-uncased",
+    "revision": "86b5e0934494bd15c9632b12f734a8a67f723594",
+    "files": [
+      {
+        "file": "model.safetensors",
+        "bytes": 440449768,
+        "sha256": "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3"
+      }
+    ],
+    "architecture": "BertForMaskedLM",
+    "model_family": "encoder",
+    "task": "fill-mask",
+    "parameter_count_by_dtype": {
+      "F32": 110106428
+    },
+    "canonical_variant_bytes": 440449768,
+    "selected_bytes": 440449768,
+    "selection_reason": "Reuses the existing F32 checkpoint and supplies a standard text encoder whose storage statistics differ from autoregressive decoders.",
+    "note": "Complete F32 BERT weight variant; retained from eval/models.json.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/google-bert/bert-base-uncased/revision/86b5e0934494bd15c9632b12f734a8a67f723594?blobs=true",
+      "model_card": "https://huggingface.co/google-bert/bert-base-uncased/blob/86b5e0934494bd15c9632b12f734a8a67f723594/README.md"
+    }
+  },
+  {
+    "tag": "small-vit-f32",
+    "tier": "small",
+    "execution_stage": 1,
+    "scope": "complete_weight_variant",
+    "repo": "google/vit-base-patch16-224",
+    "revision": "3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3",
+    "files": [
+      {
+        "file": "model.safetensors",
+        "bytes": 346293852,
+        "sha256": "1cea07110a4a47edc51420b2dda6f3b8b58e7256e8f44b4ea6aa9696162ccb5d"
+      }
+    ],
+    "architecture": "ViTForImageClassification",
+    "model_family": "vision_encoder",
+    "task": "image-classification",
+    "parameter_count_by_dtype": {
+      "F32": 86567656
+    },
+    "canonical_variant_bytes": 346293852,
+    "selected_bytes": 346293852,
+    "selection_reason": "Adds a non-language encoder and convolution-free vision weights at a cost comparable to BERT, enabling a controlled task-family contrast in F32.",
+    "note": "Complete F32 ViT image-classification weight variant.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/google/vit-base-patch16-224/revision/3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3?blobs=true",
+      "model_card": "https://huggingface.co/google/vit-base-patch16-224/blob/3f49326eb077187dfe1c2a2bb15fbd74e6ab91e3/README.md"
+    }
+  },
+  {
+    "tag": "small-smollm-w8a8",
+    "tier": "small",
+    "execution_stage": 1,
+    "scope": "complete_weight_variant",
+    "repo": "RedHatAI/SmolLM-135M-Instruct-quantized.w8a8",
+    "revision": "0407d4a4dcc9601d11cf028866ee2272c5233557",
+    "files": [
+      {
+        "file": "model.safetensors",
+        "bytes": 219850592,
+        "sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+      }
+    ],
+    "architecture": "LlamaForCausalLM",
+    "model_family": "dense_decoder_quantized",
+    "task": "text-generation",
+    "parameter_count_by_dtype": {
+      "I8": 106168320,
+      "BF16": 56813760
+    },
+    "canonical_variant_bytes": 219850592,
+    "selected_bytes": 219850592,
+    "selection_reason": "Reuses the existing public W8A8 checkpoint to exercise genuine mixed I8 and BF16 tensor headers rather than a synthetic integer conversion.",
+    "note": "Complete mixed I8/BF16 quantized variant; retained from eval/models.json.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/RedHatAI/SmolLM-135M-Instruct-quantized.w8a8/revision/0407d4a4dcc9601d11cf028866ee2272c5233557?blobs=true",
+      "model_card": "https://huggingface.co/RedHatAI/SmolLM-135M-Instruct-quantized.w8a8/blob/0407d4a4dcc9601d11cf028866ee2272c5233557/README.md"
+    }
+  },
+  {
+    "tag": "medium-tinyllama-bf16",
+    "tier": "medium",
+    "execution_stage": 2,
+    "scope": "complete_weight_variant",
+    "repo": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "revision": "fe8a4ea1ffedaf415f4da2f062534de366a451e6",
+    "files": [
+      {
+        "file": "model.safetensors",
+        "bytes": 2200119864,
+        "sha256": "6e6001da2106d4757498752a021df6c2bdc332c650aae4bae6b0c004dcf14933"
+      }
+    ],
+    "architecture": "LlamaForCausalLM",
+    "model_family": "dense_decoder",
+    "task": "text-generation",
+    "parameter_count_by_dtype": {
+      "BF16": 1100048384
+    },
+    "canonical_variant_bytes": 2200119864,
+    "selected_bytes": 2200119864,
+    "selection_reason": "Reuses the existing compact BF16 decoder and forms the lowest-cost full decoder checkpoint for repeated search and timing experiments.",
+    "note": "Complete BF16 dense decoder weight variant; retained from eval/models.json.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/TinyLlama/TinyLlama-1.1B-Chat-v1.0/revision/fe8a4ea1ffedaf415f4da2f062534de366a451e6?blobs=true",
+      "model_card": "https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/blob/fe8a4ea1ffedaf415f4da2f062534de366a451e6/README.md"
+    }
+  },
+  {
+    "tag": "medium-whisper-v3-f16",
+    "tier": "medium",
+    "execution_stage": 2,
+    "scope": "complete_weight_variant",
+    "repo": "openai/whisper-large-v3",
+    "revision": "06f233fe06e710322aca913c1bc4249a0d71fce1",
+    "files": [
+      {
+        "file": "model.safetensors",
+        "bytes": 3087130976,
+        "sha256": "a8e94b85976e5864ba3e9525c7e6c83b2a1eca42d4b797a0c7c24d778e40fd95"
+      }
+    ],
+    "architecture": "WhisperForConditionalGeneration",
+    "model_family": "speech_encoder_decoder",
+    "task": "automatic-speech-recognition",
+    "parameter_count_by_dtype": {
+      "F16": 1543490560
+    },
+    "canonical_variant_bytes": 3087130976,
+    "selected_bytes": 3087130976,
+    "selection_reason": "Adds a speech encoder-decoder and a complete F16 checkpoint; the repository's two FP32 shards are an alternate representation and are deliberately excluded.",
+    "note": "Complete F16 Whisper variant, not the alternate FP32 variant in the same repository.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/openai/whisper-large-v3/revision/06f233fe06e710322aca913c1bc4249a0d71fce1?blobs=true",
+      "model_card": "https://huggingface.co/openai/whisper-large-v3/blob/06f233fe06e710322aca913c1bc4249a0d71fce1/README.md"
+    }
+  },
+  {
+    "tag": "medium-sdxl-base-f16",
+    "tier": "medium",
+    "execution_stage": 2,
+    "scope": "complete_weight_variant",
+    "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+    "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+    "files": [
+      {
+        "file": "text_encoder/model.fp16.safetensors",
+        "bytes": 246144152,
+        "sha256": "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+      },
+      {
+        "file": "text_encoder_2/model.fp16.safetensors",
+        "bytes": 1389382176,
+        "sha256": "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
+      },
+      {
+        "file": "unet/diffusion_pytorch_model.fp16.safetensors",
+        "bytes": 5135149760,
+        "sha256": "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139"
+      },
+      {
+        "file": "vae/diffusion_pytorch_model.fp16.safetensors",
+        "bytes": 167335342,
+        "sha256": "bcb60880a46b63dea58e9bc591abe15f8350bde47b405f9c38f4be70c6161e68"
+      }
+    ],
+    "architecture": "StableDiffusionXLPipeline",
+    "model_family": "latent_diffusion",
+    "task": "text-to-image",
+    "parameter_count_by_dtype": {
+      "F16": 3468837867
+    },
+    "canonical_variant_bytes": 6938011430,
+    "selected_bytes": 6938011430,
+    "selection_reason": "Adds a non-Transformer-dominated diffusion pipeline. The four components are exactly the F16 text encoders, UNet, and VAE named by the pinned model_index.json and the model card's variant=fp16 loading path.",
+    "note": "Complete F16 SDXL base-pipeline weight components; excludes duplicate F32 files, the LoRA example, alternate VAE, and the separate refiner repository.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/stabilityai/stable-diffusion-xl-base-1.0/revision/462165984030d82259a11f4367a4eed129e94a7b?blobs=true",
+      "model_card": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/462165984030d82259a11f4367a4eed129e94a7b/README.md",
+      "model_index": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/462165984030d82259a11f4367a4eed129e94a7b/model_index.json",
+      "header_metadata": "huggingface_hub.parse_safetensors_file_metadata 1.18.0"
+    }
+  },
+  {
+    "tag": "large-qwen3-8b-bf16",
+    "tier": "large",
+    "execution_stage": 3,
+    "scope": "complete_weight_variant",
+    "repo": "Qwen/Qwen3-8B-Base",
+    "revision": "49e3418fbbbca6ecbdf9608b4d22e5a407081db4",
+    "files": [
+      {
+        "file": "model-00001-of-00005.safetensors",
+        "bytes": 3996250744,
+        "sha256": "9983f1b9ef2f60e7c3730d9bc11ada914e6ec630639b5b020a89bd158cd0446b"
+      },
+      {
+        "file": "model-00002-of-00005.safetensors",
+        "bytes": 3993160032,
+        "sha256": "9aa12339835bf7a093d3d0b0a0d2d77f8538301cfc7f8e7ec7a585858ebf7a1f"
+      },
+      {
+        "file": "model-00003-of-00005.safetensors",
+        "bytes": 3959604768,
+        "sha256": "c7dd5a191c8da555def0714550375b3c0117751add408fcdda0c2a79ac0186bc"
+      },
+      {
+        "file": "model-00004-of-00005.safetensors",
+        "bytes": 3187841392,
+        "sha256": "ad8b708792105133e03fe19e2d56c89c709f677f01285f8b3ede8947d59fd9fe"
+      },
+      {
+        "file": "model-00005-of-00005.safetensors",
+        "bytes": 1244659840,
+        "sha256": "fbf24915d47ea030bb68ab0b9488f4515a907185baa6dc26837c9c3f2326a550"
+      }
+    ],
+    "architecture": "Qwen3ForCausalLM",
+    "model_family": "dense_decoder",
+    "task": "text-generation",
+    "parameter_count_by_dtype": {
+      "BF16": 8190735360
+    },
+    "canonical_variant_bytes": 16381516776,
+    "selected_bytes": 16381516776,
+    "selection_reason": "Reuses the existing complete large BF16 decoder and bridges the 1.1B decoder and 30B MoE checkpoints without shard sampling.",
+    "note": "Complete five-shard BF16 dense decoder; retained from eval/models-large.json.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/Qwen/Qwen3-8B-Base/revision/49e3418fbbbca6ecbdf9608b4d22e5a407081db4?blobs=true",
+      "model_card": "https://huggingface.co/Qwen/Qwen3-8B-Base/blob/49e3418fbbbca6ecbdf9608b4d22e5a407081db4/README.md"
+    }
+  },
+  {
+    "tag": "large-qwen3-30b-a3b-bf16",
+    "tier": "large",
+    "execution_stage": 4,
+    "scope": "complete_weight_variant",
+    "repo": "Qwen/Qwen3-30B-A3B-Base",
+    "revision": "1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9",
+    "files": [
+      {
+        "file": "model-00001-of-00016.safetensors",
+        "bytes": 3999417504,
+        "sha256": "7fe481b0c3796bee8d4fa63638f4d6d3d0b1c66339ef63a1aa03a4d784c53e73"
+      },
+      {
+        "file": "model-00002-of-00016.safetensors",
+        "bytes": 3999974192,
+        "sha256": "3b1e762dd99476a4b7c2d7b331432fe3e32e11e0dd7c90c2822bb84df4881ae2"
+      },
+      {
+        "file": "model-00003-of-00016.safetensors",
+        "bytes": 3997360832,
+        "sha256": "c66ff62c6aeb11e085e2215c64cfc5031b50fbcadaead02d0687054b9bf523ff"
+      },
+      {
+        "file": "model-00004-of-00016.safetensors",
+        "bytes": 3999975056,
+        "sha256": "534c0b5e5a215d95bbd77f9a034d5d74c3b4258f4d5d3918e56ed63dec1eec49"
+      },
+      {
+        "file": "model-00005-of-00016.safetensors",
+        "bytes": 3999975400,
+        "sha256": "8082532f02d2473f51828f4ab5377b2747d5d77b934ba8d93a25d72d4d82078c"
+      },
+      {
+        "file": "model-00006-of-00016.safetensors",
+        "bytes": 3999975400,
+        "sha256": "9fab34042ea6ee3348994dbb9b582773bfd51c54defca758beee4521cf54f0bd"
+      },
+      {
+        "file": "model-00007-of-00016.safetensors",
+        "bytes": 3999975472,
+        "sha256": "02f0a1c1e62143483d1d0655afee52e22c03d25b6f24c8f6ed3b9d6cf47fbc1b"
+      },
+      {
+        "file": "model-00008-of-00016.safetensors",
+        "bytes": 3997362064,
+        "sha256": "b2ccbadc878ec61dc09cec19ae0c4d3ff8f25e9c0e659599a7d26eaa411a8a4d"
+      },
+      {
+        "file": "model-00009-of-00016.safetensors",
+        "bytes": 3999975408,
+        "sha256": "0b9dc84d14919b4c65fa56e8b6ffd67c8cf431861673034275c26279a8dd525b"
+      },
+      {
+        "file": "model-00010-of-00016.safetensors",
+        "bytes": 3999975400,
+        "sha256": "70cb610487e592d19eea29eadc8785a9e4e4b88ee65b3dbd7ac50d0c54e61a4f"
+      },
+      {
+        "file": "model-00011-of-00016.safetensors",
+        "bytes": 3999975408,
+        "sha256": "662f6a0cb5607d3be8d52fac7c1f541769fd8426867cde36c588cbcef9e8bca9"
+      },
+      {
+        "file": "model-00012-of-00016.safetensors",
+        "bytes": 3987400496,
+        "sha256": "c8ddc8ffa628697a3618f953a99cfdc51a34da97d0194ccf1ad9a5ba6022178b"
+      },
+      {
+        "file": "model-00013-of-00016.safetensors",
+        "bytes": 3997353632,
+        "sha256": "2ea0a94f86a4eba612753a3159d9d06e307556c95873bde88294cb48f8c14f75"
+      },
+      {
+        "file": "model-00014-of-00016.safetensors",
+        "bytes": 3999975400,
+        "sha256": "05d8098a9924ca0990db663b934550cb07a6287a6590b13e93b14cf139edc268"
+      },
+      {
+        "file": "model-00015-of-00016.safetensors",
+        "bytes": 3999975400,
+        "sha256": "002936e6733de8b73ef36c815013cdd53f2c969ffe19ad62cc47ecab69909cff"
+      },
+      {
+        "file": "model-00016-of-00016.safetensors",
+        "bytes": 1087928584,
+        "sha256": "90a2c863affd5c0a6e4bf14ae7e4ac7ff388b6328c3d49aed6ea18c3139c6536"
+      }
+    ],
+    "architecture": "Qwen3MoeForCausalLM",
+    "model_family": "moe_decoder",
+    "task": "text-generation",
+    "parameter_count_by_dtype": {
+      "BF16": 30532122624
+    },
+    "canonical_variant_bytes": 61066575648,
+    "selected_bytes": 61066575648,
+    "selection_reason": "Adds a complete MoE decoder at a still feasible large scale and forms an architecture-matched pair with the official FP8 variant below.",
+    "note": "Complete 16-shard BF16 Qwen3 MoE base-model weight variant.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/Qwen/Qwen3-30B-A3B-Base/revision/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9?blobs=true",
+      "model_card": "https://huggingface.co/Qwen/Qwen3-30B-A3B-Base/blob/1b75feb79f60b8dc6c5bc769a898c206a1c6a4f9/README.md"
+    }
+  },
+  {
+    "tag": "large-qwen3-30b-a3b-fp8",
+    "tier": "large",
+    "execution_stage": 4,
+    "scope": "complete_weight_variant",
+    "repo": "Qwen/Qwen3-30B-A3B-FP8",
+    "revision": "d206ba732169f29bb77fbf80fc2c4b81d4d30782",
+    "files": [
+      {
+        "file": "model-00001-of-00007.safetensors",
+        "bytes": 5000178568,
+        "sha256": "f8491994563a8ef470fe940838d7346d9d3d1bab94c20d502ea296cc911889bd"
+      },
+      {
+        "file": "model-00002-of-00007.safetensors",
+        "bytes": 4993354584,
+        "sha256": "c35060a9398b98a3dc4f6aca05a8d0e3e9a895a5c0b63087bc3aeee61c30c0ba"
+      },
+      {
+        "file": "model-00003-of-00007.safetensors",
+        "bytes": 4993357688,
+        "sha256": "555993d80ccf12dfc63a6c19f6b54f8252e48819f07a0b52c29f66959415c379"
+      },
+      {
+        "file": "model-00004-of-00007.safetensors",
+        "bytes": 4993357688,
+        "sha256": "714ec1cab66a49faad208ad96891a0d3214cbfc546c6de2dc62569f4ad5945d0"
+      },
+      {
+        "file": "model-00005-of-00007.safetensors",
+        "bytes": 4993357688,
+        "sha256": "f0d9da7fd143c96c53f32aad7cfad873c3b4947cd204fa20d301e83f53161afe"
+      },
+      {
+        "file": "model-00006-of-00007.safetensors",
+        "bytes": 4993357688,
+        "sha256": "74d23e6c0978f437962cd074e9a708b447451bfc398b1d27f2f70f6558fc934e"
+      },
+      {
+        "file": "model-00007-of-00007.safetensors",
+        "bytes": 2482523864,
+        "sha256": "0dd3273ac4b27382172c7fb80632da3b08f8da83fd2826af44698e15247d088f"
+      }
+    ],
+    "architecture": "Qwen3MoeForCausalLM",
+    "model_family": "moe_decoder_quantized",
+    "task": "text-generation",
+    "parameter_count_by_dtype": {
+      "F8_E4M3": 29896998912,
+      "F32": 636948480
+    },
+    "canonical_variant_bytes": 32449487768,
+    "selected_bytes": 32449487768,
+    "selection_reason": "Provides complete, publicly accessible FP8 safetensors and an architecture-matched Qwen3 MoE counterpart to the BF16 variant.",
+    "note": "Complete seven-shard mixed F8_E4M3/F32 Qwen3 MoE variant; upstream quantization is not counted as Brevis compression.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/Qwen/Qwen3-30B-A3B-FP8/revision/d206ba732169f29bb77fbf80fc2c4b81d4d30782?blobs=true",
+      "model_card": "https://huggingface.co/Qwen/Qwen3-30B-A3B-FP8/blob/d206ba732169f29bb77fbf80fc2c4b81d4d30782/README.md"
+    }
+  },
+  {
+    "tag": "ultra-glm52-bf16-positional-3shard",
+    "tier": "ultra",
+    "execution_stage": 5,
+    "scope": "positional_shard_sample",
+    "repo": "zai-org/GLM-5.2",
+    "revision": "b4734de4facf877f85769a911abafc5283eab3d9",
+    "files": [
+      {
+        "file": "model-00001-of-00282.safetensors",
+        "bytes": 5342821416,
+        "sha256": "004bf9404964da8ea71ea2d3ebf02148fa766b956bd4fca3f54b093e58a6a74c"
+      },
+      {
+        "file": "model-00141-of-00282.safetensors",
+        "bytes": 5360347112,
+        "sha256": "bd56b4dd67b3d3470d52c3f23f19febb97d48cf82366f0d87238d74388683f5b"
+      },
+      {
+        "file": "model-00282-of-00282.safetensors",
+        "bytes": 293618224,
+        "sha256": "46c23d3a25db83ab8b7e47d0a5efec49e00f57a815358323f1ab45136de327d7"
+      }
+    ],
+    "architecture": "GlmMoeDsaForCausalLM",
+    "model_family": "moe_decoder",
+    "task": "text-generation",
+    "parameter_count_by_dtype": {
+      "BF16": 753329921024,
+      "F32": 19456
+    },
+    "selected_parameter_count_by_dtype": {
+      "BF16": 5498377728
+    },
+    "canonical_variant_bytes": 1506667387408,
+    "selected_bytes": 10996786752,
+    "repository_shard_count": 282,
+    "selected_shard_indices": [
+      1,
+      141,
+      282
+    ],
+    "sampling_rule": "Before any compression result is inspected, choose shard 1, floor((1+282)/2)=141, and shard 282 from the lexicographically numbered immutable shard list.",
+    "selection_reason": "Includes an ultra-scale public MoE checkpoint while fixing a result-independent, low-storage positional sample. The complete BF16 variant is about 1.51 TB and is excluded under the current 2 TiB workspace policy.",
+    "known_scope_limitations": "This is not a probability sample and not a complete model. The pinned index maps the first shard to embeddings, lm_head, and early-layer tensors, the middle shard mainly to layer-45 expert tensors, and the short final shard to five layer-9/final-norm tensors. Shard numbering therefore does not uniformly cover layers or tensor roles. Report only the three selected shards, byte-weighted within this sample, and never extrapolate a whole-model ratio, storage saving, or runtime.",
+    "note": "Pre-registered first/middle/last BF16 GLM-5.2 shard sample; never label as a complete GLM-5.2 result.",
+    "verification": {
+      "checked_at_utc": "2026-07-21",
+      "api": "https://huggingface.co/api/models/zai-org/GLM-5.2/revision/b4734de4facf877f85769a911abafc5283eab3d9?blobs=true",
+      "model_card": "https://huggingface.co/zai-org/GLM-5.2/blob/b4734de4facf877f85769a911abafc5283eab3d9/README.md",
+      "weight_index": "https://huggingface.co/zai-org/GLM-5.2/blob/b4734de4facf877f85769a911abafc5283eab3d9/model.safetensors.index.json",
+      "header_metadata": "huggingface_hub.parse_safetensors_file_metadata 1.18.0"
+    }
+  }
+]
