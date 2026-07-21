@@ -1,0 +1,3672 @@
+{
+  "cross_file_aggregation_performed": false,
+  "generator": {
+    "accepted_bench_schema": 4,
+    "accepted_system_schema": {
+      "id": "brevis.system-benchmark",
+      "version": 2
+    },
+    "dsl_validator_path": "/workspace/Brevis-formal-411b133/eval/analyze_generated_dsl.py",
+    "dsl_validator_schema": {
+      "id": "brevis.generated-dsl-analysis",
+      "version": 1
+    },
+    "dsl_validator_sha256": "0303f1b15ee040e13f02e2120b29a4c493713eb516c6940c0dd6544afc8e1b31",
+    "path": "/workspace/Brevis-formal-411b133/eval/summarize_system_benchmarks.py",
+    "sha256": "7a49e08bb146c8aa416b8321521d1c87b95dc2dc4325e655270bb9028416b04d"
+  },
+  "input_file_count": 1,
+  "schema": {
+    "id": "brevis.system-benchmark-summary",
+    "version": 1
+  },
+  "shards": [
+    {
+      "aggregation": {
+        "cross_file_aggregation_performed": false,
+        "model_level_aggregation_performed": false,
+        "unit": "one system-result file / one source shard"
+      },
+      "benchmark_configuration": {
+        "artifact_root": null,
+        "cache_policy": "best-effort buffered I/O; integrity hashing and prior runs can warm pages; the harness neither drops host caches nor guarantees page residency",
+        "calibration_tensors": 200,
+        "checkpoint_path": "/workspace/Brevis/eval/cache/formal-staging/frozen-411b133-v1/small-core-system-v1/small-bert-f32/model-safetensors-9d75c1098f/core-comparison/jobs-1/calibration-200/86cdd920593a9a143f9ced7dc2d0da5cc764682de7a62c3e844cdbd866d35ea2.json",
+        "configuration_source": "explicit_brevis_specs",
+        "execution_schedule": [
+          {
+            "completed_at_utc": "2026-07-21T22:40:51.259885+00:00",
+            "configuration": "raw-terminal",
+            "direction": "rotation",
+            "execution_order": 0,
+            "order_within_repetition": 0,
+            "pair": null,
+            "phase": "warmup",
+            "repetition": 0,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:40:48.950593+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:40:56.755902+00:00",
+            "configuration": "fixed",
+            "direction": "rotation",
+            "execution_order": 1,
+            "order_within_repetition": 1,
+            "pair": null,
+            "phase": "warmup",
+            "repetition": 0,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:40:51.266300+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:41:57.766792+00:00",
+            "configuration": "uniform",
+            "direction": "rotation",
+            "execution_order": 2,
+            "order_within_repetition": 2,
+            "pair": null,
+            "phase": "warmup",
+            "repetition": 0,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:40:56.765219+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:42:52.151985+00:00",
+            "configuration": "phog",
+            "direction": "rotation",
+            "execution_order": 3,
+            "order_within_repetition": 3,
+            "pair": null,
+            "phase": "warmup",
+            "repetition": 0,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:41:57.776644+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:42:57.559572+00:00",
+            "configuration": "fixed",
+            "direction": "forward",
+            "execution_order": 4,
+            "order_within_repetition": 0,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 0,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:42:52.163767+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:43:00.013350+00:00",
+            "configuration": "raw-terminal",
+            "direction": "forward",
+            "execution_order": 5,
+            "order_within_repetition": 1,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 0,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:42:57.572925+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:44:01.593858+00:00",
+            "configuration": "uniform",
+            "direction": "forward",
+            "execution_order": 6,
+            "order_within_repetition": 2,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 0,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:43:00.029260+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:44:53.813442+00:00",
+            "configuration": "phog",
+            "direction": "forward",
+            "execution_order": 7,
+            "order_within_repetition": 3,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 0,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:44:01.610978+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:45:46.068395+00:00",
+            "configuration": "phog",
+            "direction": "reverse",
+            "execution_order": 8,
+            "order_within_repetition": 0,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 1,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:44:53.833349+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:46:45.301164+00:00",
+            "configuration": "uniform",
+            "direction": "reverse",
+            "execution_order": 9,
+            "order_within_repetition": 1,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 1,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:45:46.089312+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:46:47.700310+00:00",
+            "configuration": "raw-terminal",
+            "direction": "reverse",
+            "execution_order": 10,
+            "order_within_repetition": 2,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 1,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:46:45.324200+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:46:52.947036+00:00",
+            "configuration": "fixed",
+            "direction": "reverse",
+            "execution_order": 11,
+            "order_within_repetition": 3,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 1,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:46:47.724700+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:46:55.207284+00:00",
+            "configuration": "raw-terminal",
+            "direction": "forward",
+            "execution_order": 12,
+            "order_within_repetition": 0,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 2,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:46:52.973568+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:47:00.402459+00:00",
+            "configuration": "fixed",
+            "direction": "forward",
+            "execution_order": 13,
+            "order_within_repetition": 1,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 2,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:46:55.236528+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:48:00.835021+00:00",
+            "configuration": "uniform",
+            "direction": "forward",
+            "execution_order": 14,
+            "order_within_repetition": 2,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 2,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:47:00.432200+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:48:55.234418+00:00",
+            "configuration": "phog",
+            "direction": "forward",
+            "execution_order": 15,
+            "order_within_repetition": 3,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 2,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:48:00.874129+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:49:49.704647+00:00",
+            "configuration": "phog",
+            "direction": "reverse",
+            "execution_order": 16,
+            "order_within_repetition": 0,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 3,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:48:55.272119+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:50:50.771118+00:00",
+            "configuration": "uniform",
+            "direction": "reverse",
+            "execution_order": 17,
+            "order_within_repetition": 1,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 3,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:49:49.740526+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:50:56.180209+00:00",
+            "configuration": "fixed",
+            "direction": "reverse",
+            "execution_order": 18,
+            "order_within_repetition": 2,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 3,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:50:50.807872+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:50:58.686128+00:00",
+            "configuration": "raw-terminal",
+            "direction": "reverse",
+            "execution_order": 19,
+            "order_within_repetition": 3,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 3,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:50:56.219030+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:51:53.086568+00:00",
+            "configuration": "phog",
+            "direction": "forward",
+            "execution_order": 20,
+            "order_within_repetition": 0,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 4,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:50:58.731705+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:51:58.544824+00:00",
+            "configuration": "fixed",
+            "direction": "forward",
+            "execution_order": 21,
+            "order_within_repetition": 1,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 4,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:51:53.129387+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:52:01.004641+00:00",
+            "configuration": "raw-terminal",
+            "direction": "forward",
+            "execution_order": 22,
+            "order_within_repetition": 2,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 4,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:51:58.589005+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:53:02.777884+00:00",
+            "configuration": "uniform",
+            "direction": "forward",
+            "execution_order": 23,
+            "order_within_repetition": 3,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 4,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:52:01.051405+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:54:02.769939+00:00",
+            "configuration": "uniform",
+            "direction": "reverse",
+            "execution_order": 24,
+            "order_within_repetition": 0,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 5,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:53:02.826688+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:54:05.196997+00:00",
+            "configuration": "raw-terminal",
+            "direction": "reverse",
+            "execution_order": 25,
+            "order_within_repetition": 1,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 5,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:54:02.820401+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:54:10.451847+00:00",
+            "configuration": "fixed",
+            "direction": "reverse",
+            "execution_order": 26,
+            "order_within_repetition": 2,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 5,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:54:05.248922+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:55:02.848837+00:00",
+            "configuration": "phog",
+            "direction": "reverse",
+            "execution_order": 27,
+            "order_within_repetition": 3,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 5,
+            "stage": "archive_pipeline",
+            "started_at_utc": "2026-07-21T22:54:10.506967+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:55:04.386801+00:00",
+            "configuration": "raw-terminal",
+            "direction": "rotation",
+            "execution_order": 28,
+            "order_within_repetition": 0,
+            "pair": null,
+            "phase": "warmup",
+            "repetition": 0,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:55:02.904208+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:55:07.450058+00:00",
+            "configuration": "fixed",
+            "direction": "rotation",
+            "execution_order": 29,
+            "order_within_repetition": 1,
+            "pair": null,
+            "phase": "warmup",
+            "repetition": 0,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:55:04.505011+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:56:04.291802+00:00",
+            "configuration": "uniform",
+            "direction": "rotation",
+            "execution_order": 30,
+            "order_within_repetition": 2,
+            "pair": null,
+            "phase": "warmup",
+            "repetition": 0,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:55:07.661307+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:56:54.594645+00:00",
+            "configuration": "phog",
+            "direction": "rotation",
+            "execution_order": 31,
+            "order_within_repetition": 3,
+            "pair": null,
+            "phase": "warmup",
+            "repetition": 0,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:56:04.615418+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:56:58.286908+00:00",
+            "configuration": "fixed",
+            "direction": "forward",
+            "execution_order": 32,
+            "order_within_repetition": 0,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 0,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:56:55.023927+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:57:00.571820+00:00",
+            "configuration": "raw-terminal",
+            "direction": "forward",
+            "execution_order": 33,
+            "order_within_repetition": 1,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 0,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:56:58.717953+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:57:59.200955+00:00",
+            "configuration": "uniform",
+            "direction": "forward",
+            "execution_order": 34,
+            "order_within_repetition": 2,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 0,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:57:01.003247+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:58:51.633272+00:00",
+            "configuration": "phog",
+            "direction": "forward",
+            "execution_order": 35,
+            "order_within_repetition": 3,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 0,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:57:59.633617+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T22:59:44.228557+00:00",
+            "configuration": "phog",
+            "direction": "reverse",
+            "execution_order": 36,
+            "order_within_repetition": 0,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 1,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:58:52.104657+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:00:43.263041+00:00",
+            "configuration": "uniform",
+            "direction": "reverse",
+            "execution_order": 37,
+            "order_within_repetition": 1,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 1,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T22:59:44.692116+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:00:45.685741+00:00",
+            "configuration": "raw-terminal",
+            "direction": "reverse",
+            "execution_order": 38,
+            "order_within_repetition": 2,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 1,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:00:43.738477+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:00:49.553911+00:00",
+            "configuration": "fixed",
+            "direction": "reverse",
+            "execution_order": 39,
+            "order_within_repetition": 3,
+            "pair": 0,
+            "phase": "measured",
+            "repetition": 1,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:00:46.142226+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:00:51.932684+00:00",
+            "configuration": "raw-terminal",
+            "direction": "forward",
+            "execution_order": 40,
+            "order_within_repetition": 0,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 2,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:00:49.992250+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:00:55.813977+00:00",
+            "configuration": "fixed",
+            "direction": "forward",
+            "execution_order": 41,
+            "order_within_repetition": 1,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 2,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:00:52.401255+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:01:55.234086+00:00",
+            "configuration": "uniform",
+            "direction": "forward",
+            "execution_order": 42,
+            "order_within_repetition": 2,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 2,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:00:56.243422+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:02:47.170729+00:00",
+            "configuration": "phog",
+            "direction": "forward",
+            "execution_order": 43,
+            "order_within_repetition": 3,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 2,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:01:55.666361+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:03:38.483293+00:00",
+            "configuration": "phog",
+            "direction": "reverse",
+            "execution_order": 44,
+            "order_within_repetition": 0,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 3,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:02:47.629528+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:04:35.786506+00:00",
+            "configuration": "uniform",
+            "direction": "reverse",
+            "execution_order": 45,
+            "order_within_repetition": 1,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 3,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:03:38.917300+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:04:39.533075+00:00",
+            "configuration": "fixed",
+            "direction": "reverse",
+            "execution_order": 46,
+            "order_within_repetition": 2,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 3,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:04:36.219423+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:04:41.847299+00:00",
+            "configuration": "raw-terminal",
+            "direction": "reverse",
+            "execution_order": 47,
+            "order_within_repetition": 3,
+            "pair": 1,
+            "phase": "measured",
+            "repetition": 3,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:04:39.967630+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:05:32.374490+00:00",
+            "configuration": "phog",
+            "direction": "forward",
+            "execution_order": 48,
+            "order_within_repetition": 0,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 4,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:04:42.280046+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:05:36.134084+00:00",
+            "configuration": "fixed",
+            "direction": "forward",
+            "execution_order": 49,
+            "order_within_repetition": 1,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 4,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:05:32.810742+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:05:38.374741+00:00",
+            "configuration": "raw-terminal",
+            "direction": "forward",
+            "execution_order": 50,
+            "order_within_repetition": 2,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 4,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:05:36.569068+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:06:35.783033+00:00",
+            "configuration": "uniform",
+            "direction": "forward",
+            "execution_order": 51,
+            "order_within_repetition": 3,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 4,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:05:38.807614+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:07:34.656605+00:00",
+            "configuration": "uniform",
+            "direction": "reverse",
+            "execution_order": 52,
+            "order_within_repetition": 0,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 5,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:06:36.218162+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:07:37.049313+00:00",
+            "configuration": "raw-terminal",
+            "direction": "reverse",
+            "execution_order": 53,
+            "order_within_repetition": 1,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 5,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:07:35.112072+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:07:40.971525+00:00",
+            "configuration": "fixed",
+            "direction": "reverse",
+            "execution_order": 54,
+            "order_within_repetition": 2,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 5,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:07:37.520711+00:00",
+            "status": "completed",
+            "success": true
+          },
+          {
+            "completed_at_utc": "2026-07-21T23:08:33.163210+00:00",
+            "configuration": "phog",
+            "direction": "reverse",
+            "execution_order": 55,
+            "order_within_repetition": 3,
+            "pair": 2,
+            "phase": "measured",
+            "repetition": 5,
+            "stage": "bench_diagnostic",
+            "started_at_utc": "2026-07-21T23:07:41.445689+00:00",
+            "status": "completed",
+            "success": true
+          }
+        ],
+        "io_policy": "Brevis reads the immutable source directly and writes regular on-disk archive/restored files; hashing and full verification occur after each timed process",
+        "jobs": 1,
+        "keep_artifacts": false,
+        "repetitions": 6,
+        "requested_configuration_ids": [
+          "raw-terminal",
+          "fixed",
+          "uniform",
+          "phog"
+        ],
+        "requested_specs": [
+          {
+            "expected_effective_config": {
+              "enabled_ops": [
+                "raw"
+              ],
+              "max_depth": 2,
+              "max_expansions": 256,
+              "max_nodes": 12,
+              "max_realizations": 32,
+              "max_realizations_scope": "single_stream_search_only",
+              "rerank_blocks": 4,
+              "rerank_candidates": 8,
+              "rerank_enabled": true,
+              "sample_elems": 4096,
+              "target_block_bytes": 262144,
+              "tensor_search_uses_max_realizations": false
+            },
+            "id": "raw-terminal",
+            "notes": "Framed Brevis archive with every non-raw production disabled.",
+            "plan": "search",
+            "prior_policy": "none",
+            "require_raw_only": true,
+            "search_args": [
+              "--max-expansions",
+              "256",
+              "--max-nodes",
+              "12",
+              "--max-depth",
+              "2",
+              "--sample-elems",
+              "4096",
+              "--rerank-candidates",
+              "8",
+              "--rerank-blocks",
+              "4",
+              "--disable-op",
+              "bitpack",
+              "--disable-op",
+              "huffman",
+              "--disable-op",
+              "rans",
+              "--disable-op",
+              "xor_const",
+              "--disable-op",
+              "add_const_mod",
+              "--disable-op",
+              "xor_prev",
+              "--disable-op",
+              "diff_mod",
+              "--disable-op",
+              "zigzag",
+              "--disable-op",
+              "gray",
+              "--disable-op",
+              "rotate_bits",
+              "--disable-op",
+              "bit_reverse",
+              "--disable-op",
+              "split_field",
+              "--disable-op",
+              "topk_codebook",
+              "--disable-op",
+              "rle",
+              "--disable-op",
+              "deinterleave",
+              "--disable-op",
+              "split_float",
+              "--disable-op",
+              "bit_plane",
+              "--disable-op",
+              "byte_plane"
+            ]
+          },
+          {
+            "expected_effective_config": {
+              "enabled_ops": [
+                "raw",
+                "bitpack",
+                "huffman",
+                "rans",
+                "xor_const",
+                "add_const_mod",
+                "xor_prev",
+                "diff_mod",
+                "zigzag",
+                "gray",
+                "rotate_bits",
+                "bit_reverse",
+                "split_field",
+                "topk_codebook",
+                "rle",
+                "deinterleave",
+                "split_float",
+                "bit_plane",
+                "byte_plane"
+              ],
+              "max_depth": 2,
+              "max_expansions": 256,
+              "max_nodes": 12,
+              "max_realizations": 32,
+              "max_realizations_scope": "single_stream_search_only",
+              "rerank_blocks": 4,
+              "rerank_candidates": 8,
+              "rerank_enabled": true,
+              "sample_elems": 4096,
+              "target_block_bytes": 262144,
+              "tensor_search_uses_max_realizations": false
+            },
+            "id": "fixed",
+            "notes": "Fixed dtype-specific DSL template with raw fallback.",
+            "plan": "fixed",
+            "prior_policy": "none",
+            "require_raw_only": false,
+            "search_args": []
+          },
+          {
+            "expected_effective_config": {
+              "enabled_ops": [
+                "raw",
+                "bitpack",
+                "huffman",
+                "rans",
+                "xor_const",
+                "add_const_mod",
+                "xor_prev",
+                "diff_mod",
+                "zigzag",
+                "gray",
+                "rotate_bits",
+                "bit_reverse",
+                "split_field",
+                "topk_codebook",
+                "rle",
+                "deinterleave",
+                "split_float",
+                "bit_plane",
+                "byte_plane"
+              ],
+              "max_depth": 2,
+              "max_expansions": 256,
+              "max_nodes": 12,
+              "max_realizations": 32,
+              "max_realizations_scope": "single_stream_search_only",
+              "rerank_blocks": 4,
+              "rerank_candidates": 8,
+              "rerank_enabled": true,
+              "sample_elems": 4096,
+              "target_block_bytes": 262144,
+              "tensor_search_uses_max_realizations": false
+            },
+            "id": "uniform",
+            "notes": "Frozen default uniform search configuration.",
+            "plan": "search",
+            "prior_policy": "none",
+            "require_raw_only": false,
+            "search_args": [
+              "--max-expansions",
+              "256",
+              "--max-nodes",
+              "12",
+              "--max-depth",
+              "2",
+              "--sample-elems",
+              "4096",
+              "--rerank-candidates",
+              "8",
+              "--rerank-blocks",
+              "4"
+            ]
+          },
+          {
+            "expected_effective_config": {
+              "enabled_ops": [
+                "raw",
+                "bitpack",
+                "huffman",
+                "rans",
+                "xor_const",
+                "add_const_mod",
+                "xor_prev",
+                "diff_mod",
+                "zigzag",
+                "gray",
+                "rotate_bits",
+                "bit_reverse",
+                "split_field",
+                "topk_codebook",
+                "rle",
+                "deinterleave",
+                "split_float",
+                "bit_plane",
+                "byte_plane"
+              ],
+              "max_depth": 2,
+              "max_expansions": 256,
+              "max_nodes": 12,
+              "max_realizations": 32,
+              "max_realizations_scope": "single_stream_search_only",
+              "rerank_blocks": 4,
+              "rerank_candidates": 8,
+              "rerank_enabled": true,
+              "sample_elems": 4096,
+              "target_block_bytes": 262144,
+              "tensor_search_uses_max_realizations": false
+            },
+            "id": "phog",
+            "notes": "Frozen default phog search configuration.",
+            "plan": "search",
+            "prior_policy": "canonical",
+            "require_raw_only": false,
+            "search_args": [
+              "--max-expansions",
+              "256",
+              "--max-nodes",
+              "12",
+              "--max-depth",
+              "2",
+              "--sample-elems",
+              "4096",
+              "--rerank-candidates",
+              "8",
+              "--rerank-blocks",
+              "4"
+            ]
+          }
+        ],
+        "require_clean_git": true,
+        "require_declared_integrity": true,
+        "schedule_balance": "paired",
+        "schedule_seed": 2701,
+        "scheduling_policy": "serial execution; all archive pipelines precede all diagnostic replays; within each stage, warmups rotate and deterministic randomized measured orders are paired with their reverse",
+        "timeout_seconds_per_process": 3600,
+        "timing_scope": "external wall/RSS: immediately before process spawn through direct-child reap; internal bench/calibration fields retain their CLI-defined narrower scopes",
+        "warmups": 1
+      },
+      "benchmark_configuration_json_pointer": "/configuration",
+      "calibration": {
+        "canonical_prior_sha256": "3961402a6e22b7636f1f8f856ad771d41ac46a0649303b2b55f91a5aaa52eb73",
+        "compression_time_component": false,
+        "cost_scope": "input-local prior construction; reported once per shard and never included in compression or decompression timing",
+        "external_wall_time_ns": {
+          "coefficient_of_variation": 0.015419578300551172,
+          "max": 37822071309.0,
+          "mean": 37419093517.666664,
+          "median": 37772162581.5,
+          "min": 36665523487.0,
+          "n": 6,
+          "sample_sd": 576986642.4313079
+        },
+        "json_pointer": "/calibration",
+        "measured_trials": [
+          {
+            "external_wall_time_ns": 36665523487,
+            "phase": "measured",
+            "prior_sha256": "3961402a6e22b7636f1f8f856ad771d41ac46a0649303b2b55f91a5aaa52eb73",
+            "repetition_index": 0,
+            "trace": {
+              "json_pointer": "/calibration/runs/0",
+              "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+              "stable_trace_key": "trace-53f882abcade18b135c86f83dfa4587bfc5c4536db50918f23b342461093e9df"
+            }
+          },
+          {
+            "external_wall_time_ns": 36683914174,
+            "phase": "measured",
+            "prior_sha256": "3961402a6e22b7636f1f8f856ad771d41ac46a0649303b2b55f91a5aaa52eb73",
+            "repetition_index": 1,
+            "trace": {
+              "json_pointer": "/calibration/runs/1",
+              "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+              "stable_trace_key": "trace-04a70e2f2fe2060368245c352be2eb65ef8f49301ab9a872d55aef6be57885df"
+            }
+          },
+          {
+            "external_wall_time_ns": 37786006007,
+            "phase": "measured",
+            "prior_sha256": "3961402a6e22b7636f1f8f856ad771d41ac46a0649303b2b55f91a5aaa52eb73",
+            "repetition_index": 2,
+            "trace": {
+              "json_pointer": "/calibration/runs/2",
+              "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+              "stable_trace_key": "trace-641861aa65d80ebf9ff5b6dc35cab9fe61ab9c5aee4066816ec9b768bccccb07"
+            }
+          },
+          {
+            "external_wall_time_ns": 37758319156,
+            "phase": "measured",
+            "prior_sha256": "3961402a6e22b7636f1f8f856ad771d41ac46a0649303b2b55f91a5aaa52eb73",
+            "repetition_index": 3,
+            "trace": {
+              "json_pointer": "/calibration/runs/3",
+              "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+              "stable_trace_key": "trace-57551bc3879931a0ea858b0aeabe45e12cc29c9fcd2547bc03b172f79a868357"
+            }
+          },
+          {
+            "external_wall_time_ns": 37798726973,
+            "phase": "measured",
+            "prior_sha256": "3961402a6e22b7636f1f8f856ad771d41ac46a0649303b2b55f91a5aaa52eb73",
+            "repetition_index": 4,
+            "trace": {
+              "json_pointer": "/calibration/runs/4",
+              "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+              "stable_trace_key": "trace-09da87e074c52e66ff2fa40267b3fafb9eabf93af32b20069372c1ad922882d3"
+            }
+          },
+          {
+            "external_wall_time_ns": 37822071309,
+            "phase": "measured",
+            "prior_sha256": "3961402a6e22b7636f1f8f856ad771d41ac46a0649303b2b55f91a5aaa52eb73",
+            "repetition_index": 5,
+            "trace": {
+              "json_pointer": "/calibration/runs/5",
+              "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+              "stable_trace_key": "trace-fde56f469b07b1906bc71eddbe312c4ce33dbcad331abd2f8dcdd7988639e59e"
+            }
+          }
+        ],
+        "required": true,
+        "status": "complete_consistent",
+        "warmup_trials": [
+          {
+            "external_wall_time_ns": 36241712681,
+            "phase": "warmup",
+            "prior_sha256": "3961402a6e22b7636f1f8f856ad771d41ac46a0649303b2b55f91a5aaa52eb73",
+            "repetition_index": 0,
+            "trace": {
+              "json_pointer": "/calibration/warmups/0",
+              "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+              "stable_trace_key": "trace-c6b5ad32983489e4defe87ed620170a0c00e504e64b2f18af72afa7e75d6b570"
+            }
+          }
+        ]
+      },
+      "configurations": [
+        {
+          "archive": {
+            "compression_ratio_input_over_archive": 0.9998158812377279,
+            "consistency_json_pointer": "/configurations/0/measured_archive_consistency",
+            "measured_repetitions_byte_identical": true,
+            "sha256": "dda14499ef2950e8e6c7d5050b9119ea95aa9de067b26b6180f3c4e492757a01",
+            "size_bytes": 440530878,
+            "source_size_bytes": 440449768,
+            "storage_saved_bytes": -81110,
+            "storage_saving_fraction": -0.00018415266823335052
+          },
+          "calibration_reference": {
+            "cost_included_in_compression_time": false,
+            "required_for_configuration": false,
+            "shared_shard_level_json_pointer": "/calibration"
+          },
+          "compression": {
+            "direct_child_max_rss_bytes": {
+              "coefficient_of_variation": 0.0011461489802343549,
+              "max": 448921600.0,
+              "mean": 448274432.0,
+              "median": 448036864.0,
+              "min": 447868928.0,
+              "n": 6,
+              "sample_sd": 513789.2831019347
+            },
+            "rss_observation_count": 6,
+            "rss_scope": "direct child process; threads share the process",
+            "throughput_bytes_per_second": {
+              "coefficient_of_variation": 0.071482813282455,
+              "max": 565797678.905937,
+              "mean": 495291899.4611144,
+              "median": 483163171.85524124,
+              "min": 472247225.3793635,
+              "n": 6,
+              "sample_sd": 35404858.36949132
+            },
+            "wall_time_ns": {
+              "coefficient_of_variation": 0.06483378389198238,
+              "max": 932667773.0,
+              "mean": 892718660.1666666,
+              "median": 911680627.0,
+              "min": 778458068.0,
+              "n": 6,
+              "sample_sd": 57878328.68958573
+            }
+          },
+          "configuration_id": "raw-terminal",
+          "configuration_json_pointer": "/configurations/0",
+          "declared_counts": {
+            "measured_repetitions": 6,
+            "warmups": 1
+          },
+          "decompression": {
+            "direct_child_max_rss_bytes": {
+              "coefficient_of_variation": 2.0481146006768595e-05,
+              "max": 450166784.0,
+              "mean": 450159957.3333333,
+              "median": 450164736.0,
+              "min": 450146304.0,
+              "n": 6,
+              "sample_sd": 9219.791812544721
+            },
+            "rss_observation_count": 6,
+            "rss_scope": "direct child process; threads share the process",
+            "throughput_bytes_per_second": {
+              "coefficient_of_variation": 0.030812403401097796,
+              "max": 1113473979.3912227,
+              "mean": 1089903688.1826022,
+              "median": 1101678242.8614297,
+              "min": 1024718293.5207092,
+              "n": 6,
+              "sample_sd": 33582552.10862664
+            },
+            "wall_time_ns": {
+              "coefficient_of_variation": 0.03212355031170397,
+              "max": 429825222.0,
+              "mean": 404451606.8333333,
+              "median": 399820476.0,
+              "min": 395563593.0,
+              "n": 6,
+              "sample_sd": 12992421.540760096
+            }
+          },
+          "dsl_evidence": {
+            "analysis_schema": {
+              "id": "brevis.generated-dsl-analysis",
+              "version": 1
+            },
+            "canonical_detail_source": {
+              "index": 0,
+              "phase": "warmup"
+            },
+            "measured_repetition_count": 6,
+            "report_id": "report-e3696a650c21d68f4ef3991c85fb9c25ad5d4e6830be56944795cdc3ced080d3",
+            "semantic_fingerprint_sha256": "1daa9ef9476e9c62000a03ab0e588da5053ccfedf4f7ded239c48972171bbe2b",
+            "technical_repetitions_are_independent_tensor_samples": false
+          },
+          "effective_search_configuration": {
+            "candidate_collection": "all_within_expansion_budget",
+            "disabled_ops": [
+              "bitpack",
+              "huffman",
+              "rans",
+              "xor_const",
+              "add_const_mod",
+              "xor_prev",
+              "diff_mod",
+              "zigzag",
+              "gray",
+              "rotate_bits",
+              "bit_reverse",
+              "split_field",
+              "topk_codebook",
+              "rle",
+              "deinterleave",
+              "split_float",
+              "bit_plane",
+              "byte_plane"
+            ],
+            "enabled_ops": [
+              "raw"
+            ],
+            "enabled_ops_mask": 1,
+            "max_depth": 2,
+            "max_depth_semantics": "maximum_transform_layers",
+            "max_entropy_bpe": 16,
+            "max_expansions": 256,
+            "max_expansions_scope": "partial_program_pops_per_tensor",
+            "max_nodes": 12,
+            "max_nodes_semantics": "transforms_plus_terminals_per_program",
+            "max_realizations": 32,
+            "max_realizations_scope": "single_stream_search_only",
+            "phog_weight": 0.05,
+            "rerank_blocks": 4,
+            "rerank_candidates": 8,
+            "rerank_enabled": true,
+            "sample_byte_pruning": false,
+            "sample_elems": 4096,
+            "sampling_policy": "single_centered_contiguous_window",
+            "target_block_bytes": 262144,
+            "tensor_search_uses_max_realizations": false,
+            "transform_layers": 2,
+            "uniform_score": 8192
+          },
+          "formal_eligible": true,
+          "measured_trials": [
+            {
+              "archive_execution_order": 5,
+              "archive_sha256": "dda14499ef2950e8e6c7d5050b9119ea95aa9de067b26b6180f3c4e492757a01",
+              "archive_size_bytes": 440530878,
+              "compression": {
+                "direct_child_max_rss_bytes": 448913408,
+                "throughput_bytes_per_second": 474779289.89979964,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/0/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-1b108506697c4fceb7aece5659b9fb13abde51e5e7b8039e4366698aca687450"
+                },
+                "wall_time_ns": 927693725
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 450146304,
+                "throughput_bytes_per_second": 1113473979.3912227,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/0/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-560a02d249766d75d55bce5941ea9f984d04f95656c26bd35bf74d0886f5e4b8"
+                },
+                "wall_time_ns": 395563593
+              },
+              "diagnostic_execution_order": 33,
+              "phase": "measured",
+              "repetition_index": 0,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/0/runs/0/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-396527727b8cb52a6f1af5cd561ee61a73df5d1d7142f0930abfe74b330d6753"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 614.0,
+                "external_wall_time_ns": 1372763509,
+                "planning_wall_ms": 126.0,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/0/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-6bc8b7d92bd07cb5e78ab8e2360cd8a2564788e2e1c3263bd051c893e16ecb65"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/0/runs/0",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-3c766faeebad3c259beabf2a9ad2c72e07ad44a05eada4b5887fae239a303f50"
+              }
+            },
+            {
+              "archive_execution_order": 10,
+              "archive_sha256": "dda14499ef2950e8e6c7d5050b9119ea95aa9de067b26b6180f3c4e492757a01",
+              "archive_size_bytes": 440530878,
+              "compression": {
+                "direct_child_max_rss_bytes": 448921600,
+                "throughput_bytes_per_second": 487809521.22951585,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/1/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-268664ad4a6e0458ebecd316e7516a53658143ccef7feac1fbb25210e5f12522"
+                },
+                "wall_time_ns": 902913430
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 450166784,
+                "throughput_bytes_per_second": 1110401485.7409122,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/1/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-bdd2bac93a1259908e1fc85f1c43ec2ddc70f769b78190fb3bbc4917dcd5624c"
+                },
+                "wall_time_ns": 396658122
+              },
+              "diagnostic_execution_order": 38,
+              "phase": "measured",
+              "repetition_index": 1,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/0/runs/1/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-abaa35af625327ecbb4101a8b8e867bc7ecf17ec447bef59447aa6f161b2ee6b"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 672.0,
+                "external_wall_time_ns": 1462260281,
+                "planning_wall_ms": 133.0,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/1/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-b062484cdf8527dd36c104250c92a485f346bbfc5d04c3021bd262291693b51c"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/0/runs/1",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-938919962ca2c4f93d57f80852e1e3f1054fd61b6a4894c19f67dc8b7ea108d6"
+              }
+            },
+            {
+              "archive_execution_order": 12,
+              "archive_sha256": "dda14499ef2950e8e6c7d5050b9119ea95aa9de067b26b6180f3c4e492757a01",
+              "archive_size_bytes": 440530878,
+              "compression": {
+                "direct_child_max_rss_bytes": 447868928,
+                "throughput_bytes_per_second": 565797678.905937,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/2/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-f95e7a1391562df48956fae79a048ef8ff15f7a2a4fa1a9f846031cca77e1294"
+                },
+                "wall_time_ns": 778458068
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 450162688,
+                "throughput_bytes_per_second": 1109768084.5522532,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/2/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-255ddc881a5940c9cbd9342ec54a760920ab2c1488f45618cb8d062d82d5bbd1"
+                },
+                "wall_time_ns": 396884515
+              },
+              "diagnostic_execution_order": 40,
+              "phase": "measured",
+              "repetition_index": 2,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/0/runs/2/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-bf08df615df5ddf84570880c661f445f36a267d72493601beb826fb5d11e98fa"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 658.0,
+                "external_wall_time_ns": 1425513507,
+                "planning_wall_ms": 138.0,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/2/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-0cfabc5dc02bc9e673d16a5bf57bb974425b8923f5a5f29021db7de190d411ec"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/0/runs/2",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-21abf020fd15f8501c760e4dcd66ecc62825c973042dcb9fa2fdaea235ee690e"
+              }
+            },
+            {
+              "archive_execution_order": 19,
+              "archive_sha256": "dda14499ef2950e8e6c7d5050b9119ea95aa9de067b26b6180f3c4e492757a01",
+              "archive_size_bytes": 440530878,
+              "compression": {
+                "direct_child_max_rss_bytes": 447868928,
+                "throughput_bytes_per_second": 472247225.3793635,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/3/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-5c815ff828b4cba8b9a7948354902eadb816f6bb218b3cb9f445bd98e734920d"
+                },
+                "wall_time_ns": 932667773
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 450166784,
+                "throughput_bytes_per_second": 1024718293.5207092,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/3/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-0847f936ee06d8e10fd0f8ffec705e2a1a10f6f11f9429d25b9963679a53ea11"
+                },
+                "wall_time_ns": 429825222
+              },
+              "diagnostic_execution_order": 47,
+              "phase": "measured",
+              "repetition_index": 3,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/0/runs/3/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-4a613056460232c9a9ec4ca3cc87a7a0c3298d779c6d32afb36464920adb24c8"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 637.0,
+                "external_wall_time_ns": 1392297575,
+                "planning_wall_ms": 126.0,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/3/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-4d3c28218af293500076d431e93de6e727b8bcbcab8b054ccf0a016e93c9ce8d"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/0/runs/3",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-62657a25ab843d47db32f1414ceadc418b825b97b26b418f698ceaa2632e0882"
+              }
+            },
+            {
+              "archive_execution_order": 22,
+              "archive_sha256": "dda14499ef2950e8e6c7d5050b9119ea95aa9de067b26b6180f3c4e492757a01",
+              "archive_size_bytes": 440530878,
+              "compression": {
+                "direct_child_max_rss_bytes": 447877120,
+                "throughput_bytes_per_second": 478516822.4809666,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/4/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-7cc919ec799458bae02f8bd957437a41d47bb5fa7a358e17660f2b2ed8831b5e"
+                },
+                "wall_time_ns": 920447824
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 450166784,
+                "throughput_bytes_per_second": 1087471884.7199101,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/4/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-a5fa3148652be485d8ab37a9be953b67ea39fafc526558258b98e2ef81b50e2b"
+                },
+                "wall_time_ns": 405021752
+              },
+              "diagnostic_execution_order": 50,
+              "phase": "measured",
+              "repetition_index": 4,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/0/runs/4/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-b99dc25d59cbaaa0f620664e0de42ccec09814e18a07b39b314298e1bf0c6025"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 649.0,
+                "external_wall_time_ns": 1324023085,
+                "planning_wall_ms": 129.0,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/4/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-30abff8c317626270942077817675ddd6f2629c7f8de3fe06827480a38c729f0"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/0/runs/4",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-7e6b40a44c9d2164a4ddb5a5662e7bbc10d5a2a65b433ce36ae8e81df97fad6c"
+              }
+            },
+            {
+              "archive_execution_order": 25,
+              "archive_sha256": "dda14499ef2950e8e6c7d5050b9119ea95aa9de067b26b6180f3c4e492757a01",
+              "archive_size_bytes": 440530878,
+              "compression": {
+                "direct_child_max_rss_bytes": 448196608,
+                "throughput_bytes_per_second": 492600858.87110376,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/5/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-20cbf8ab2d31321e6f5c34fe3b75fbd2373ad4f5c27a06c9dc8726cb271d5608"
+                },
+                "wall_time_ns": 894131141
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 450150400,
+                "throughput_bytes_per_second": 1093588401.1706061,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/5/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-20f94ebc69257b39776103525e9eda80ad7b074e25c0b2d90c3326baecad03dd"
+                },
+                "wall_time_ns": 402756437
+              },
+              "diagnostic_execution_order": 53,
+              "phase": "measured",
+              "repetition_index": 5,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/0/runs/5/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-0e3210a71622614fa4ff5131ea5bb6b072a0a2270858e3acffb0be8c01e2f4be"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 655.0,
+                "external_wall_time_ns": 1437278698,
+                "planning_wall_ms": 139.0,
+                "trace": {
+                  "json_pointer": "/configurations/0/runs/5/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-9d7fc5a0c1226d1ee880db04913313c545d89a3d0b725ef1f1692d172fbe9151"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/0/runs/5",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-75b1298ff9e42f20aa116fcbb4260bc30b0ee4b71452c4c378eef5e0f7c05729"
+              }
+            }
+          ],
+          "paper_metrics_eligible": true,
+          "search_diagnostic_replay": {
+            "compression_time_component": false,
+            "encoding_wall_ms": {
+              "coefficient_of_variation": 0.030899611728613274,
+              "max": 672.0,
+              "mean": 647.5,
+              "median": 652.0,
+              "min": 614.0,
+              "n": 6,
+              "sample_sd": 20.007498594277095
+            },
+            "external_wall_time_ns": {
+              "coefficient_of_variation": 0.03559336205964667,
+              "max": 1462260281.0,
+              "mean": 1402356109.1666667,
+              "median": 1408905541.0,
+              "min": 1324023085.0,
+              "n": 6,
+              "sample_sd": 49914568.73012656
+            },
+            "planning_wall_ms": {
+              "coefficient_of_variation": 0.04381584365548663,
+              "max": 139.0,
+              "mean": 131.83333333333334,
+              "median": 131.0,
+              "min": 126.0,
+              "n": 6,
+              "sample_sd": 5.776388721914988
+            },
+            "scope": "separate deterministic bench replay run after archive pipelines; these values are search/encoding diagnostics and are not compression-time components"
+          },
+          "spec": {
+            "expected_effective_config": {
+              "enabled_ops": [
+                "raw"
+              ],
+              "max_depth": 2,
+              "max_expansions": 256,
+              "max_nodes": 12,
+              "max_realizations": 32,
+              "max_realizations_scope": "single_stream_search_only",
+              "rerank_blocks": 4,
+              "rerank_candidates": 8,
+              "rerank_enabled": true,
+              "sample_elems": 4096,
+              "target_block_bytes": 262144,
+              "tensor_search_uses_max_realizations": false
+            },
+            "id": "raw-terminal",
+            "notes": "Framed Brevis archive with every non-raw production disabled.",
+            "plan": "search",
+            "prior_policy": "none",
+            "require_raw_only": true,
+            "search_args": [
+              "--max-expansions",
+              "256",
+              "--max-nodes",
+              "12",
+              "--max-depth",
+              "2",
+              "--sample-elems",
+              "4096",
+              "--rerank-candidates",
+              "8",
+              "--rerank-blocks",
+              "4",
+              "--disable-op",
+              "bitpack",
+              "--disable-op",
+              "huffman",
+              "--disable-op",
+              "rans",
+              "--disable-op",
+              "xor_const",
+              "--disable-op",
+              "add_const_mod",
+              "--disable-op",
+              "xor_prev",
+              "--disable-op",
+              "diff_mod",
+              "--disable-op",
+              "zigzag",
+              "--disable-op",
+              "gray",
+              "--disable-op",
+              "rotate_bits",
+              "--disable-op",
+              "bit_reverse",
+              "--disable-op",
+              "split_field",
+              "--disable-op",
+              "topk_codebook",
+              "--disable-op",
+              "rle",
+              "--disable-op",
+              "deinterleave",
+              "--disable-op",
+              "split_float",
+              "--disable-op",
+              "bit_plane",
+              "--disable-op",
+              "byte_plane"
+            ]
+          },
+          "trace": {
+            "json_pointer": "/configurations/0",
+            "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+            "stable_trace_key": "trace-859a5646b339b4c11e84fe796f121da276bdf1d7701d9f7d4a35a9aa6dfe822d"
+          },
+          "warmup_trials": [
+            {
+              "archive_execution_order": 0,
+              "archive_sha256": "dda14499ef2950e8e6c7d5050b9119ea95aa9de067b26b6180f3c4e492757a01",
+              "archive_size_bytes": 440530878,
+              "compression": {
+                "direct_child_max_rss_bytes": 448921600,
+                "throughput_bytes_per_second": 540710554.9340085,
+                "trace": {
+                  "json_pointer": "/configurations/0/warmups/0/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-cff3c114d0d1c673e85feb7dd1da8ff555ea5f1f86d0e3e757a1658e629c0273"
+                },
+                "wall_time_ns": 814575865
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 450146304,
+                "throughput_bytes_per_second": 1101260566.0906343,
+                "trace": {
+                  "json_pointer": "/configurations/0/warmups/0/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-fc27930c291cacc81ec800527f439f62caaece0ed3113ec8b880436e78dc3b7e"
+                },
+                "wall_time_ns": 399950549
+              },
+              "diagnostic_execution_order": 28,
+              "phase": "warmup",
+              "repetition_index": 0,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/0/warmups/0/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-c039e5df6b0ee29aacc23256d0093c0dbcdbe056cce2c3f3e9a38f1715a55a04"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 611.0,
+                "external_wall_time_ns": 1382319751,
+                "planning_wall_ms": 135.0,
+                "trace": {
+                  "json_pointer": "/configurations/0/warmups/0/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-ca65f9cf5c29c9c5f19fb5ddfa42cb4af72924e9413354fc00e0e1ac32382d2b"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/0/warmups/0",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-c67d5a59f7f8c6ac1fedc2678fca03dd014b2b33e78cd467dd3236142d66bc1c"
+              }
+            }
+          ]
+        },
+        {
+          "archive": {
+            "compression_ratio_input_over_archive": 1.2033994729263269,
+            "consistency_json_pointer": "/configurations/1/measured_archive_consistency",
+            "measured_repetitions_byte_identical": true,
+            "sha256": "f8131aa1228252289c1cb340da4ff8f5e4bffa92e7e51357af3971bd8ade89c1",
+            "size_bytes": 366004621,
+            "source_size_bytes": 440449768,
+            "storage_saved_bytes": 74445147,
+            "storage_saving_fraction": 0.1690207429056927
+          },
+          "calibration_reference": {
+            "cost_included_in_compression_time": false,
+            "required_for_configuration": false,
+            "shared_shard_level_json_pointer": "/calibration"
+          },
+          "compression": {
+            "direct_child_max_rss_bytes": {
+              "coefficient_of_variation": 0.0019793010736050814,
+              "max": 457400320.0,
+              "mean": 456723114.6666667,
+              "median": 457009152.0,
+              "min": 454905856.0,
+              "n": 6,
+              "sample_sd": 903992.5511999901
+            },
+            "rss_observation_count": 6,
+            "rss_scope": "direct child process; threads share the process",
+            "throughput_bytes_per_second": {
+              "coefficient_of_variation": 0.02025740745032021,
+              "max": 195131159.78519806,
+              "mean": 189904381.4828281,
+              "median": 188804910.26124227,
+              "min": 185649882.29917714,
+              "n": 6,
+              "sample_sd": 3846970.4322986933
+            },
+            "wall_time_ns": {
+              "coefficient_of_variation": 0.02013637325898273,
+              "max": 2372475342.0,
+              "mean": 2320112496.6666665,
+              "median": 2332976102.0,
+              "min": 2257198535.0,
+              "n": 6,
+              "sample_sd": 46718651.23571032
+            }
+          },
+          "configuration_id": "fixed",
+          "configuration_json_pointer": "/configurations/1",
+          "declared_counts": {
+            "measured_repetitions": 6,
+            "warmups": 1
+          },
+          "decompression": {
+            "direct_child_max_rss_bytes": {
+              "coefficient_of_variation": 0.000820169702868251,
+              "max": 379744256.0,
+              "mean": 379477333.3333333,
+              "median": 379508736.0,
+              "min": 378892288.0,
+              "n": 6,
+              "sample_sd": 311235.8117252362
+            },
+            "rss_observation_count": 6,
+            "rss_scope": "direct child process; threads share the process",
+            "throughput_bytes_per_second": {
+              "coefficient_of_variation": 0.022208767630625154,
+              "max": 228031162.22644874,
+              "mean": 223363468.4568168,
+              "median": 224410265.65141398,
+              "min": 217589721.57327572,
+              "n": 6,
+              "sample_sd": 4960627.368127915
+            },
+            "wall_time_ns": {
+              "coefficient_of_variation": 0.022292917884399115,
+              "max": 2024221387.0,
+              "mean": 1972710940.5,
+              "median": 1963055671.5,
+              "min": 1931533233.0,
+              "n": 6,
+              "sample_sd": 43977483.00622225
+            }
+          },
+          "dsl_evidence": {
+            "analysis_schema": {
+              "id": "brevis.generated-dsl-analysis",
+              "version": 1
+            },
+            "canonical_detail_source": {
+              "index": 0,
+              "phase": "warmup"
+            },
+            "measured_repetition_count": 6,
+            "report_id": "report-d6d37cabf9431fd2f7884b18b9027e7f151b89a3eba122ae6e93c53e1aa25234",
+            "semantic_fingerprint_sha256": "1824d358fe5c3f7805e8df1faf86b1b074f0f309ff6d1baccf5da263dd0440f1",
+            "technical_repetitions_are_independent_tensor_samples": false
+          },
+          "effective_search_configuration": {
+            "candidate_collection": "all_within_expansion_budget",
+            "disabled_ops": [],
+            "enabled_ops": [
+              "raw",
+              "bitpack",
+              "huffman",
+              "rans",
+              "xor_const",
+              "add_const_mod",
+              "xor_prev",
+              "diff_mod",
+              "zigzag",
+              "gray",
+              "rotate_bits",
+              "bit_reverse",
+              "split_field",
+              "topk_codebook",
+              "rle",
+              "deinterleave",
+              "split_float",
+              "bit_plane",
+              "byte_plane"
+            ],
+            "enabled_ops_mask": 3378815341779983,
+            "max_depth": 2,
+            "max_depth_semantics": "maximum_transform_layers",
+            "max_entropy_bpe": 16,
+            "max_expansions": 256,
+            "max_expansions_scope": "partial_program_pops_per_tensor",
+            "max_nodes": 12,
+            "max_nodes_semantics": "transforms_plus_terminals_per_program",
+            "max_realizations": 32,
+            "max_realizations_scope": "single_stream_search_only",
+            "phog_weight": 0.05,
+            "rerank_blocks": 4,
+            "rerank_candidates": 8,
+            "rerank_enabled": true,
+            "sample_byte_pruning": false,
+            "sample_elems": 4096,
+            "sampling_policy": "single_centered_contiguous_window",
+            "target_block_bytes": 262144,
+            "tensor_search_uses_max_realizations": false,
+            "transform_layers": 2,
+            "uniform_score": 8192
+          },
+          "formal_eligible": true,
+          "measured_trials": [
+            {
+              "archive_execution_order": 4,
+              "archive_sha256": "f8131aa1228252289c1cb340da4ff8f5e4bffa92e7e51357af3971bd8ade89c1",
+              "archive_size_bytes": 366004621,
+              "compression": {
+                "direct_child_max_rss_bytes": 457400320,
+                "throughput_bytes_per_second": 185649882.29917714,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/0/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-d2ca828ff6b172571a3b1d173fe263deffe39e4d22a9734e27dd991e26139531"
+                },
+                "wall_time_ns": 2372475342
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 379539456,
+                "throughput_bytes_per_second": 218025723.1749611,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/0/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-c195409c86c3f3675e4c9a567e5ff8c2997a86a0c20363ad5f856925b36d8cfe"
+                },
+                "wall_time_ns": 2020173407
+              },
+              "diagnostic_execution_order": 32,
+              "phase": "measured",
+              "repetition_index": 0,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/1/runs/0/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-56393eaacad71b68751b7e40df6a83e05b17864f93cb11bc45d4c3d8ccc40ce2"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 2214.0,
+                "external_wall_time_ns": 2778954720,
+                "planning_wall_ms": 0.0,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/0/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-25f112c52bf7d0380d3492f7522b6b3bc46ec5a54446d4f22b768083435a9ada"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/1/runs/0",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-706cd1dfa16b48f2eaaf5870463fb4f7acdbc8597a135861d3c5a1ae5acf5018"
+              }
+            },
+            {
+              "archive_execution_order": 11,
+              "archive_sha256": "f8131aa1228252289c1cb340da4ff8f5e4bffa92e7e51357af3971bd8ade89c1",
+              "archive_size_bytes": 366004621,
+              "compression": {
+                "direct_child_max_rss_bytes": 457003008,
+                "throughput_bytes_per_second": 190298783.76062334,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/1/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-6492c03eb428b0601064064a22ac3025e6b9c56b6dc56bef7c17d2810e5585c6"
+                },
+                "wall_time_ns": 2314516989
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 379744256,
+                "throughput_bytes_per_second": 227435842.69545457,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/1/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-1c1411850fabfecd3b52d901e64baa831059105f767fe9503091243f60277ec6"
+                },
+                "wall_time_ns": 1936589074
+              },
+              "diagnostic_execution_order": 39,
+              "phase": "measured",
+              "repetition_index": 1,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/1/runs/1/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-218a50c7b0e43a84932d7635a589aa68d3776bd10412063f7426a1e394262056"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 2271.0,
+                "external_wall_time_ns": 2921398193,
+                "planning_wall_ms": 0.0,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/1/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-1defaf5c33b16f508d3c8ba2b06871769fecbe583760288c093cca275eae14bc"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/1/runs/1",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-c710276a447dbc6c34a391e0a71235a90a5179f08ac1ed5414141dada55b432a"
+              }
+            },
+            {
+              "archive_execution_order": 13,
+              "archive_sha256": "f8131aa1228252289c1cb340da4ff8f5e4bffa92e7e51357af3971bd8ade89c1",
+              "archive_size_bytes": 366004621,
+              "compression": {
+                "direct_child_max_rss_bytes": 457011200,
+                "throughput_bytes_per_second": 193753651.28992173,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/2/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-0c64b2c5e5c20d71f8c282aab65da4b490f2aa677631672b59883c2cfd42e1f5"
+                },
+                "wall_time_ns": 2273246285
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 379473920,
+                "throughput_bytes_per_second": 228031162.22644874,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/2/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-c9ddade49322d511b82261d38854bb6ef2e3b456a31683c2d572a1c1adc8be6b"
+                },
+                "wall_time_ns": 1931533233
+              },
+              "diagnostic_execution_order": 41,
+              "phase": "measured",
+              "repetition_index": 2,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/1/runs/2/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-1cc51e49d6cb1cd8a6bf13d82c4a8fae9ef9d6367613c9d0109054a440ceefcf"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 2264.0,
+                "external_wall_time_ns": 2915919343,
+                "planning_wall_ms": 0.0,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/2/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-8e7214d16267e4d4a897e1b0742df99eb35cae9bd448809a06832e118df13a04"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/1/runs/2",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-058f8f18b962eb6655707b54aa915dedcf45c1a16d9b1caff497ef943bc07210"
+              }
+            },
+            {
+              "archive_execution_order": 18,
+              "archive_sha256": "f8131aa1228252289c1cb340da4ff8f5e4bffa92e7e51357af3971bd8ade89c1",
+              "archive_size_bytes": 366004621,
+              "compression": {
+                "direct_child_max_rss_bytes": 457007104,
+                "throughput_bytes_per_second": 187311036.7618612,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/3/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-3b9555a9a7b981cc8f3e569cb8f20683e76e77ddb998a790fcf5764d5f072996"
+                },
+                "wall_time_ns": 2351435215
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 379736064,
+                "throughput_bytes_per_second": 221384688.60737342,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/3/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-882c9bf00a6644ca229bf5a5ea54deb17b9d44822b1f5f171e4482cb05bdda95"
+                },
+                "wall_time_ns": 1989522269
+              },
+              "diagnostic_execution_order": 46,
+              "phase": "measured",
+              "repetition_index": 3,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/1/runs/3/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-0b53c80c1d4364b8e060c50c27744065bcb7b1776cf8c9e48aa57e7ce06f35bc"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 2193.0,
+                "external_wall_time_ns": 2821397746,
+                "planning_wall_ms": 0.0,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/3/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-e0bf3c30ed8c1b39eda5301e0308c04cae7c067bce47de46b080a542e4d1d125"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/1/runs/3",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-b02bcfcf6ae55c3b871f57de0f02bf2590628e9ec3aae98989055aa72bdb984e"
+              }
+            },
+            {
+              "archive_execution_order": 21,
+              "archive_sha256": "f8131aa1228252289c1cb340da4ff8f5e4bffa92e7e51357af3971bd8ade89c1",
+              "archive_size_bytes": 366004621,
+              "compression": {
+                "direct_child_max_rss_bytes": 457011200,
+                "throughput_bytes_per_second": 187281775.00018716,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/4/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-25fbaa72a73e374453e789a44245930d42999d38aa51392c823bdb764e76f028"
+                },
+                "wall_time_ns": 2351802614
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378892288,
+                "throughput_bytes_per_second": 217589721.57327572,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/4/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-7152f8f594457d5203380e5a0c81a3290d79af7897f90a88b505ed8635f56c6d"
+                },
+                "wall_time_ns": 2024221387
+              },
+              "diagnostic_execution_order": 49,
+              "phase": "measured",
+              "repetition_index": 4,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/1/runs/4/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-4e3b5f55a8954e34ef7ac5bcd6b146828b7d78947c0a3bdcea636ad204696fd3"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 2196.0,
+                "external_wall_time_ns": 2825989537,
+                "planning_wall_ms": 0.0,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/4/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-f03617e402d8eb8c099e55b263da5bb5f4cf51c875dddef80173995231cfc823"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/1/runs/4",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-80a4bbc328d121bdb144a8e1218adbd37b4597b36468cdf991694cc2035b1873"
+              }
+            },
+            {
+              "archive_execution_order": 26,
+              "archive_sha256": "f8131aa1228252289c1cb340da4ff8f5e4bffa92e7e51357af3971bd8ade89c1",
+              "archive_size_bytes": 366004621,
+              "compression": {
+                "direct_child_max_rss_bytes": 454905856,
+                "throughput_bytes_per_second": 195131159.78519806,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/5/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-571933bd8d8db543b6902c4534538c2016c67b435bebe98fefa297207117e908"
+                },
+                "wall_time_ns": 2257198535
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 379478016,
+                "throughput_bytes_per_second": 227713672.46338713,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/5/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-44088a9254e818b3f77e32462064c7b2873eccd27de30e692d44ca1a50dfa2ca"
+                },
+                "wall_time_ns": 1934226273
+              },
+              "diagnostic_execution_order": 54,
+              "phase": "measured",
+              "repetition_index": 5,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/1/runs/5/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-88d2671a28e09770333444bbe63af50d2b2d1bdd280a05fd28c64d83b54a2956"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 2278.0,
+                "external_wall_time_ns": 2932794082,
+                "planning_wall_ms": 0.0,
+                "trace": {
+                  "json_pointer": "/configurations/1/runs/5/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-e5ee1883e0887d3ca3151b081e89d749a77680b03f3d3099d90c6db8225e6167"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/1/runs/5",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-bd6be5fd98c1ce589362d26ed7c469269f9a0a8ff401e34d3a78116997d8a8af"
+              }
+            }
+          ],
+          "paper_metrics_eligible": true,
+          "search_diagnostic_replay": {
+            "compression_time_component": false,
+            "encoding_wall_ms": {
+              "coefficient_of_variation": 0.017557298827881287,
+              "max": 2278.0,
+              "mean": 2236.0,
+              "median": 2239.0,
+              "min": 2193.0,
+              "n": 6,
+              "sample_sd": 39.25812017914256
+            },
+            "external_wall_time_ns": {
+              "coefficient_of_variation": 0.022713634372034865,
+              "max": 2932794082.0,
+              "mean": 2866075603.5,
+              "median": 2870954440.0,
+              "min": 2778954720.0,
+              "n": 6,
+              "sample_sd": 65098993.34050817
+            },
+            "planning_wall_ms": {
+              "coefficient_of_variation": null,
+              "max": 0.0,
+              "mean": 0.0,
+              "median": 0.0,
+              "min": 0.0,
+              "n": 6,
+              "sample_sd": 0.0
+            },
+            "scope": "separate deterministic bench replay run after archive pipelines; these values are search/encoding diagnostics and are not compression-time components"
+          },
+          "spec": {
+            "expected_effective_config": {
+              "enabled_ops": [
+                "raw",
+                "bitpack",
+                "huffman",
+                "rans",
+                "xor_const",
+                "add_const_mod",
+                "xor_prev",
+                "diff_mod",
+                "zigzag",
+                "gray",
+                "rotate_bits",
+                "bit_reverse",
+                "split_field",
+                "topk_codebook",
+                "rle",
+                "deinterleave",
+                "split_float",
+                "bit_plane",
+                "byte_plane"
+              ],
+              "max_depth": 2,
+              "max_expansions": 256,
+              "max_nodes": 12,
+              "max_realizations": 32,
+              "max_realizations_scope": "single_stream_search_only",
+              "rerank_blocks": 4,
+              "rerank_candidates": 8,
+              "rerank_enabled": true,
+              "sample_elems": 4096,
+              "target_block_bytes": 262144,
+              "tensor_search_uses_max_realizations": false
+            },
+            "id": "fixed",
+            "notes": "Fixed dtype-specific DSL template with raw fallback.",
+            "plan": "fixed",
+            "prior_policy": "none",
+            "require_raw_only": false,
+            "search_args": []
+          },
+          "trace": {
+            "json_pointer": "/configurations/1",
+            "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+            "stable_trace_key": "trace-9c41631de5df21c481545e0ea0e0745c0198df87e8b7e0edd3139206fc9a4da5"
+          },
+          "warmup_trials": [
+            {
+              "archive_execution_order": 1,
+              "archive_sha256": "f8131aa1228252289c1cb340da4ff8f5e4bffa92e7e51357af3971bd8ade89c1",
+              "archive_size_bytes": 366004621,
+              "compression": {
+                "direct_child_max_rss_bytes": 457015296,
+                "throughput_bytes_per_second": 187590825.15700436,
+                "trace": {
+                  "json_pointer": "/configurations/1/warmups/0/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-d821f920d19dc10c68165e50c69302fd96af99bc8885208966b99c9b76aa9665"
+                },
+                "wall_time_ns": 2347928091
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 379740160,
+                "throughput_bytes_per_second": 215346598.20999482,
+                "trace": {
+                  "json_pointer": "/configurations/1/warmups/0/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-8f0d0d17d08bbcdd6dcaa020b023a284bd9d277d0ce8b3e3ec09ff7e2fa7d42e"
+                },
+                "wall_time_ns": 2045306365
+              },
+              "diagnostic_execution_order": 29,
+              "phase": "warmup",
+              "repetition_index": 0,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/1/warmups/0/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-3394fdd0190b00234b7fc744591b6680096d55ca46a5dc7ec8e4a28054fd87d6"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 2280.0,
+                "external_wall_time_ns": 2768371039,
+                "planning_wall_ms": 0.0,
+                "trace": {
+                  "json_pointer": "/configurations/1/warmups/0/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-dce6fd4a550cd1b790c1943d1d4e993e901a6ddefd1c3f505b989a46deb811e0"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/1/warmups/0",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-bc5edc673817c13ad31ecb489aa095d753d0d7f633b1b9eb350f2c2f025035ab"
+              }
+            }
+          ]
+        },
+        {
+          "archive": {
+            "compression_ratio_input_over_archive": 1.2033763427468551,
+            "consistency_json_pointer": "/configurations/2/measured_archive_consistency",
+            "measured_repetitions_byte_identical": true,
+            "sha256": "723573fcea7face6c2cf81eee06d13b9e3f16ade84ff9b130ce6369b78af236b",
+            "size_bytes": 366011656,
+            "source_size_bytes": 440449768,
+            "storage_saved_bytes": 74438112,
+            "storage_saving_fraction": 0.16900477059622376
+          },
+          "calibration_reference": {
+            "cost_included_in_compression_time": false,
+            "required_for_configuration": false,
+            "shared_shard_level_json_pointer": "/calibration"
+          },
+          "compression": {
+            "direct_child_max_rss_bytes": {
+              "coefficient_of_variation": 0.0035233066785965487,
+              "max": 694370304.0,
+              "mean": 692753749.3333334,
+              "median": 693583872.0,
+              "min": 688058368.0,
+              "n": 6,
+              "sample_sd": 2440783.911648933
+            },
+            "rss_observation_count": 6,
+            "rss_scope": "direct child process; threads share the process",
+            "throughput_bytes_per_second": {
+              "coefficient_of_variation": 0.016270050198295045,
+              "max": 7866177.690847308,
+              "mean": 7684080.234551586,
+              "median": 7678695.695869161,
+              "min": 7551656.065802777,
+              "n": 6,
+              "sample_sd": 125020.37114388106
+            },
+            "wall_time_ns": {
+              "coefficient_of_variation": 0.016211541206199595,
+              "max": 58324924250.0,
+              "mean": 57332378230.5,
+              "median": 57361664037.5,
+              "min": 55992857689.0,
+              "n": 6,
+              "sample_sd": 929446212.1331713
+            }
+          },
+          "configuration_id": "uniform",
+          "configuration_json_pointer": "/configurations/2",
+          "declared_counts": {
+            "measured_repetitions": 6,
+            "warmups": 1
+          },
+          "decompression": {
+            "direct_child_max_rss_bytes": {
+              "coefficient_of_variation": 0.001326921081047673,
+              "max": 378941440.0,
+              "mean": 378679296.0,
+              "median": 378869760.0,
+              "min": 377655296.0,
+              "n": 6,
+              "sample_sd": 502477.5408186917
+            },
+            "rss_observation_count": 6,
+            "rss_scope": "direct child process; threads share the process",
+            "throughput_bytes_per_second": {
+              "coefficient_of_variation": 0.02234972988537664,
+              "max": 195721020.94147906,
+              "mean": 190302564.782434,
+              "median": 188662363.4461409,
+              "min": 186091047.06645337,
+              "n": 6,
+              "sample_sd": 4253210.919381789
+            },
+            "wall_time_ns": {
+              "coefficient_of_variation": 0.022117864645693815,
+              "max": 2366850931.0,
+              "mean": 2315424773.1666665,
+              "median": 2334618171.0,
+              "min": 2250395823.0,
+              "n": 6,
+              "sample_sd": 51212251.730186634
+            }
+          },
+          "dsl_evidence": {
+            "analysis_schema": {
+              "id": "brevis.generated-dsl-analysis",
+              "version": 1
+            },
+            "canonical_detail_source": {
+              "index": 0,
+              "phase": "warmup"
+            },
+            "measured_repetition_count": 6,
+            "report_id": "report-b8ed09208330f9e5ae3fa5176dd8c74d2c53316371c33436c4b0d5a1ca190900",
+            "semantic_fingerprint_sha256": "3d03e663eb1a70317a54ac5431521e5938c4241bf17031e7f5b15a5b012317fd",
+            "technical_repetitions_are_independent_tensor_samples": false
+          },
+          "effective_search_configuration": {
+            "candidate_collection": "all_within_expansion_budget",
+            "disabled_ops": [],
+            "enabled_ops": [
+              "raw",
+              "bitpack",
+              "huffman",
+              "rans",
+              "xor_const",
+              "add_const_mod",
+              "xor_prev",
+              "diff_mod",
+              "zigzag",
+              "gray",
+              "rotate_bits",
+              "bit_reverse",
+              "split_field",
+              "topk_codebook",
+              "rle",
+              "deinterleave",
+              "split_float",
+              "bit_plane",
+              "byte_plane"
+            ],
+            "enabled_ops_mask": 3378815341779983,
+            "max_depth": 2,
+            "max_depth_semantics": "maximum_transform_layers",
+            "max_entropy_bpe": 16,
+            "max_expansions": 256,
+            "max_expansions_scope": "partial_program_pops_per_tensor",
+            "max_nodes": 12,
+            "max_nodes_semantics": "transforms_plus_terminals_per_program",
+            "max_realizations": 32,
+            "max_realizations_scope": "single_stream_search_only",
+            "phog_weight": 0.05,
+            "rerank_blocks": 4,
+            "rerank_candidates": 8,
+            "rerank_enabled": true,
+            "sample_byte_pruning": false,
+            "sample_elems": 4096,
+            "sampling_policy": "single_centered_contiguous_window",
+            "target_block_bytes": 262144,
+            "tensor_search_uses_max_realizations": false,
+            "transform_layers": 2,
+            "uniform_score": 8192
+          },
+          "formal_eligible": true,
+          "measured_trials": [
+            {
+              "archive_execution_order": 6,
+              "archive_sha256": "723573fcea7face6c2cf81eee06d13b9e3f16ade84ff9b130ce6369b78af236b",
+              "archive_size_bytes": 366011656,
+              "compression": {
+                "direct_child_max_rss_bytes": 692559872,
+                "throughput_bytes_per_second": 7557015.416103556,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/0/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-92a82522ed0da2bc8d929dd05f7eb2207309a74dc13cee655a7aaf3e9a1b9bda"
+                },
+                "wall_time_ns": 58283560870
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378941440,
+                "throughput_bytes_per_second": 189286073.24582335,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/0/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-3a68e9f907b5659df87c96ef362a9bf2a1dd3b55edd07be9f21c0b074d8cbabc"
+                },
+                "wall_time_ns": 2326900022
+              },
+              "diagnostic_execution_order": 34,
+              "phase": "measured",
+              "repetition_index": 0,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/2/runs/0/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-ef5a776d36d8ff4de2399bb4c1c378b1c15b5d70f66bf975504884c24329a5ae"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 20793.0,
+                "external_wall_time_ns": 57689639507,
+                "planning_wall_ms": 36341.0,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/0/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-7c36cb0f47e406ab4c182ee630d8e073065825c5bce6e7ecaffcf49232a7dc9a"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/2/runs/0",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-ba651dc520483863cbe600bd61f4b9cfd4b3b701a59bbfa489a385b16dd2d186"
+              }
+            },
+            {
+              "archive_execution_order": 9,
+              "archive_sha256": "723573fcea7face6c2cf81eee06d13b9e3f16ade84ff9b130ce6369b78af236b",
+              "archive_size_bytes": 366011656,
+              "compression": {
+                "direct_child_max_rss_bytes": 694366208,
+                "throughput_bytes_per_second": 7866177.690847308,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/1/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-659dd6750b07f67b621de87b030a49d391cb057ba2640bb2dd7ac9f5801fd098"
+                },
+                "wall_time_ns": 55992857689
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378871808,
+                "throughput_bytes_per_second": 195721020.94147906,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/1/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-69e81402d4cb90ae1b5fca46d379ce16183b78e65fea5e176f0c47a1eb87e485"
+                },
+                "wall_time_ns": 2250395823
+              },
+              "diagnostic_execution_order": 37,
+              "phase": "measured",
+              "repetition_index": 1,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/2/runs/1/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-6fe240998d8daf896380c018335f89157fdef2cc6abfcc3c77393853ce4fa0e0"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 20655.0,
+                "external_wall_time_ns": 58071641125,
+                "planning_wall_ms": 36753.0,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/1/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-e8cda392f204d031588063c47a6534b030aa919c356daca664ec5b4eba92417f"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/2/runs/1",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-8f1212db45c97a7819d49466238ff4a2f654381658294bce0b5a09f955bd8d80"
+              }
+            },
+            {
+              "archive_execution_order": 14,
+              "archive_sha256": "723573fcea7face6c2cf81eee06d13b9e3f16ade84ff9b130ce6369b78af236b",
+              "archive_size_bytes": 366011656,
+              "compression": {
+                "direct_child_max_rss_bytes": 692838400,
+                "throughput_bytes_per_second": 7720403.4559138,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/2/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-57aed7887a61d074df1a061345fb8f53bbccf673f7938fb269321cf1d5e7ad34"
+                },
+                "wall_time_ns": 57050097254
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 377655296,
+                "throughput_bytes_per_second": 186091047.06645337,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/2/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-70977114a0cea6a0d84efa9f3b84a13ba4aababb041d8486b905088ac0053db2"
+                },
+                "wall_time_ns": 2366850931
+              },
+              "diagnostic_execution_order": 42,
+              "phase": "measured",
+              "repetition_index": 2,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/2/runs/2/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-f6b1e61c38bb0d627a20a140f417bfbcce1c30e08220979eff0c15a9b5ab885f"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 20697.0,
+                "external_wall_time_ns": 58452628391,
+                "planning_wall_ms": 37177.0,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/2/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-55b30121c89e8946dde35ae872bd4680005ee7d1329b914d13cbcc07805c611e"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/2/runs/2",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-59f71bbac14d838b285146e7d7f17a91798061f55ade90374671939c9dfc848f"
+              }
+            },
+            {
+              "archive_execution_order": 17,
+              "archive_sha256": "723573fcea7face6c2cf81eee06d13b9e3f16ade84ff9b130ce6369b78af236b",
+              "archive_size_bytes": 366011656,
+              "compression": {
+                "direct_child_max_rss_bytes": 694370304,
+                "throughput_bytes_per_second": 7636987.935824522,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/3/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-3f0cb7ab17db718a77d36b4f557844755f49602f2deabd8c69935d3ea8fcfe3a"
+                },
+                "wall_time_ns": 57673230821
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378871808,
+                "throughput_bytes_per_second": 188038653.64645842,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/3/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-4281e44c6365837f9a355e5d288114f8531fcf587163ff1b1a6c371408a118fe"
+                },
+                "wall_time_ns": 2342336320
+              },
+              "diagnostic_execution_order": 45,
+              "phase": "measured",
+              "repetition_index": 3,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/2/runs/3/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-debf56f6abbf48350b6c5519d1bbe255abf8dc1c86dd45849c34041743c1ec41"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 20004.0,
+                "external_wall_time_ns": 56368388989,
+                "planning_wall_ms": 35717.0,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/3/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-c3016666d050efd49f14f1adf7c40c77909f6250370f0ed6ad7c103ed7951c0c"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/2/runs/3",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-e35052a2fdaf6a0e4d9d77d4f6ef972d122daab526d17fc2a037a84258605dce"
+              }
+            },
+            {
+              "archive_execution_order": 23,
+              "archive_sha256": "723573fcea7face6c2cf81eee06d13b9e3f16ade84ff9b130ce6369b78af236b",
+              "archive_size_bytes": 366011656,
+              "compression": {
+                "direct_child_max_rss_bytes": 688058368,
+                "throughput_bytes_per_second": 7551656.065802777,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/4/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-64a90fc32d6e6fc6297c3759e942eb5e328a3f25a8d880bfe50bbc0e68e2ef2f"
+                },
+                "wall_time_ns": 58324924250
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378867712,
+                "throughput_bytes_per_second": 187153350.68557906,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/4/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-5dbd4503f4f2edc958a5d43ae28583dfce26f786093392f48c1630c44a268d53"
+                },
+                "wall_time_ns": 2353416417
+              },
+              "diagnostic_execution_order": 51,
+              "phase": "measured",
+              "repetition_index": 4,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/2/runs/4/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-667288f2d30188afd265e1d3c9b609ac772f7bf76e44c39339ac845c60094ae0"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 20077.0,
+                "external_wall_time_ns": 56471035580,
+                "planning_wall_ms": 35752.0,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/4/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-c610e51a70310f788c99e5f2df132d501ba326dd97166e2bb5c5f4fdc17c72c7"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/2/runs/4",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-8576a84b023aec5c3d62a8af94e7c46dd47196ee0d37cd4ab3b0e9b0324c1b30"
+              }
+            },
+            {
+              "archive_execution_order": 24,
+              "archive_sha256": "723573fcea7face6c2cf81eee06d13b9e3f16ade84ff9b130ce6369b78af236b",
+              "archive_size_bytes": 366011656,
+              "compression": {
+                "direct_child_max_rss_bytes": 694329344,
+                "throughput_bytes_per_second": 7772240.842817551,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/5/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-8e2c2b2e7863c956d791e7bbd58bbdf6f20b0c6e17de27a95fae5b187fb19b47"
+                },
+                "wall_time_ns": 56669598499
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378867712,
+                "throughput_bytes_per_second": 195525243.10881072,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/5/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-1ad511c95811f22cd1c4b74dae7d2feff9dd3ba774b6d6d1565f03162723acb0"
+                },
+                "wall_time_ns": 2252649126
+              },
+              "diagnostic_execution_order": 52,
+              "phase": "measured",
+              "repetition_index": 5,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/2/runs/5/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-c04df93b3986926ec94492e4ae004942cdcde427522b5194dbe0eb0660038f0f"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 20693.0,
+                "external_wall_time_ns": 57940028019,
+                "planning_wall_ms": 36600.0,
+                "trace": {
+                  "json_pointer": "/configurations/2/runs/5/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-49bb6d43bba06eb1ee1a12661011a64847cf24f6e9d8681c66e72f9bee39f87d"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/2/runs/5",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-39a0da0f628719200043613eb76e3cb97b81327b8e51ea97dd298f9f017d05b8"
+              }
+            }
+          ],
+          "paper_metrics_eligible": true,
+          "search_diagnostic_replay": {
+            "compression_time_component": false,
+            "encoding_wall_ms": {
+              "coefficient_of_variation": 0.017046493772045226,
+              "max": 20793.0,
+              "mean": 20486.5,
+              "median": 20674.0,
+              "min": 20004.0,
+              "n": 6,
+              "sample_sd": 349.2229946610045
+            },
+            "external_wall_time_ns": {
+              "coefficient_of_variation": 0.015167994367676017,
+              "max": 58452628391.0,
+              "mean": 57498893601.833336,
+              "median": 57814833763.0,
+              "min": 56368388989.0,
+              "n": 6,
+              "sample_sd": 872142894.3002106
+            },
+            "planning_wall_ms": {
+              "coefficient_of_variation": 0.015822473729817876,
+              "max": 37177.0,
+              "mean": 36390.0,
+              "median": 36470.5,
+              "min": 35717.0,
+              "n": 6,
+              "sample_sd": 575.7798190280726
+            },
+            "scope": "separate deterministic bench replay run after archive pipelines; these values are search/encoding diagnostics and are not compression-time components"
+          },
+          "spec": {
+            "expected_effective_config": {
+              "enabled_ops": [
+                "raw",
+                "bitpack",
+                "huffman",
+                "rans",
+                "xor_const",
+                "add_const_mod",
+                "xor_prev",
+                "diff_mod",
+                "zigzag",
+                "gray",
+                "rotate_bits",
+                "bit_reverse",
+                "split_field",
+                "topk_codebook",
+                "rle",
+                "deinterleave",
+                "split_float",
+                "bit_plane",
+                "byte_plane"
+              ],
+              "max_depth": 2,
+              "max_expansions": 256,
+              "max_nodes": 12,
+              "max_realizations": 32,
+              "max_realizations_scope": "single_stream_search_only",
+              "rerank_blocks": 4,
+              "rerank_candidates": 8,
+              "rerank_enabled": true,
+              "sample_elems": 4096,
+              "target_block_bytes": 262144,
+              "tensor_search_uses_max_realizations": false
+            },
+            "id": "uniform",
+            "notes": "Frozen default uniform search configuration.",
+            "plan": "search",
+            "prior_policy": "none",
+            "require_raw_only": false,
+            "search_args": [
+              "--max-expansions",
+              "256",
+              "--max-nodes",
+              "12",
+              "--max-depth",
+              "2",
+              "--sample-elems",
+              "4096",
+              "--rerank-candidates",
+              "8",
+              "--rerank-blocks",
+              "4"
+            ]
+          },
+          "trace": {
+            "json_pointer": "/configurations/2",
+            "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+            "stable_trace_key": "trace-aa0d96c23bbaa5254fa0161efe4e26505a253b9237892fed4d2f413fee476e05"
+          },
+          "warmup_trials": [
+            {
+              "archive_execution_order": 2,
+              "archive_sha256": "723573fcea7face6c2cf81eee06d13b9e3f16ade84ff9b130ce6369b78af236b",
+              "archive_size_bytes": 366011656,
+              "compression": {
+                "direct_child_max_rss_bytes": 691572736,
+                "throughput_bytes_per_second": 7634486.547811349,
+                "trace": {
+                  "json_pointer": "/configurations/2/warmups/0/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-c42cc914147e8128b59089c7fa74feb8da90c92183306c109e9dbf7861e2234e"
+                },
+                "wall_time_ns": 57692127066
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378851328,
+                "throughput_bytes_per_second": 189693487.96267414,
+                "trace": {
+                  "json_pointer": "/configurations/2/warmups/0/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-27be446c92a3b6cea730975f024b9e072d1f906a310b014617658b1c0f3ddd0c"
+                },
+                "wall_time_ns": 2321902416
+              },
+              "diagnostic_execution_order": 30,
+              "phase": "warmup",
+              "repetition_index": 0,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/2/warmups/0/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-e29221db2a12ec7f618fb868aac717cbcf6799267221000588e7a6849903b6a8"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 19996.0,
+                "external_wall_time_ns": 56360791496,
+                "planning_wall_ms": 35727.0,
+                "trace": {
+                  "json_pointer": "/configurations/2/warmups/0/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-9a2e2c852e7382c871f760994df79356b6ade33329d1667d0378837195b4abf6"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/2/warmups/0",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-337b74d002022ef1f2e162bf1bef9b2865f460fa1490c2a4b9e6d8859629a6a9"
+              }
+            }
+          ]
+        },
+        {
+          "archive": {
+            "compression_ratio_input_over_archive": 1.203392449937748,
+            "consistency_json_pointer": "/configurations/3/measured_archive_consistency",
+            "measured_repetitions_byte_identical": true,
+            "sha256": "ced423f6cc35d1bb347ce06a8e084c3479e3744013a52ea1fe22bdd6ad4ab439",
+            "size_bytes": 366006757,
+            "source_size_bytes": 440449768,
+            "storage_saved_bytes": 74443011,
+            "storage_saving_fraction": 0.16901589331748723
+          },
+          "calibration_reference": {
+            "cost_included_in_compression_time": false,
+            "required_for_configuration": true,
+            "shared_shard_level_json_pointer": "/calibration"
+          },
+          "compression": {
+            "direct_child_max_rss_bytes": {
+              "coefficient_of_variation": 0.0017533802171505598,
+              "max": 762290176.0,
+              "mean": 760502272.0,
+              "median": 760608768.0,
+              "min": 758439936.0,
+              "n": 6,
+              "sample_sd": 1333449.638822854
+            },
+            "rss_observation_count": 6,
+            "rss_scope": "direct child process; threads share the process",
+            "throughput_bytes_per_second": {
+              "coefficient_of_variation": 0.02206905821984265,
+              "max": 8966874.388166217,
+              "mean": 8784509.841300497,
+              "median": 8784297.872962113,
+              "min": 8598710.103614273,
+              "n": 6,
+              "sample_sd": 193865.8591204414
+            },
+            "wall_time_ns": {
+              "coefficient_of_variation": 0.022069551460953307,
+              "max": 51222772101.0,
+              "mean": 50159726325.5,
+              "median": 50159761072.0,
+              "min": 49119654066.0,
+              "n": 6,
+              "sample_sd": 1107002661.4079566
+            }
+          },
+          "configuration_id": "phog",
+          "configuration_json_pointer": "/configurations/3",
+          "declared_counts": {
+            "measured_repetitions": 6,
+            "warmups": 1
+          },
+          "decompression": {
+            "direct_child_max_rss_bytes": {
+              "coefficient_of_variation": 0.0017295462897955183,
+              "max": 378482688.0,
+              "mean": 378056021.3333333,
+              "median": 378302464.0,
+              "min": 376795136.0,
+              "n": 6,
+              "sample_sd": 653865.389031922
+            },
+            "rss_observation_count": 6,
+            "rss_scope": "direct child process; threads share the process",
+            "throughput_bytes_per_second": {
+              "coefficient_of_variation": 0.020241842833762288,
+              "max": 209786782.4661865,
+              "mean": 204227757.70626876,
+              "median": 202096198.28010774,
+              "min": 200894644.23235136,
+              "n": 6,
+              "sample_sd": 4133946.173781977
+            },
+            "wall_time_ns": {
+              "coefficient_of_variation": 0.019996609126330056,
+              "max": 2192441564.0,
+              "mean": 2157387360.0,
+              "median": 2179410657.0,
+              "min": 2099511527.0,
+              "n": 6,
+              "sample_sd": 43140431.7720051
+            }
+          },
+          "dsl_evidence": {
+            "analysis_schema": {
+              "id": "brevis.generated-dsl-analysis",
+              "version": 1
+            },
+            "canonical_detail_source": {
+              "index": 0,
+              "phase": "warmup"
+            },
+            "measured_repetition_count": 6,
+            "report_id": "report-50e7c51e722cf13fe648b4b2b607c3e4354ef2d6f47a10345abd47d4ca4978a3",
+            "semantic_fingerprint_sha256": "7c6a632cf7c68d66252ab700cde580bac0599e0d54e61ef681064e501d796c4a",
+            "technical_repetitions_are_independent_tensor_samples": false
+          },
+          "effective_search_configuration": {
+            "candidate_collection": "all_within_expansion_budget",
+            "disabled_ops": [],
+            "enabled_ops": [
+              "raw",
+              "bitpack",
+              "huffman",
+              "rans",
+              "xor_const",
+              "add_const_mod",
+              "xor_prev",
+              "diff_mod",
+              "zigzag",
+              "gray",
+              "rotate_bits",
+              "bit_reverse",
+              "split_field",
+              "topk_codebook",
+              "rle",
+              "deinterleave",
+              "split_float",
+              "bit_plane",
+              "byte_plane"
+            ],
+            "enabled_ops_mask": 3378815341779983,
+            "max_depth": 2,
+            "max_depth_semantics": "maximum_transform_layers",
+            "max_entropy_bpe": 16,
+            "max_expansions": 256,
+            "max_expansions_scope": "partial_program_pops_per_tensor",
+            "max_nodes": 12,
+            "max_nodes_semantics": "transforms_plus_terminals_per_program",
+            "max_realizations": 32,
+            "max_realizations_scope": "single_stream_search_only",
+            "phog_weight": 0.05,
+            "rerank_blocks": 4,
+            "rerank_candidates": 8,
+            "rerank_enabled": true,
+            "sample_byte_pruning": false,
+            "sample_elems": 4096,
+            "sampling_policy": "single_centered_contiguous_window",
+            "target_block_bytes": 262144,
+            "tensor_search_uses_max_realizations": false,
+            "transform_layers": 2,
+            "uniform_score": 8192
+          },
+          "formal_eligible": true,
+          "measured_trials": [
+            {
+              "archive_execution_order": 7,
+              "archive_sha256": "ced423f6cc35d1bb347ce06a8e084c3479e3744013a52ea1fe22bdd6ad4ab439",
+              "archive_size_bytes": 366006757,
+              "compression": {
+                "direct_child_max_rss_bytes": 760938496,
+                "throughput_bytes_per_second": 8966874.388166217,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/0/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-b83f0167506a060c504708023cbfe2099136701c7396465b847144f310eb2466"
+                },
+                "wall_time_ns": 49119654066
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378482688,
+                "throughput_bytes_per_second": 209786782.4661865,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/0/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-8365a293a4677fc7ea0f92d4f4a47c06a3de34957e740001902b2747b57f83d3"
+                },
+                "wall_time_ns": 2099511527
+              },
+              "diagnostic_execution_order": 35,
+              "phase": "measured",
+              "repetition_index": 0,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/3/runs/0/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-00e762c7f0c7156c246385bb9e358494ae6784515686e4fa7934ccc4383cfa76"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 12383.0,
+                "external_wall_time_ns": 51488986173,
+                "planning_wall_ms": 38436.0,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/0/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-8e27f04315a3b9401043841289ef5803914d655334fd6eca39fe56b1bd863edc"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/3/runs/0",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-7dbf2a48b9ad7d3eeb3a507ca143ed15d3839ee8e2baec68f8c9e7e489ff7784"
+              }
+            },
+            {
+              "archive_execution_order": 8,
+              "archive_sha256": "ced423f6cc35d1bb347ce06a8e084c3479e3744013a52ea1fe22bdd6ad4ab439",
+              "archive_size_bytes": 366006757,
+              "compression": {
+                "direct_child_max_rss_bytes": 761307136,
+                "throughput_bytes_per_second": 8956086.507070543,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/1/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-f62baf7d55f0b2743dbd583c513120ffa58e10e1c27e9f46cba416c0dbb08e4f"
+                },
+                "wall_time_ns": 49178820197
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 377974784,
+                "throughput_bytes_per_second": 209253674.70479065,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/1/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-4ddcc5b25b44d74fac97bc77c75386f154bb28ac498170f00146ea6a840ffdce"
+                },
+                "wall_time_ns": 2104860374
+              },
+              "diagnostic_execution_order": 36,
+              "phase": "measured",
+              "repetition_index": 1,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/3/runs/1/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-9cca0c09cdcc4e7cf86c2e9f516d9d1706bbf92680d42792495b00e0cb00dcc5"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 12398.0,
+                "external_wall_time_ns": 51608223992,
+                "planning_wall_ms": 38525.0,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/1/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-7d2faa263d83a1835e69a3c26a3ed9a2000d8312dc4d9773108f744706883739"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/3/runs/1",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-ec6cad60210701635e40e9c62c41a29b9e0533681fdb7c1693b31bc40799e843"
+              }
+            },
+            {
+              "archive_execution_order": 15,
+              "archive_sha256": "ced423f6cc35d1bb347ce06a8e084c3479e3744013a52ea1fe22bdd6ad4ab439",
+              "archive_size_bytes": 366006757,
+              "compression": {
+                "direct_child_max_rss_bytes": 762290176,
+                "throughput_bytes_per_second": 8611637.688419444,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/2/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-fecd86e619d9bc22e9ab1e0c01dcdbbd0ceee4a82ae81abed4cced0244540190"
+                },
+                "wall_time_ns": 51145877699
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378130432,
+                "throughput_bytes_per_second": 200894644.23235136,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/2/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-5847c36b5f61550c6a518b24e17066c77375cd2acf61c8ef439fd736b470c3d1"
+                },
+                "wall_time_ns": 2192441564
+              },
+              "diagnostic_execution_order": 43,
+              "phase": "measured",
+              "repetition_index": 2,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/3/runs/2/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-61ab935ade34d750c186e3405c220341a68069f9e5ffb3f8ed46e3ef96df08af"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 12309.0,
+                "external_wall_time_ns": 50995063220,
+                "planning_wall_ms": 38048.0,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/2/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-c60d46024b4a469ba25d401d26f9c0ac48cd1b575add66dde16419411b82f303"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/3/runs/2",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-735ddeb814c46ba8ffa54769ed31b4edce35e9327c83ce66debe9185b8c5cd67"
+              }
+            },
+            {
+              "archive_execution_order": 16,
+              "archive_sha256": "ced423f6cc35d1bb347ce06a8e084c3479e3744013a52ea1fe22bdd6ad4ab439",
+              "archive_size_bytes": 366006757,
+              "compression": {
+                "direct_child_max_rss_bytes": 758439936,
+                "throughput_bytes_per_second": 8598710.103614273,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/3/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-bd177c2e1bd4c66c151d79ccbcd00aa875462171c51c51ca8130a1bc01ef5f60"
+                },
+                "wall_time_ns": 51222772101
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378478592,
+                "throughput_bytes_per_second": 201239048.27406844,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/3/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-b20b3f03f1689a514927f8b203d91ed54fb4cccfd127f04026d3acfdf74d2c06"
+                },
+                "wall_time_ns": 2188689381
+              },
+              "diagnostic_execution_order": 44,
+              "phase": "measured",
+              "repetition_index": 3,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/3/runs/3/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-0b370fe891d5669fd169a57dc361281171f18615b6d659d2b59d1d197c0e41f7"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 11870.0,
+                "external_wall_time_ns": 50357128698,
+                "planning_wall_ms": 37829.0,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/3/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-1a50082e4754dd352c5ebb3c90e0b1ae8ac6ad3e9197df43f792e9b2b0e055ff"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/3/runs/3",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-eae630dcedef3fbdb78178f8813c2f54c587142510989e994fc0b460c4d044c7"
+              }
+            },
+            {
+              "archive_execution_order": 20,
+              "archive_sha256": "ced423f6cc35d1bb347ce06a8e084c3479e3744013a52ea1fe22bdd6ad4ab439",
+              "archive_size_bytes": 366006757,
+              "compression": {
+                "direct_child_max_rss_bytes": 759758848,
+                "throughput_bytes_per_second": 8612509.238853682,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/4/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-0139019aca7cb155e3956f63f95f129676c287d4c91267415f01147981f4c5e8"
+                },
+                "wall_time_ns": 51140701947
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 378474496,
+                "throughput_bytes_per_second": 201817060.13636994,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/4/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-7bc2bdbd5658c4e6e5ed9de79bac0b246f379c3744e584eddadf1ed77169d581"
+                },
+                "wall_time_ns": 2182420890
+              },
+              "diagnostic_execution_order": 48,
+              "phase": "measured",
+              "repetition_index": 4,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/3/runs/4/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-d678d32131fb603089b56ee83d3705a08951e5b71253c836e9d6dca530ebd5d0"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 11858.0,
+                "external_wall_time_ns": 49594133088,
+                "planning_wall_ms": 37158.0,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/4/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-2528233fef8ff57f072dfe7cb118eb6a4d526b26b4c1d58bfb7b2bc66550cc6d"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/3/runs/4",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-634a565fda2ede7f579d36e0b310641a00d5ac9486fbded818a9135fd32d1921"
+              }
+            },
+            {
+              "archive_execution_order": 27,
+              "archive_sha256": "ced423f6cc35d1bb347ce06a8e084c3479e3744013a52ea1fe22bdd6ad4ab439",
+              "archive_size_bytes": 366006757,
+              "compression": {
+                "direct_child_max_rss_bytes": 760279040,
+                "throughput_bytes_per_second": 8961241.12167882,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/5/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-b277e2f31b0391197eec44c09fd2fa256f894342f2483d8a1816d6f54351a6bb"
+                },
+                "wall_time_ns": 49150531943
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 376795136,
+                "throughput_bytes_per_second": 202375336.4238455,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/5/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-0109fababd1a8c5b82a8b70af0bfe5d8ea9a922a1e175dc356b808dae6fed854"
+                },
+                "wall_time_ns": 2176400424
+              },
+              "diagnostic_execution_order": 55,
+              "phase": "measured",
+              "repetition_index": 5,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/3/runs/5/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-e9dd302388b6c895faa6d605a3705b6580593e511996a179131a4d2f688f3561"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 12336.0,
+                "external_wall_time_ns": 51219601072,
+                "planning_wall_ms": 38209.0,
+                "trace": {
+                  "json_pointer": "/configurations/3/runs/5/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-06ec9aa5117480224a823ae387feb15888d719cb8dc159ff10cad174ddf812cf"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/3/runs/5",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-a124e1781d01a976cfab212f75b34678b5bda29430c5a25cee0f5ea85577fc3d"
+              }
+            }
+          ],
+          "paper_metrics_eligible": true,
+          "search_diagnostic_replay": {
+            "compression_time_component": false,
+            "encoding_wall_ms": {
+              "coefficient_of_variation": 0.021025658874523723,
+              "max": 12398.0,
+              "mean": 12192.333333333334,
+              "median": 12322.5,
+              "min": 11858.0,
+              "n": 6,
+              "sample_sd": 256.35184155115144
+            },
+            "external_wall_time_ns": {
+              "coefficient_of_variation": 0.015114160240412724,
+              "max": 51608223992.0,
+              "mean": 50877189373.833336,
+              "median": 51107332146.0,
+              "min": 49594133088.0,
+              "n": 6,
+              "sample_sd": 768965992.7779405
+            },
+            "planning_wall_ms": {
+              "coefficient_of_variation": 0.01310872281717954,
+              "max": 38525.0,
+              "mean": 38034.166666666664,
+              "median": 38128.5,
+              "min": 37158.0,
+              "n": 6,
+              "sample_sd": 498.5793484157428
+            },
+            "scope": "separate deterministic bench replay run after archive pipelines; these values are search/encoding diagnostics and are not compression-time components"
+          },
+          "spec": {
+            "expected_effective_config": {
+              "enabled_ops": [
+                "raw",
+                "bitpack",
+                "huffman",
+                "rans",
+                "xor_const",
+                "add_const_mod",
+                "xor_prev",
+                "diff_mod",
+                "zigzag",
+                "gray",
+                "rotate_bits",
+                "bit_reverse",
+                "split_field",
+                "topk_codebook",
+                "rle",
+                "deinterleave",
+                "split_float",
+                "bit_plane",
+                "byte_plane"
+              ],
+              "max_depth": 2,
+              "max_expansions": 256,
+              "max_nodes": 12,
+              "max_realizations": 32,
+              "max_realizations_scope": "single_stream_search_only",
+              "rerank_blocks": 4,
+              "rerank_candidates": 8,
+              "rerank_enabled": true,
+              "sample_elems": 4096,
+              "target_block_bytes": 262144,
+              "tensor_search_uses_max_realizations": false
+            },
+            "id": "phog",
+            "notes": "Frozen default phog search configuration.",
+            "plan": "search",
+            "prior_policy": "canonical",
+            "require_raw_only": false,
+            "search_args": [
+              "--max-expansions",
+              "256",
+              "--max-nodes",
+              "12",
+              "--max-depth",
+              "2",
+              "--sample-elems",
+              "4096",
+              "--rerank-candidates",
+              "8",
+              "--rerank-blocks",
+              "4"
+            ]
+          },
+          "trace": {
+            "json_pointer": "/configurations/3",
+            "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+            "stable_trace_key": "trace-a475c8b043ed2844deb10a6129c818266ccea8849c28b8023f776e1021263c45"
+          },
+          "warmup_trials": [
+            {
+              "archive_execution_order": 3,
+              "archive_sha256": "ced423f6cc35d1bb347ce06a8e084c3479e3744013a52ea1fe22bdd6ad4ab439",
+              "archive_size_bytes": 366006757,
+              "compression": {
+                "direct_child_max_rss_bytes": 762339328,
+                "throughput_bytes_per_second": 8608863.927071394,
+                "trace": {
+                  "json_pointer": "/configurations/3/warmups/0/compression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-f173ef93141fda14404b741cde287a4860bbd68b68ee4f6c31451252607c8e0a"
+                },
+                "wall_time_ns": 51162356814
+              },
+              "decompression": {
+                "direct_child_max_rss_bytes": 377978880,
+                "throughput_bytes_per_second": 199423764.31068653,
+                "trace": {
+                  "json_pointer": "/configurations/3/warmups/0/decompression",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-cb0826124458352eb871af8f71ab99e8aa0303df8b5e4c98a441201cae349211"
+                },
+                "wall_time_ns": 2208612246
+              },
+              "diagnostic_execution_order": 31,
+              "phase": "warmup",
+              "repetition_index": 0,
+              "search_diagnostic_replay": {
+                "bench_report_trace": {
+                  "json_pointer": "/configurations/3/warmups/0/bench_report",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-65521c7c45fd5490bc72557f91eadeb4d95783c7ec04fff70581df8946f4df25"
+                },
+                "compression_time_component": false,
+                "encoding_wall_ms": 11956.0,
+                "external_wall_time_ns": 49603280275,
+                "planning_wall_ms": 36997.0,
+                "trace": {
+                  "json_pointer": "/configurations/3/warmups/0/bench_process",
+                  "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                  "stable_trace_key": "trace-fbedefa0027f3419fcda056f8fb32c48fef41e69bc35d0f86e58d7668193e19e"
+                }
+              },
+              "trace": {
+                "json_pointer": "/configurations/3/warmups/0",
+                "result_file_sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+                "stable_trace_key": "trace-94bc168c651b9d848c9d11729ab53040dc205456be33548b7ac7e364161a1a54"
+              }
+            }
+          ]
+        }
+      ],
+      "environment": {
+        "clock": "time.perf_counter_ns",
+        "cpu": {
+          "affinity_logical_cores": 256,
+          "logical_cores_host": 256,
+          "model": "AMD EPYC 7B13 64-Core Processor",
+          "physical_cores_host": 128,
+          "quota": {
+            "period_microseconds": 100000,
+            "quota_cores": 61.43999,
+            "quota_microseconds": 6143999,
+            "source": "/sys/fs/cgroup/cpu.max"
+          }
+        },
+        "filesystems": {
+          "checkpoint": {
+            "device": 56,
+            "filesystem_type": "overlay",
+            "free_bytes": 2135207567360,
+            "mount_option_names": [
+              "rw",
+              "relatime",
+              "lowerdir",
+              "upperdir",
+              "workdir",
+              "nouserxattr"
+            ],
+            "mount_point": "/",
+            "path": "/workspace/Brevis/eval/cache/formal-staging/frozen-411b133-v1/small-core-system-v1/small-bert-f32/model-safetensors-9d75c1098f/core-comparison/jobs-1/calibration-200",
+            "source": "overlay",
+            "total_bytes": 2147483648000,
+            "used_bytes": 12276080640
+          },
+          "source": {
+            "device": 56,
+            "filesystem_type": "overlay",
+            "free_bytes": 2135207567360,
+            "mount_option_names": [
+              "rw",
+              "relatime",
+              "lowerdir",
+              "upperdir",
+              "workdir",
+              "nouserxattr"
+            ],
+            "mount_point": "/",
+            "path": "/workspace/Brevis/eval/cache/google-bert__bert-base-uncased/86b5e0934494bd15c9632b12f734a8a67f723594/model.safetensors",
+            "source": "overlay",
+            "total_bytes": 2147483648000,
+            "used_bytes": 12276080640
+          },
+          "work": {
+            "device": 56,
+            "filesystem_type": "overlay",
+            "free_bytes": 2135207567360,
+            "mount_option_names": [
+              "rw",
+              "relatime",
+              "lowerdir",
+              "upperdir",
+              "workdir",
+              "nouserxattr"
+            ],
+            "mount_point": "/",
+            "path": "/workspace/Brevis/eval/cache/formal-staging/frozen-411b133-v1/small-core-system-v1/small-bert-f32/model-safetensors-9d75c1098f/core-comparison/jobs-1/calibration-200",
+            "source": "overlay",
+            "total_bytes": 2147483648000,
+            "used_bytes": 12276080640
+          }
+        },
+        "gpu": [
+          {
+            "driver_version": "595.58.03",
+            "memory_total_mib": 48935,
+            "name": "NVIDIA RTX PRO 5000 Blackwell",
+            "uuid": "GPU-acda87f2-a812-df17-ce79-1bb10086a8ab"
+          },
+          {
+            "driver_version": "595.58.03",
+            "memory_total_mib": 48935,
+            "name": "NVIDIA RTX PRO 5000 Blackwell",
+            "uuid": "GPU-a18696c2-4ad2-f08e-e2ac-bafbe84af363"
+          }
+        ],
+        "hostname": "d8a4289fa8e4",
+        "machine": "x86_64",
+        "memory": {
+          "available_bytes_at_start": 1043283673088,
+          "cgroup_limit_bytes": 519336624128,
+          "cgroup_limit_source": "/sys/fs/cgroup/memory.max",
+          "total_bytes": 1081953644544
+        },
+        "processor": "x86_64",
+        "python": "3.12.13",
+        "release": "6.8.0-117-lowlatency",
+        "rss_source": "os.wait4 direct-child ru_maxrss; Brevis threads share that process, but future descendant-process RSS would not be aggregated",
+        "system": "Linux",
+        "zig": "0.16.0"
+      },
+      "environment_json_pointer": "/environment",
+      "formal_eligible": true,
+      "implementation": {
+        "binary_json_pointer": "/provenance/binary",
+        "binary_sha256": "b2dce6a088b0f449f1a9af451b0c32a17621fe85abc20e4504bea37c8dac8fd7",
+        "build_json_pointer": "/provenance/build",
+        "build_mode": "ReleaseFast",
+        "end_checks_json_pointer": "/provenance/end_checks",
+        "generic_helper_sha256": "289145f8756bb93d6381dfd551e8a065a2c3bf4845186a13556e9ff6a3ee64ea",
+        "git_commit": "411b13393d647c7cb189877764ee5de1e63d7fa0",
+        "git_json_pointer": "/provenance/git",
+        "harness_sha256": "b6046800b6c063899c6272632e7995ba9ff16f8ca197da2d037ca0509db6a094"
+      },
+      "input_label": "/workspace/Brevis/eval/cache/formal-staging/frozen-411b133-v1/small-core-system-v1/small-bert-f32/model-safetensors-9d75c1098f/core-comparison/jobs-1/calibration-200/86cdd920593a9a143f9ced7dc2d0da5cc764682de7a62c3e844cdbd866d35ea2.json",
+      "input_metadata": {
+        "campaign_comparison_group_id": "core-comparison",
+        "campaign_id": "small-core-system-v1",
+        "campaign_task_semantic_sha256": "86cdd920593a9a143f9ced7dc2d0da5cc764682de7a62c3e844cdbd866d35ea2",
+        "manifest": "/workspace/Brevis-formal-411b133/eval/models-tiered.json",
+        "model_repo": "google-bert/bert-base-uncased",
+        "model_revision": "86b5e0934494bd15c9632b12f734a8a67f723594",
+        "model_tag": "small-bert-f32",
+        "shard": "model.safetensors"
+      },
+      "input_metadata_json_pointer": "/input_metadata",
+      "manifest": {
+        "binding": {
+          "bytes": 440449768,
+          "entry_sha256": "e44f912ab0c29917af3c34934dd2b039f82f8377611cce6a2bf0d1461bf5285e",
+          "repo": "google-bert/bert-base-uncased",
+          "revision": "86b5e0934494bd15c9632b12f734a8a67f723594",
+          "sha256": "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3",
+          "shard": "model.safetensors",
+          "tag": "small-bert-f32",
+          "verified": true
+        },
+        "binding_json_pointer": "/integrity/manifest_binding",
+        "manifest_json_pointer": "/integrity/manifest",
+        "path_recorded": "/workspace/Brevis-formal-411b133/eval/models-tiered.json",
+        "sha256": "84202aee827632724d7441e9ae4725633778cdafacc4f31eaf4449a044b988ad",
+        "size_bytes": 19969
+      },
+      "paper_metrics_eligible": true,
+      "record_type": "shard",
+      "result_file": {
+        "hash_scope": "exact input file bytes",
+        "root_json_pointer": "",
+        "sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336"
+      },
+      "run_class": "formal",
+      "source": {
+        "json_pointer": "/source",
+        "path": "/workspace/Brevis/eval/cache/google-bert__bert-base-uncased/86b5e0934494bd15c9632b12f734a8a67f723594/model.safetensors",
+        "sha256": "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3",
+        "size_bytes": 440449768
+      }
+    }
+  ]
+}

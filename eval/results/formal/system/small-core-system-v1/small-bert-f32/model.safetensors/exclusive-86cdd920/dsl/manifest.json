@@ -1,0 +1,45 @@
+{
+  "analysis_schema": {
+    "id": "brevis.generated-dsl-analysis",
+    "version": 1
+  },
+  "files": {
+    "blocks.jsonl": {
+      "bytes": 13421803,
+      "sha256": "4c0484b25b03a273fcbfa4b5fb9f23d012ffceaad993a61eacb36fa9c107ebce"
+    },
+    "errors.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "nodes.jsonl": {
+      "bytes": 44048487,
+      "sha256": "0d6565eaf784167a9fc7d7bc631c2a654909fa0d83c07513233be4ff7dda5e3c"
+    },
+    "reports.jsonl": {
+      "bytes": 20472,
+      "sha256": "50edab5ac3e0e6194199b0952ca4b6d52621a30eb04e50c6bad039bdcfe8cb9a"
+    },
+    "tensors.jsonl": {
+      "bytes": 2408431,
+      "sha256": "2fcca588fb177b15ceedc3094bbdfb411e4b14a6cddbd1b9a1f01f67466aba8c"
+    }
+  },
+  "paper_metrics_policy": "only records with paper_metrics_eligible=true may enter formal paper metrics; pilot-derived records remain exploratory even when --allow-pilot is used",
+  "role_rules": {
+    "file_sha256": "5bf20660c135776eaca97be90b51833c24da1d47397ef56099147a9a78a87f99",
+    "schema": {
+      "id": "brevis.tensor-role-rules",
+      "version": 1
+    },
+    "scope": "Deterministic name-based labels for stratified analysis. These labels are heuristics, not architecture ground truth."
+  },
+  "summary": {
+    "accepted_semantic_reports": 4,
+    "block_records": 7540,
+    "excluded_records": 0,
+    "node_records": 23992,
+    "paper_metrics_eligible_reports": 4,
+    "tensor_records": 824
+  }
+}

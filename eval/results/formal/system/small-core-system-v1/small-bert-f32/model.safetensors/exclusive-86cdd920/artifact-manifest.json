@@ -1,0 +1,130 @@
+{
+  "schema": {
+    "id": "brevis.formal-result-artifacts",
+    "version": 1
+  },
+  "status": "complete_validated_exclusive_campaign",
+  "created_at_utc": "2026-07-21",
+  "campaign_id": "small-core-system-v1",
+  "task_semantic_sha256": "86cdd920593a9a143f9ced7dc2d0da5cc764682de7a62c3e844cdbd866d35ea2",
+  "model_tag": "small-bert-f32",
+  "shard": "model.safetensors",
+  "source": {
+    "bytes": 440449768,
+    "sha256": "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3"
+  },
+  "implementation": {
+    "git_commit": "411b13393d647c7cb189877764ee5de1e63d7fa0",
+    "binary_sha256": "b2dce6a088b0f449f1a9af451b0c32a17621fe85abc20e4504bea37c8dac8fd7",
+    "campaign_runner_sha256": "85842c00efd5b46e406ccbc75614acfa3a0320b6b2e77a2efbd82077ec7e5c8e",
+    "brevis_harness_sha256": "b6046800b6c063899c6272632e7995ba9ff16f8ca197da2d037ca0509db6a094",
+    "generic_harness_sha256": "289145f8756bb93d6381dfd551e8a065a2c3bf4845186a13556e9ff6a3ee64ea"
+  },
+  "execution_audit": {
+    "exclusive_lock_path": "/tmp/brevis-machine-benchmark.lock",
+    "warmups_per_configuration": 1,
+    "measured_repetitions_per_configuration": 6,
+    "schedule_seed": 2701,
+    "archive_pipeline_steps_completed": 28,
+    "diagnostic_steps_completed": 28,
+    "schedule_failures": 0,
+    "bit_exact_round_trips": 28,
+    "cleanup_records": 63,
+    "cleanup_failures": 0,
+    "result_formal_eligible": true
+  },
+  "artifacts": {
+    "campaign-plan.json": {
+      "bytes": 35163,
+      "sha256": "98bccf5bf25900d2b379fb3a582b8529def71f82d2b5be7419615b740b051edd",
+      "content": "read-only campaign plan generated immediately before execution"
+    },
+    "campaign-receipt.json": {
+      "bytes": 583,
+      "sha256": "41f5d56acaaf7150cd476ddb33ac1d111db7204300d12e55c4db3754e9e28ab8",
+      "content": "terminal JSON receipt emitted by the campaign executor"
+    },
+    "result.json": {
+      "bytes": 19449775,
+      "sha256": "64f1fb12f6cec7fce86e4104e4baac5824c2d1ccb6b2960b7481eb4cc02e8336",
+      "content": "immutable raw brevis.system-benchmark schema-2 checkpoint"
+    },
+    "summary.json": {
+      "bytes": 160904,
+      "sha256": "52eddcee59425f899abe27351d479363e605e6d51709a1d092b60f977b4fb6b7",
+      "generator_sha256": "7a49e08bb146c8aa416b8321521d1c87b95dc2dc4325e655270bb9028416b04d"
+    },
+    "dsl/manifest.json": {
+      "bytes": 1491,
+      "sha256": "4eac448531e209722285420cf4b5b1cb58f43ea1ff578c37287a16d105a602f4"
+    },
+    "dsl/reports.jsonl": {
+      "bytes": 20472,
+      "sha256": "50edab5ac3e0e6194199b0952ca4b6d52621a30eb04e50c6bad039bdcfe8cb9a"
+    },
+    "dsl/errors.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "dsl/tensors.jsonl.zst": {
+      "bytes": 52666,
+      "sha256": "9150b50709a84d8402eba4df405f8e8c30d9c83a8596722f2adcbc135a391c10",
+      "uncompressed_bytes": 2408431,
+      "uncompressed_sha256": "2fcca588fb177b15ceedc3094bbdfb411e4b14a6cddbd1b9a1f01f67466aba8c"
+    },
+    "dsl/blocks.jsonl.zst": {
+      "bytes": 383227,
+      "sha256": "92d9b40a65535a698af7b27a61b20c2acfb55a55dad9cf25f5dd1472bfb216e8",
+      "uncompressed_bytes": 13421803,
+      "uncompressed_sha256": "4c0484b25b03a273fcbfa4b5fb9f23d012ffceaad993a61eacb36fa9c107ebce"
+    },
+    "dsl/nodes.jsonl.zst": {
+      "bytes": 383467,
+      "sha256": "9efc125beb6666cd1f0c28eb83f1bd3fb94fb49433b8f0ac822e0572e4375d24",
+      "uncompressed_bytes": 44048487,
+      "uncompressed_sha256": "0d6565eaf784167a9fc7d7bc631c2a654909fa0d83c07513233be4ff7dda5e3c"
+    },
+    "dsl/aggregate.json.zst": {
+      "bytes": 73804,
+      "sha256": "1266be408409b3735283e327f3bdb25def15dd29de2be95cefba889ef084c743",
+      "uncompressed_bytes": 3894013,
+      "uncompressed_sha256": "dee64d24e0bef1b7ade5e85e3890fb4162a3f3f589d877a9b13498ef78e10431"
+    }
+  },
+  "dsl_generator": {
+    "sha256": "0303f1b15ee040e13f02e2120b29a4c493713eb516c6940c0dd6544afc8e1b31",
+    "role_rules_sha256": "5bf20660c135776eaca97be90b51833c24da1d47397ef56099147a9a78a87f99",
+    "accepted_semantic_reports": 4,
+    "tensor_records": 824,
+    "block_records": 7540,
+    "node_records": 23992,
+    "excluded_records": 0
+  },
+  "dsl_aggregator": {
+    "sha256": "39cecc14946cdcd158667af073bfa06823431d758e361e2888e660b2e3277948",
+    "aggregate_input_fingerprint_sha256": "55df8df9651c8ba73cd8e9ad89500731aa58c6c225e7cb14b92423a28ca706ec",
+    "formal_report_configurations": 4,
+    "tensor_records": 824,
+    "block_records": 7540,
+    "node_records": 23992,
+    "excluded_records": 0
+  },
+  "compressed_jsonl": {
+    "codec": "zstd",
+    "cli_version": "1.5.7",
+    "arguments": [
+      "-19",
+      "-T1",
+      "--no-progress"
+    ],
+    "verification": "zstd -t followed by streamed SHA-256 of decompressed bytes"
+  },
+  "evidence_use": {
+    "effectiveness": "eligible",
+    "bit_exactness": "eligible",
+    "generated_dsl": "eligible",
+    "timing": "eligible_within_exclusive_core_system_comparison_group",
+    "cross_method_speed_claim": "eligible_for_the_four_brevis_configurations_only; generic and specialized baselines remain pending"
+  },
+  "execution_context_note": "No Brevis or generic-codec benchmark, build, test, or paper compile was run concurrently in this container. The campaign lock is advisory and cannot exclude uncooperative external workloads."
+}
