@@ -364,6 +364,16 @@ fails closed. DSL analysis must resolve the one canonical detail once per
 configuration; diagnostic repetitions are technical replicates, not independent
 tensors or models.
 
+`analyze_generated_dsl.py` enforces this rule for system schema 2 and bench
+schema 4. It revalidates every compact reference and full-file/archive evidence,
+then emits one semantic report per configuration plus canonical tensor, block,
+and ordered program-node records. Old or future schemas, incomplete
+configurations, inconsistent technical repetitions, and pilots without an
+explicit opt-in fail closed. Even with the opt-in, pilot records remain
+ineligible for paper metrics. Tensor-name roles are assigned independently on
+orthogonal axes by the frozen SHA-bound rule file; these labels are reported as
+heuristics, not model-architecture annotations.
+
 ## 8. Per-tensor and generated-DSL records
 
 Console summaries are not raw data. For every tensor, retain a machine-readable
