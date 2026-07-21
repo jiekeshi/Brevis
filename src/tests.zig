@@ -925,6 +925,7 @@ test "archive: multi-tensor multi-block roundtrip" {
     defer parsed.deinit();
 
     try expectEqual(metas.len, parsed.tensors.len);
+    try std.testing.expect(parsed.frames.allow_refs);
     var bi: usize = 0;
     for (parsed.tensors, metas) |pt, meta| {
         try std.testing.expectEqualStrings(meta.name, pt.name);
@@ -941,9 +942,16 @@ test "archive: multi-tensor multi-block roundtrip" {
         }
     }
     try expectEqual(blocks.items.len, bi);
+
+    const legacy = try a.dupe(u8, bytes);
+    defer a.free(legacy);
+    legacy[4] = 5;
+    var legacy_parsed = try archive.parse(a, legacy);
+    defer legacy_parsed.deinit();
+    try std.testing.expect(!legacy_parsed.frames.allow_refs);
 }
 
-test "archive: self-contained frames decode concurrently" {
+test "archive: independent frames decode concurrently" {
     const a = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(0xDED0);
     const rng = prng.random();
@@ -992,6 +1000,33 @@ test "archive: self-contained frames decode concurrently" {
         defer back.deinit(std.heap.smp_allocator);
         try expectStreamsEqual(s, back);
     }
+}
+
+test "archive: back references resolve and reject cycles" {
+    const a = std.testing.allocator;
+    const header = try archive.frameHeader(a, .{ .op = .raw }, 0);
+    defer a.free(header);
+
+    var bytes: std.ArrayList(u8) = .empty;
+    defer bytes.deinit(a);
+    try bytes.appendSlice(a, header);
+    const first_ref: u64 = @intCast(bytes.items.len);
+    try bytes.appendSlice(a, &archive.refFrame(0));
+    try bytes.appendSlice(a, &archive.refFrame(first_ref));
+    const frames: archive.Frames = .{ .bytes = bytes.items, .allow_refs = true };
+
+    var pos: usize = 0;
+    const original = try archive.nextBlock(frames, &pos);
+    const direct = try archive.nextBlock(frames, &pos);
+    const chained = try archive.nextBlock(frames, &pos);
+    try std.testing.expectEqualSlices(u8, original.bytecode, direct.bytecode);
+    try std.testing.expectEqualSlices(u8, original.bytecode, chained.bytecode);
+    try expectEqual(bytes.items.len, pos);
+
+    const self_ref = archive.refFrame(0);
+    pos = 0;
+    try std.testing.expectError(error.InvalidProgram, archive.nextBlock(.{ .bytes = &self_ref, .allow_refs = true }, &pos));
+    try std.testing.expectError(error.InvalidProgram, archive.nextBlock(.{ .bytes = &self_ref, .allow_refs = false }, &pos));
 }
 
 test "archive: original safetensors prefix and data order are byte-exact" {

@@ -106,11 +106,11 @@ fn usage(w: *std.Io.Writer) !noreturn {
         \\brevis — bit-exact lossless tensor compression via program synthesis
         \\
         \\  brevis calibrate   <model.safetensors> <prior.bin> [--blocks N]
-        \\  brevis compress    <model.safetensors> <out.brv> --prior <p.bin> [--jobs N]
+        \\  brevis compress    <model.safetensors> <out.brv> [--prior p.bin] [--jobs N]
         \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
         \\  brevis verify      <in.brv> <orig.safetensors>
-        \\  brevis bench       <model.safetensors> --prior <p.bin> [--jobs N]
-        \\  brevis baseline    <model.safetensors> --prior <p.bin> [--jobs N]
+        \\  brevis bench       <model.safetensors> [--prior p.bin] [--jobs N]
+        \\  brevis baseline    <model.safetensors> [--prior p.bin] [--jobs N]
         \\  brevis demo
         \\  brevis make-fixture <out.safetensors>
         \\
@@ -142,7 +142,8 @@ fn planAll(alloc: Allocator, tensors: []const safetensors.Tensor) ![]Block {
 }
 
 fn loadPrior(alloc: Allocator, path: ?[]const u8) !prior.Prior {
-    return prior.Prior.load(alloc, path orelse return error.PriorRequired);
+    if (path) |prior_path| return prior.Prior.load(alloc, prior_path);
+    return .empty;
 }
 
 const PlanJob = struct {

@@ -1,5 +1,4 @@
-//! Streamable .brv container. Each block is a self-contained program frame;
-//! the footer carries only the exact safetensors prefix and tensor metadata.
+//! Streamable .brv container with optional block back-references.
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -9,7 +8,8 @@ const Allocator = std.mem.Allocator;
 const Dtype = types.Dtype;
 const Node = program.Node;
 
-pub const HEADER: [8]u8 = .{ 'B', 'R', 'V', 3, 5, 0, 0, 0 };
+const LEGACY_HEADER: [8]u8 = .{ 'B', 'R', 'V', 3, 5, 0, 0, 0 };
+pub const HEADER: [8]u8 = .{ 'B', 'R', 'V', 3, 6, 0, 0, 0 };
 const FOOTER_MAGIC: [4]u8 = .{ 'B', 'R', 'V', 'F' };
 
 pub const BlockJob = struct { node: *Node, payload: []const u8 };
@@ -100,6 +100,11 @@ pub const ParsedBlock = struct {
     payload: []const u8,
 };
 
+pub const Frames = struct {
+    bytes: []const u8,
+    allow_refs: bool,
+};
+
 pub const ParsedTensor = struct {
     name: []u8,
     dtype: Dtype,
@@ -110,7 +115,7 @@ pub const ParsedTensor = struct {
 
 pub const Parsed = struct {
     tensors: []ParsedTensor,
-    frames: []const u8,
+    frames: Frames,
     safetensors_prefix: []const u8,
     arena: std.heap.ArenaAllocator,
 
@@ -130,20 +135,26 @@ pub const Loaded = struct {
     }
 };
 
-pub fn nextBlock(frames: []const u8, pos: *usize) !ParsedBlock {
-    var r: Reader = .{ .b = frames, .pos = pos.* };
-    const program_len = std.math.cast(usize, try r.u32v()) orelse return error.Truncated;
-    if (program_len == 0) {
-        var ref = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
-        pos.* = r.pos;
-        if (ref >= pos.*) return error.InvalidProgram; // references point strictly backwards
-        return nextBlock(frames, &ref);
+pub fn nextBlock(frames: Frames, pos: *usize) !ParsedBlock {
+    var at = pos.*;
+    var logical_end: ?usize = null;
+    while (true) {
+        var r: Reader = .{ .b = frames.bytes, .pos = at };
+        const program_len = std.math.cast(usize, try r.u32v()) orelse return error.Truncated;
+        if (program_len == 0) {
+            if (!frames.allow_refs) return error.InvalidProgram;
+            const ref = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
+            if (ref >= at) return error.InvalidProgram;
+            if (logical_end == null) logical_end = r.pos;
+            at = ref;
+            continue;
+        }
+        const bytecode = try r.take(program_len);
+        const payload_len = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
+        const payload = try r.take(payload_len);
+        pos.* = logical_end orelse r.pos;
+        return .{ .bytecode = bytecode, .payload = payload };
     }
-    const bytecode = try r.take(program_len);
-    const payload_len = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
-    const payload = try r.take(payload_len);
-    pos.* = r.pos;
-    return .{ .bytecode = bytecode, .payload = payload };
 }
 
 pub fn decodeBlock(alloc: Allocator, block: ParsedBlock) !types.Stream {
@@ -187,7 +198,12 @@ const Reader = struct {
 
 pub fn parse(alloc: Allocator, bytes: []const u8) !Parsed {
     if (bytes.len < HEADER.len + 12) return error.Truncated;
-    if (!std.mem.eql(u8, bytes[0..HEADER.len], &HEADER)) return error.BadMagic;
+    const allow_refs = if (std.mem.eql(u8, bytes[0..HEADER.len], &HEADER))
+        true
+    else if (std.mem.eql(u8, bytes[0..LEGACY_HEADER.len], &LEGACY_HEADER))
+        false
+    else
+        return error.BadMagic;
 
     const footer = bytes.len - 12;
     if (!std.mem.eql(u8, bytes[footer..][0..4], &FOOTER_MAGIC)) return error.BadFooter;
@@ -220,13 +236,13 @@ pub fn parse(alloc: Allocator, bytes: []const u8) !Parsed {
     }
     if (r.pos != footer) return error.TrailingIndexData;
 
-    const frames = bytes[HEADER.len..index_off];
+    const frames: Frames = .{ .bytes = bytes[HEADER.len..index_off], .allow_refs = allow_refs };
     var pos: usize = 0;
     for (tensors) |*tensor| {
         tensor.frame_start = pos;
         for (0..tensor.n_blocks) |_| _ = try nextBlock(frames, &pos);
     }
-    if (pos != frames.len) return error.TrailingFrameData;
+    if (pos != frames.bytes.len) return error.TrailingFrameData;
 
     return .{ .tensors = tensors, .frames = frames, .safetensors_prefix = safetensors_prefix, .arena = arena };
 }
