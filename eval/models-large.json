@@ -1,0 +1,15 @@
+[
+  {
+    "tag": "qwen3-8b",
+    "repo": "Qwen/Qwen3-8B-Base",
+    "revision": "49e3418fbbbca6ecbdf9608b4d22e5a407081db4",
+    "files": [
+      "model-00001-of-00005.safetensors",
+      "model-00002-of-00005.safetensors",
+      "model-00003-of-00005.safetensors",
+      "model-00004-of-00005.safetensors",
+      "model-00005-of-00005.safetensors"
+    ],
+    "note": "Qwen3 8B BF16, complete five-shard model"
+  }
+]
