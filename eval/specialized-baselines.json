@@ -565,6 +565,195 @@
       "repeat_policy": "GA variability uses the fixed seed protocol; after selection, seed 0's fixed pipeline receives one warmup plus six measured steady-state compression/decompression repetitions, while every completed seed receives at least one full round-trip correctness run"
     },
     {
+      "id": "openzl-0.2.0-serial-fixed",
+      "display_name": "OpenZL serial fixed profile",
+      "baseline_decision": "planned",
+      "protocol_status": "not_run_build_required",
+      "source": {
+        "repository": "https://github.com/facebook/openzl",
+        "version": "0.2.0",
+        "git_commit": "3dceb64867840201fb8f57a29d179995f700c9b8",
+        "release_archive": {
+          "url": "https://github.com/facebook/openzl/archive/refs/tags/v0.2.0.tar.gz",
+          "sha256_observed": "2ad14ed9af63d4a70cb05df5d5629871d052371ad017cf5559dc76c41ae3865f",
+          "identity_note": "the Git commit is canonical; the observed GitHub-generated archive hash is an integrity record"
+        },
+        "submodules": {
+          "googletest": {
+            "git_commit": "56efe3983185e3f37e43415d1afa97e3860f187f",
+            "archive_sha256_observed": "20f265f7346b6a542a49ea6fa0866f82e00841f2a7c2bc41d51014e662041cf9"
+          },
+          "lz4": {
+            "git_commit": "ebb370ca83af193212df4dcbadcc5d87bc0de2f0",
+            "archive_sha256_observed": "eb1a93e934d4fd29df6e2061ba0bf447568561764d758f4a5662c0e29370ffa9"
+          },
+          "xgboost": {
+            "git_commit": "ccb511768e13d1670c10be07dea89d0edca138f3",
+            "archive_sha256_observed": "8c1d333cc4a644cebd93e72f6371329a81a713b74cfd235fb4ebaad9ad28d659"
+          },
+          "zstd": {
+            "git_commit": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+            "archive_sha256_observed": "4b0bd1f0cfb25e61b9103c35f27395530ff5b4c0d2513a00fd745849e85ea52c"
+          }
+        }
+      },
+      "references": [
+        {
+          "id": "arxiv:2510.03203v2",
+          "url": "https://arxiv.org/abs/2510.03203",
+          "pdf_sha256": "af2366fd8291620dcbd4677bca72614d90ec73342d78e111ec73599686241ab5"
+        },
+        {
+          "id": "arxiv:2605.09928v1",
+          "url": "https://arxiv.org/abs/2605.09928",
+          "pdf_sha256": "3231014a0880865efc04035ef8f6826c879c911a2ba5ab4f9639032f73e3f2d0",
+          "note": "separate 2026 extended paper, not a revision of arXiv:2510.03203"
+        }
+      ],
+      "domain_match": {
+        "eligible_model_tags": "all entries in the bound model manifest",
+        "classification": "whole_file_dtype_agnostic_byte_stream",
+        "scope_note": "v0.2.0 has no safetensors profile; the serial profile processes the unchanged complete file and is not tensor-aware"
+      },
+      "profile": {
+        "id": "serial-fixed-16mib",
+        "chunk_bytes": 16777216,
+        "compress_argv": [
+          "zli", "compress", "--profile", "serial", "--chunk-size", "16MiB",
+          "--strict", "--store-on-expansion", "--force", "{input}",
+          "--output", "{archive}"
+        ],
+        "decompress_argv": [
+          "zli", "decompress", "--force", "{archive}", "--output", "{restored}"
+        ],
+        "thread_policy": "run the primary process under one-CPU affinity; v0.2.0 exposes no compression/decompression thread-count option for this profile",
+        "store_on_expansion": true
+      },
+      "build_gate": {
+        "status": "not_run",
+        "requirements": [
+          "checkout the exact OpenZL and submodule commits because the release tarball omits submodule contents",
+          "record compiler, CMake configuration, complete build argv, and zli executable SHA-256",
+          "run a deterministic byte fixture and a complete manifest-file fresh-process round trip before formal timing"
+        ]
+      },
+      "strict_adapter_contract": {
+        "implementation_status": "direct_whole_file_cli",
+        "charged_output": "the complete .zl archive, including every STORE fallback chunk and resolved graph",
+        "fresh_decode_requires": ["complete .zl archive", "pinned input-independent zli executable"],
+        "correctness": "exact restored length and SHA-256"
+      },
+      "repeat_policy": "use the global tier-specific warmup and measured-repetition schedule; codec scaling is not claimed because the serial profile exposes no codec worker option"
+    },
+    {
+      "id": "openzl-0.2.0-serial-ace-input-local",
+      "display_name": "OpenZL serial ACE input-local training",
+      "baseline_decision": "conditional_planned",
+      "protocol_status": "not_run_sample_manifest_required",
+      "source": {
+        "repository": "https://github.com/facebook/openzl",
+        "version": "0.2.0",
+        "git_commit": "3dceb64867840201fb8f57a29d179995f700c9b8",
+        "identity_ref": "openzl-0.2.0-serial-fixed.source including all fixed submodule commits"
+      },
+      "domain_match": {
+        "eligible_model_tags": "all entries in the bound model manifest",
+        "classification": "whole_file_dtype_agnostic_input_local_transductive_search",
+        "interpretation": "same-file deterministic windows align with Brevis input-local search but do not measure OpenZL's intended held-out reusable-compressor regime"
+      },
+      "sample_manifest": {
+        "implementation_status": "not_implemented",
+        "block_bytes": 4194304,
+        "windows": 16,
+        "start_formula": "floor(j * (N - B) / 15) for j=0..15 and B=4194304; if N is smaller than the total requested sample, use one complete-file sample",
+        "storage": "write each window as an independent file; do not concatenate and create artificial cross-window adjacency",
+        "must_record": [
+          "ordered offset and length for every window",
+          "SHA-256 for every window",
+          "ordered aggregate SHA-256",
+          "sample extraction wall time and peak RSS"
+        ]
+      },
+      "training": {
+        "trainer": "greedy",
+        "threads": 1,
+        "chunk_bytes": 16777216,
+        "use_all_samples": true,
+        "max_time_seconds_per_training_step": 60,
+        "budget_note": "60 seconds is this preregistration's per-training-step budget, not an upstream default or an end-to-end timeout",
+        "train_argv": [
+          "zli", "train", "--profile", "serial", "--chunk-size", "16MiB",
+          "--trainer", "greedy", "--threads", "1", "--use-all-samples",
+          "--max-time-secs", "60", "--force", "{sample_dir}",
+          "--output", "{trained_compressor}"
+        ],
+        "compress_argv": [
+          "zli", "compress", "--compressor", "{trained_compressor}",
+          "--strict", "--store-on-expansion", "--force", "{input}",
+          "--output", "{archive}"
+        ],
+        "decompress_argv": [
+          "zli", "decompress", "--force", "{archive}", "--output", "{restored}"
+        ]
+      },
+      "stochastic_protocol": {
+        "upstream_seed_control": "unavailable in the v0.2.0 CLI",
+        "independent_training_runs": 3,
+        "selection_rule": "retain and report all three; summarize archive size by the median and never choose the best",
+        "steady_state_artifact": "the median-size trained artifact receives the tier-specific warmup and repeated steady-state encoding/decoding schedule"
+      },
+      "cost_accounting": {
+        "end_to_end_compression": "sample extraction plus full train-command wall time plus one compression",
+        "training_state": "report .zlc size and SHA-256 separately as input-specific encoder state",
+        "charged_archive": "charge the complete .zl; the .zlc is not added to decoder-required bytes because each chunk embeds its resolved graph",
+        "reusable_state_secondary_metric": "a separately labeled deployment analysis may amortize .zlc bytes only over a declared disjoint test-file count"
+      },
+      "held_out_extension_gate": "a claim about reusable OpenZL compressors requires a separately preregistered, non-overlapping same-domain train/test corpus; current same-file windows do not support that claim",
+      "repeat_policy": "three independent searches, then the global tier-specific steady-state schedule for the median-size artifact; large/ultra resource skips retain every completed search"
+    },
+    {
+      "id": "fpcrush-1.0-audit-only",
+      "display_name": "FPcrush",
+      "baseline_decision": "excluded_not_publicly_reproducible",
+      "protocol_status": "not_a_baseline",
+      "source": {
+        "official_page": "https://userweb.cs.txstate.edu/~burtscher/research/FPcrush/",
+        "version": "1.0",
+        "git_commit": null,
+        "public_source_artifact": null,
+        "paper_doi": "10.1109/SC.2016.22",
+        "paper_pdf_sha256": "fd08bc7c77a25d1e56677bfc857aa20cdb6d0871b8365a7a42e972dc77ac2016"
+      },
+      "published_protocol": {
+        "stages": 5,
+        "ga_generations": 16,
+        "population": 20,
+        "representative_segment_fraction": 0.01,
+        "segment_sliding_step_fraction": 0.125,
+        "segment_selection": "byte entropy closest to the complete file",
+        "hash_table_words": 65536,
+        "chunk_words": 131072,
+        "evaluation_cpu_cores": 20,
+        "random_runs": 3,
+        "published_random_seeds": null,
+        "compression_time_scope": "segment selection plus genetic search plus complete-file compression"
+      },
+      "exclusion_reasons": [
+        "the official page exposes only site-local TACC executable paths",
+        "no public source or binary artifact, commit, or license can be integrity-pinned",
+        "the three published random-run seeds are unavailable",
+        "a new reimplementation would not be the original FPcrush baseline"
+      ],
+      "reconsideration_gate": [
+        "obtain an author-provided source or binary artifact and license",
+        "record its immutable SHA-256 and complete build/runtime environment",
+        "verify thread and random-seed controls",
+        "pass a fresh-process complete-file SHA-256 round trip"
+      ],
+      "permitted_use": ["related work", "protocol-design evidence"],
+      "result_row_policy": "do not emit measured baseline rows unless every reconsideration gate passes"
+    },
+    {
       "id": "weight-compression-audit-only",
       "display_name": "brianbell-x/weight-compression",
       "baseline_decision": "excluded_not_executable_baseline",

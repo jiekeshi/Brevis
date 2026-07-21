@@ -36,6 +36,9 @@ until a strict adapter restores the original bytes.
 | SPDP | 1.1, source SHA-256 `c0b6ca...63116` | Every manifest file | BERT and ViT are predominantly in-domain F32; every other row is labeled `out_of_domain_but_byte_exact` | Planned; not run |
 | fpzip | 1.3.0, commit `4a539c06d98b1c029b08324a086d4b75689a2b72` | `small-bert-f32`, `small-vit-f32` | F32 dtype matches, but a whole checkpoint is an unstructured 1D stream and includes a container header | Planned; not run |
 | AdaptiveFC/LC | LC 1.2, commit `0553cd874ceabd7189653dd5d28958c68256bf3b` | `small-bert-f32`, `small-vit-f32` | Paper-domain F32 protocol, with the container header included | Resource-gated; not run |
+| OpenZL fixed | 0.2.0, commit `3dceb64867840201fb8f57a29d179995f700c9b8` | Every manifest file | Complete dtype-agnostic byte stream; no safetensors profile is claimed | Build required; not run |
+| OpenZL ACE | same pinned 0.2.0 source | Every manifest file through a frozen sample manifest | Same-file windows are an input-local transductive comparison, not held-out reusable training | Sample adapter required; not run |
+| FPcrush | 1.0 official page and paper; no public source artifact | Audit only | Historical per-file floating-point pipeline synthesis | Explicitly not an executable baseline |
 | `weight-compression` | commit `b9510aaac657b04e11d2f0d0d51a9b94af159590` | Audit only | BF16 research artifact | Explicitly not an experimental baseline |
 
 The abbreviated hashes in the table are for readability. The JSON file stores
@@ -178,6 +181,65 @@ pipeline description.
 Sources: [LC repository](https://github.com/burtscher/LC-framework),
 [AdaptiveFC paper](https://userweb.cs.txstate.edu/~burtscher/papers/essa24.pdf).
 
+### OpenZL fixed and input-local training
+
+OpenZL v0.2.0 is fixed to commit
+`3dceb64867840201fb8f57a29d179995f700c9b8`. The release archive does not
+contain its submodules, so the machine-readable protocol also fixes the
+googletest, LZ4, XGBoost, and Zstandard commits and observed archive hashes. The
+primary fixed profile passes each unchanged safetensors file to the `serial`
+profile with 16 MiB chunks, `--strict`, and explicit
+`--store-on-expansion`. It is a compositional whole-byte-stream baseline, not a
+tensor-aware one. OpenZL v0.2.0 has no safetensors profile; its `pytorch`
+profile targets a different serialization and is excluded.
+
+The trained variant is separate and labeled `input_local_transductive`. It
+extracts 16 independent contiguous 4 MiB windows with starts
+`floor(j * (N-B) / 15)` for `j=0,...,15`. Each window remains a separate file,
+and every offset, length, SHA-256, and the ordered aggregate digest are retained.
+Training uses the serial profile, 16 MiB chunks, greedy training, one thread,
+`--use-all-samples`, and a preregistered 60-second limit per training step. That
+limit is not an upstream default and is not an end-to-end timeout.
+
+The v0.2.0 CLI exposes no seed although training is documented as
+nondeterministic. We therefore retain three independent trainings and summarize
+archive size by the median without selecting the best. The median-size artifact
+receives the normal steady-state timing schedule. Sample extraction, complete
+training time, training RSS, `.zlc` size and hash, and one compression are
+reported separately and end to end. The `.zlc` is input-specific encoder state,
+but it is not added to decoder-required archive bytes because each `.zl` chunk
+embeds its resolved graph. The complete `.zl`, including STORE fallbacks, is
+charged and must restore the original file in a fresh process.
+
+This same-file protocol aligns with Brevis's input-local search but does not
+measure OpenZL's intended reusable-compressor setting. Any such claim requires a
+separately frozen, disjoint same-domain train/test corpus and an explicit state
+amortization rule.
+
+Sources: [v0.2.0 release](https://github.com/facebook/openzl/releases/tag/v0.2.0),
+[CLI guide](https://openzl.org/getting-started/cli/), and
+[training guide](https://openzl.org/getting-started/examples/cli/training-usage/).
+
+### Why FPcrush is audit-only
+
+FPcrush is the direct historical precedent for per-file synthesis, but its
+official page exposes only site-local TACC executable paths. It provides no
+public source or binary artifact, immutable commit, or license that can be
+integrity-pinned. The paper also does not publish its three random seeds.
+Reimplementing the algorithm would create a new method rather than reproduce
+FPcrush, so no measured baseline row is emitted.
+
+The protocol nevertheless records the published configuration: five stages,
+16 GA generations, population 20, a 1% representative segment selected by byte
+entropy, a segment step of one eighth of its size, a 65,536-word hash table, a
+131,072-word chunk, and 20 evaluation cores. Published compression time includes
+segment selection, search, and complete-file compression. FPcrush can be
+reconsidered only if an author-provided, licensed artifact becomes available and
+passes complete-file fresh-process verification.
+
+Sources: [official page](https://userweb.cs.txstate.edu/~burtscher/research/FPcrush/)
+and [paper](https://userweb.cs.txstate.edu/~burtscher/papers/sc16.pdf).
+
 ## Why `weight-compression` is not a baseline
 
 The pinned repository is useful related-work and design evidence, but it does
@@ -203,6 +265,11 @@ AdaptiveFC is the exception: stochastic variability is measured with its fixed
 seed protocol. The seed-0 selected pipeline additionally receives the normal
 small-file steady-state timing schedule; every completed seed gets at least one
 full correctness round trip.
+
+OpenZL ACE is also stochastic but has no CLI seed. Its three independent
+training results are all retained, the median is a summary rather than a
+best-of-three selection, and only the median-size trained artifact receives the
+normal repeated steady-state schedule.
 
 Every preregistered method/profile/file combination receives a row. Valid
 runtime statuses are `success`, the phase-specific `failed_*` values, `timeout`,
