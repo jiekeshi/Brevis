@@ -27,6 +27,9 @@ zig build -Doptimize=ReleaseFast
 # Set the thread count or number of calibration tensors
 ./zig-out/bin/brevis compress model.safetensors model.brv --jobs 12
 ./zig-out/bin/brevis calibrate model.safetensors prior.bin --tensors 200
+
+# Emit a machine-readable per-tensor and per-block DSL/search report
+./zig-out/bin/brevis bench model.safetensors --prior prior.bin --format json > bench.json
 ```
 
 ```bash
@@ -102,6 +105,8 @@ Output order and per-tensor lengths are checked before and after writing.
 ## Evaluation
 
 [`eval/run_eval.py`](eval/run_eval.py) evaluates fixed, uniform, and PHOG-guided plans together with gzip, Zstandard, xz, and OpenZL. New result files record the Git commit and dirty state, binary and evaluation-script hashes, each input hash and their ordered aggregate, the configured model manifest, per-shard prior hashes, thread counts, search settings, and the command mode behind every result field.
+
+`brevis bench --format json` separates tensor planning from block encoding time and records every tensor's dtype, shape, selected program, search expansions, encoded bytes, and raw-fallback count. It also records the realized program and encoded bytes for every block. These byte counts exclude archive frame headers and are intended for generated-DSL analysis; use complete `.brv` file sizes for storage comparisons.
 
 The evaluator rebuilds the ReleaseFast binary so recorded source settings match the executable. Existing result files predate this schema and must be rerun before comparison with the current planner.
 

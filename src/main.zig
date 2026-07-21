@@ -17,6 +17,7 @@ const Stream = types.Stream;
 
 const N_DTYPE: usize = @typeInfo(Dtype).@"enum".fields.len;
 const PlanMode = enum { search, fixed };
+const ReportFormat = enum { text, json };
 
 pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
@@ -47,6 +48,7 @@ pub fn main(init: std.process.Init) !void {
     var opt_jobs: ?usize = null;
     var opt_tensors: usize = calibrate.DEFAULT_TENSORS;
     var opt_plan: PlanMode = .search;
+    var opt_format: ReportFormat = .text;
 
     const rest = argv.items[2..];
     var i: usize = 0;
@@ -67,6 +69,8 @@ pub fn main(init: std.process.Init) !void {
             opt_tensors = try std.fmt.parseInt(usize, v, 10);
         } else if (std.mem.eql(u8, a, "--plan")) {
             if (std.mem.eql(u8, v, "search")) opt_plan = .search else if (std.mem.eql(u8, v, "fixed")) opt_plan = .fixed else try usage(err);
+        } else if (std.mem.eql(u8, a, "--format")) {
+            if (std.mem.eql(u8, v, "text")) opt_format = .text else if (std.mem.eql(u8, v, "json")) opt_format = .json else try usage(err);
         } else try usage(err);
     }
     const p = pos.items;
@@ -85,7 +89,7 @@ pub fn main(init: std.process.Init) !void {
         try cmdVerify(alloc, io, out, p[0], p[1]);
     } else if (std.mem.eql(u8, cmd, "bench")) {
         if (p.len != 1) try usage(err);
-        try cmdBench(io, out, p[0], opt_prior, opt_jobs, opt_plan);
+        try cmdBench(io, out, p[0], opt_prior, opt_jobs, opt_plan, opt_format);
     } else if (std.mem.eql(u8, cmd, "config")) {
         if (p.len != 0) try usage(err);
         try cmdConfig(out);
@@ -109,7 +113,7 @@ fn usage(w: *std.Io.Writer) !noreturn {
         \\  brevis compress    <model.safetensors> <out.brv> [--plan search|fixed] [--prior p.bin] [--jobs N]
         \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
         \\  brevis verify      <in.brv> <orig.safetensors>
-        \\  brevis bench       <model.safetensors> [--plan search|fixed] [--prior p.bin] [--jobs N]
+        \\  brevis bench       <model.safetensors> [--plan search|fixed] [--prior p.bin] [--jobs N] [--format text|json]
         \\  brevis config
         \\  brevis demo
         \\  brevis make-fixture <out.safetensors>
@@ -906,6 +910,171 @@ fn report(alloc: Allocator, out: *std.Io.Writer, blocks: []const Block, results:
     try out.print("\noverall: {d} -> {d} bytes ({d:.3}x)\n", .{ total_raw, total_comp, ratio(total_raw, total_comp) });
 }
 
+fn programNodes(node: program.Node) usize {
+    var n: usize = 1;
+    for (node.children) |child| n += programNodes(child);
+    return n;
+}
+
+fn programDepth(node: program.Node) usize {
+    var depth: usize = 1;
+    for (node.children) |child| depth = @max(depth, 1 + programDepth(child));
+    return depth;
+}
+
+fn programTerminals(node: program.Node) usize {
+    if (node.op.isTerminal()) return 1;
+    var n: usize = 0;
+    for (node.children) |child| n += programTerminals(child);
+    return n;
+}
+
+fn modeName(mode: PlanMode, prior_path: ?[]const u8) []const u8 {
+    return if (mode == .fixed) "fixed" else if (prior_path == null) "uniform" else "phog";
+}
+
+fn reportJson(
+    alloc: Allocator,
+    out: *std.Io.Writer,
+    in_path: []const u8,
+    tensors: []const safetensors.Tensor,
+    blocks: []const Block,
+    plans: []const ?search.Plan,
+    results: []const ?search.Result,
+    mode: PlanMode,
+    prior_path: ?[]const u8,
+    n_threads: usize,
+    planning_ms: i64,
+    encoding_ms: i64,
+) !void {
+    var arena: std.heap.ArenaAllocator = .init(alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var buf: std.ArrayList(u8) = .empty;
+
+    var json: std.json.Stringify = .{
+        .writer = out,
+        .options = .{ .whitespace = .indent_2 },
+    };
+    try json.beginObject();
+    try json.objectField("schema");
+    try json.write(1);
+    try json.objectField("input");
+    try json.write(in_path);
+    try json.objectField("mode");
+    try json.write(modeName(mode, prior_path));
+    try json.objectField("threads");
+    try json.write(n_threads);
+    try json.objectField("target_block_bytes");
+    try json.write(types.TARGET_BLOCK_BYTES);
+    try json.objectField("planning_wall_ms");
+    try json.write(planning_ms);
+    try json.objectField("encoding_wall_ms");
+    try json.write(encoding_ms);
+
+    var total_raw: u64 = 0;
+    var total_encoded: u64 = 0;
+    for (blocks, results) |block, maybe| {
+        total_raw += block.byteLen();
+        if (maybe) |result| total_encoded += result.bytes;
+    }
+    try json.objectField("raw_bytes");
+    try json.write(total_raw);
+    try json.objectField("encoded_bytes_without_frame_headers");
+    try json.write(total_encoded);
+
+    try json.objectField("tensors");
+    try json.beginArray();
+    var block_index: usize = 0;
+    for (tensors, 0..) |tensor, tensor_index| {
+        const first_block = block_index;
+        var encoded: u64 = 0;
+        var fallback_blocks: usize = 0;
+        while (block_index < blocks.len and blocks[block_index].tensor_idx == tensor_index) : (block_index += 1) {
+            if (results[block_index]) |result| {
+                encoded += result.bytes;
+                fallback_blocks += @intFromBool(result.node.op == .raw);
+            }
+        }
+
+        try json.beginObject();
+        try json.objectField("index");
+        try json.write(tensor_index);
+        try json.objectField("name");
+        try json.write(tensor.name);
+        try json.objectField("dtype");
+        try json.write(tensor.view.dtype.name());
+        try json.objectField("shape");
+        try json.write(tensor.view.shape);
+        try json.objectField("numel");
+        try json.write(tensor.view.numel());
+        try json.objectField("raw_bytes");
+        try json.write(tensor.view.data.len);
+        try json.objectField("encoded_bytes_without_frame_headers");
+        try json.write(encoded);
+        try json.objectField("block_start");
+        try json.write(first_block);
+        try json.objectField("block_count");
+        try json.write(block_index - first_block);
+        try json.objectField("raw_fallback_blocks");
+        try json.write(fallback_blocks);
+        if (plans[tensor_index]) |plan| {
+            buf.clearRetainingCapacity();
+            try renderProgram(a, &buf, plan.root);
+            try json.objectField("search_expansions");
+            try json.write(plan.expanded);
+            try json.objectField("program");
+            try json.write(buf.items);
+            try json.objectField("program_nodes");
+            try json.write(programNodes(plan.root));
+            try json.objectField("program_depth");
+            try json.write(programDepth(plan.root));
+            try json.objectField("terminal_count");
+            try json.write(programTerminals(plan.root));
+        } else {
+            try json.objectField("search_expansions");
+            try json.write(null);
+            try json.objectField("program");
+            try json.write(null);
+        }
+        try json.endObject();
+    }
+    try json.endArray();
+
+    try json.objectField("blocks");
+    try json.beginArray();
+    for (blocks, results, 0..) |block, maybe, index| {
+        const result = maybe orelse continue;
+        buf.clearRetainingCapacity();
+        try renderProgram(a, &buf, result.node);
+        try json.beginObject();
+        try json.objectField("index");
+        try json.write(index);
+        try json.objectField("tensor_index");
+        try json.write(block.tensor_idx);
+        try json.objectField("element_offset");
+        try json.write(block.elem_offset);
+        try json.objectField("element_count");
+        try json.write(block.elem_count);
+        try json.objectField("raw_bytes");
+        try json.write(block.byteLen());
+        try json.objectField("encoded_bytes_without_frame_headers");
+        try json.write(result.bytes);
+        try json.objectField("program");
+        try json.write(buf.items);
+        try json.objectField("program_nodes");
+        try json.write(programNodes(result.node));
+        try json.objectField("program_depth");
+        try json.write(programDepth(result.node));
+        try json.objectField("terminal_count");
+        try json.write(programTerminals(result.node));
+        try json.endObject();
+    }
+    try json.endArray();
+    try json.endObject();
+    try out.writeByte('\n');
+}
+
 fn cmdBench(
     io: std.Io,
     out: *std.Io.Writer,
@@ -913,6 +1082,7 @@ fn cmdBench(
     prior_path: ?[]const u8,
     jobs: ?usize,
     mode: PlanMode,
+    format: ReportFormat,
 ) !void {
     const alloc = std.heap.smp_allocator;
 
@@ -927,22 +1097,47 @@ fn cmdBench(
     defer alloc.free(blocks);
 
     const n_threads = threadCount(jobs);
-    try out.print("=== brevis bench: {s} ({d} tensors, {d} blocks, {d} threads, {s}) ===\n", .{
-        in_path,
-        loaded.tensors.len,
-        blocks.len,
-        n_threads,
-        if (mode == .fixed) "fixed" else if (prior_path == null) "uniform" else "phog",
-    });
-    try out.flush();
+    if (format == .text) {
+        try out.print("=== brevis bench: {s} ({d} tensors, {d} blocks, {d} threads, {s}) ===\n", .{
+            in_path,
+            loaded.tensors.len,
+            blocks.len,
+            n_threads,
+            modeName(mode, prior_path),
+        });
+        try out.flush();
+    }
 
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    const results = try synthesizeBlocks(alloc, loaded.tensors, blocks, &pr, n_threads, mode);
+    const planning_start = std.Io.Timestamp.now(io, .awake);
+    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads, mode);
+    defer freePlans(alloc, plans);
+    const planning_ms = planning_start.durationTo(.now(io, .awake)).toMilliseconds();
+
+    const encoding_start = std.Io.Timestamp.now(io, .awake);
+    const results = try encodeBlocks(alloc, loaded.tensors, blocks, plans, n_threads, null);
     defer freeResults(alloc, results);
-    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
+    const encoding_ms = encoding_start.durationTo(.now(io, .awake)).toMilliseconds();
 
-    try report(alloc, out, blocks, results);
-    try out.print("synthesis wall time: {d}ms\n", .{ms});
+    switch (format) {
+        .text => {
+            try report(alloc, out, blocks, results);
+            try out.print("planning wall time: {d}ms\nencoding wall time: {d}ms\n", .{ planning_ms, encoding_ms });
+        },
+        .json => try reportJson(
+            alloc,
+            out,
+            in_path,
+            loaded.tensors,
+            blocks,
+            plans,
+            results,
+            mode,
+            prior_path,
+            n_threads,
+            planning_ms,
+            encoding_ms,
+        ),
+    }
 }
 
 // ==================== synthetic data ====================
