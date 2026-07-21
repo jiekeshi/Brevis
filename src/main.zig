@@ -9,7 +9,6 @@ const calibrate = @import("calibrate.zig");
 const search = @import("search.zig");
 const archive = @import("archive.zig");
 const safetensors = @import("safetensors.zig");
-const baseline = @import("baseline.zig");
 
 const Allocator = std.mem.Allocator;
 const Dtype = types.Dtype;
@@ -83,9 +82,6 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "bench")) {
         if (p.len != 1) try usage(err);
         try cmdBench(io, out, p[0], opt_prior, opt_jobs);
-    } else if (std.mem.eql(u8, cmd, "baseline")) {
-        if (p.len != 1) try usage(err);
-        try cmdBaseline(io, out, p[0], opt_prior, opt_jobs);
     } else if (std.mem.eql(u8, cmd, "demo")) {
         try cmdDemo(io, out);
     } else if (std.mem.eql(u8, cmd, "make-fixture")) {
@@ -107,7 +103,6 @@ fn usage(w: *std.Io.Writer) !noreturn {
         \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
         \\  brevis verify      <in.brv> <orig.safetensors>
         \\  brevis bench       <model.safetensors> [--prior p.bin] [--jobs N]
-        \\  brevis baseline    <model.safetensors> [--prior p.bin] [--jobs N]
         \\  brevis demo
         \\  brevis make-fixture <out.safetensors>
         \\
@@ -456,24 +451,6 @@ fn tensorMetas(
     return metas;
 }
 
-fn buildArchive(
-    alloc: Allocator,
-    tensors: []const safetensors.Tensor,
-    blocks: []const Block,
-    results: []?search.Result,
-) ![]u8 {
-    const metas = try tensorMetas(alloc, tensors, blocks);
-    defer alloc.free(metas);
-    var jobs: std.ArrayList(archive.BlockJob) = .empty;
-    defer jobs.deinit(alloc);
-
-    for (results, 0..) |_, i| {
-        const r = &results[i].?;
-        try jobs.append(alloc, .{ .node = &r.node, .payload = r.payload });
-    }
-    return archive.build(alloc, metas, jobs.items, &.{});
-}
-
 fn ratio(orig: u64, comp: u64) f64 {
     if (comp == 0) return 0;
     return @as(f64, @floatFromInt(orig)) / @as(f64, @floatFromInt(comp));
@@ -551,6 +528,8 @@ fn cmdCompress(
     defer alloc.free(metas);
     const frame_off = try alloc.alloc(u64, blocks.len);
     defer alloc.free(frame_off);
+    const frame_size = try alloc.alloc(u64, blocks.len);
+    defer alloc.free(frame_size);
 
     var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
     defer atomic.deinit(io);
@@ -564,6 +543,7 @@ fn cmdCompress(
     defer encode_pool.deinit();
 
     var file_off: u64 = archive.HEADER.len;
+    var program_bytes: u64 = 0;
     var n_dup: usize = 0;
     const batch_size = @max(@as(usize, 1), n_threads) * 16;
     var first: usize = 0;
@@ -578,6 +558,8 @@ fn cmdCompress(
                 const frame = archive.refFrame(frame_off[src]);
                 try writer.interface.writeAll(&frame);
                 file_off += frame.len;
+                frame_size[bi] = frame_size[src];
+                program_bytes += frame_size[bi];
                 n_dup += 1;
                 continue;
             }
@@ -586,7 +568,9 @@ fn cmdCompress(
             defer alloc.free(frame_header);
             try writer.interface.writeAll(frame_header);
             try writer.interface.writeAll(result.payload);
-            file_off += frame_header.len + result.payload.len;
+            frame_size[bi] = frame_header.len + result.payload.len;
+            program_bytes += frame_size[bi];
+            file_off += frame_size[bi];
         }
         first = last;
     }
@@ -597,12 +581,14 @@ fn cmdCompress(
     try writer.interface.writeAll(tail);
     try writer.interface.flush();
     const written = file_off + tail.len;
+    const without_refs = archive.HEADER.len + program_bytes + tail.len;
     try atomic.replace(io);
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
 
     const raw = rawBytes(loaded.tensors);
     try out.print("synthesized and wrote in {d}ms ({d} of {d} blocks deduplicated)\n", .{ ms, n_dup, blocks.len });
     try out.print("wrote {s}: {d} -> {d} bytes ({d:.3}x)\n", .{ out_path, raw, written, ratio(raw, written) });
+    try out.print("program frames before references: {d} bytes; dedup saved {d}\n", .{ without_refs, without_refs - written });
 }
 
 // ==================== decompress / verify ====================
@@ -695,9 +681,16 @@ const WritePipe = struct {
 
     fn submit(self: *WritePipe, batch: []?Stream) !void {
         self.join();
-        if (self.err) |e| return e;
+        if (self.err) |e| {
+            freeStreams(self.alloc, batch);
+            return e;
+        }
         self.batch = batch;
-        self.thread = try std.Thread.spawn(.{}, drain, .{self});
+        self.thread = std.Thread.spawn(.{}, drain, .{self}) catch |e| {
+            freeStreams(self.alloc, self.batch);
+            self.batch = &.{};
+            return e;
+        };
     }
 
     fn finish(self: *WritePipe) !void {
@@ -745,8 +738,6 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
         try writer.interface.writeAll(header);
     }
 
-    // Blocks are stored tensor by tensor, so one pass over all frames emits the
-    // payload in order; per-tensor lengths are checked against the total.
     var expected: u64 = 0;
     var remaining: usize = 0;
     for (loaded.parsed.tensors, metas) |tensor, meta| {
@@ -759,12 +750,17 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
 
     const batch_size = n_threads * 16;
     var frame_pos: usize = 0;
+    var lengths: archive.TensorLengths = .{};
     while (remaining > 0) {
         const n = @min(batch_size, remaining);
         const blocks = try alloc.alloc(archive.ParsedBlock, n);
         defer alloc.free(blocks);
         for (blocks) |*block| block.* = try archive.nextBlock(loaded.parsed.frames, &frame_pos);
         const streams = try decodeBlocks(alloc, blocks, n_threads, &decode_pool);
+        lengths.accept(loaded.parsed.tensors, streams) catch |err| {
+            freeStreams(alloc, streams);
+            return err;
+        };
         if (n_threads == 1) {
             defer freeStreams(alloc, streams);
             try pipe.write(streams);
@@ -774,6 +770,7 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
         remaining -= n;
     }
     try pipe.finish();
+    try lengths.finish(loaded.parsed.tensors);
     if (pipe.written != expected) return error.ShapeDataMismatch;
     try writer.interface.flush();
     try atomic.replace(io);
@@ -952,56 +949,6 @@ fn cmdBench(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: ?[
 
     try report(alloc, out, blocks, results);
     try out.print("synthesis wall time: {d}ms\n", .{ms});
-}
-
-// ==================== baseline ====================
-
-fn cmdBaseline(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: ?[]const u8, jobs: ?usize) !void {
-    const alloc = std.heap.smp_allocator;
-
-    var loaded = try safetensors.loadFromPath(alloc, io, in_path);
-    defer loaded.deinitMmap(alloc, io);
-    try checkTensors(loaded.tensors);
-
-    const raw_total = rawBytes(loaded.tensors);
-    const raw_concat = try alloc.alloc(u8, @intCast(raw_total));
-    defer alloc.free(raw_concat);
-    var off: usize = 0;
-    for (loaded.tensors) |t| {
-        @memcpy(raw_concat[off..][0..t.view.data.len], t.view.data);
-        off += t.view.data.len;
-    }
-
-    try out.print("=== brevis baseline: {s} ({d} tensors, {d} bytes raw) ===\n\n", .{
-        in_path, loaded.tensors.len, raw_total,
-    });
-    try out.flush();
-
-    var pr = try loadPrior(alloc, prior_path);
-    defer pr.deinit(alloc);
-    const blocks = try planAll(alloc, loaded.tensors);
-    defer alloc.free(blocks);
-    const results = try synthesizeBlocks(alloc, loaded.tensors, blocks, &pr, threadCount(jobs));
-    defer freeResults(alloc, results);
-    const brv = try buildArchive(alloc, loaded.tensors, blocks, results);
-    defer alloc.free(brv);
-
-    const gz = try baseline.gzipSize(alloc, raw_concat);
-    const z3 = try baseline.zstdSize(alloc, io, raw_concat, 3);
-    const z19 = try baseline.zstdSize(alloc, io, raw_concat, 19);
-
-    try out.writeAll("                       size (bytes)      ratio\n");
-    try out.print("raw                    {d:>13}     1.000x\n", .{raw_total});
-    try out.print("gzip -9                {d:>13}     {d:.3}x\n", .{ gz, ratio(raw_total, gz) });
-    if (z3) |z|
-        try out.print("zstd -3                {d:>13}     {d:.3}x\n", .{ z, ratio(raw_total, z) })
-    else
-        try out.writeAll("zstd -3                      (skip)     zstd not installed\n");
-    if (z19) |z|
-        try out.print("zstd -19               {d:>13}     {d:.3}x\n", .{ z, ratio(raw_total, z) })
-    else
-        try out.writeAll("zstd -19                     (skip)     zstd not installed\n");
-    try out.print("brevis (.brv)          {d:>13}     {d:.3}x\n", .{ brv.len, ratio(raw_total, brv.len) });
 }
 
 // ==================== synthetic data ====================

@@ -65,6 +65,7 @@ fn floatStream(a: Allocator, rng: std.Random, count: usize, dt: Dtype) !Stream {
             .f16 => @as(u16, @bitCast(@as(f16, @floatCast(x)))),
             .bf16 => @as(u32, @bitCast(x)) >> 16,
             .f32 => @bitCast(x),
+            .f8_e4m3, .f8_e5m2 => rng.int(u8),
             else => unreachable,
         };
         s.setU32(i, v);
@@ -133,6 +134,8 @@ test "types: stream access and block planning" {
 
     try expectEqual(Dtype.i16, Dtype.fromName("I16").?);
     try expectEqual(Dtype.i32, Dtype.fromName("I32").?);
+    try expectEqual(Dtype.f8_e4m3, Dtype.fromName("F8_E4M3").?);
+    try expectEqual(Dtype.f8_e5m2, Dtype.fromName("F8_E5M2").?);
     try std.testing.expectEqualStrings("I16", Dtype.i16.name());
     try std.testing.expectEqualStrings("I32", Dtype.i32.name());
 }
@@ -311,12 +314,12 @@ test "ops: every 1->n operator inverts" {
     }
 }
 
-test "ops: split_float inverts for f16, bf16 and f32" {
+test "ops: split_float inverts for every float dtype" {
     const a = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(0x1703);
     const rng = prng.random();
 
-    for ([_]Dtype{ .f16, .bf16, .f32 }) |dt| {
+    for ([_]Dtype{ .f16, .bf16, .f32, .f8_e4m3, .f8_e5m2 }) |dt| {
         const f = dt.floatFields().?;
         for (0..200) |t| {
             const n = if (t < 3) t else rng.uintLessThan(usize, 400) + 1;
@@ -431,7 +434,7 @@ fn randTree(a: Allocator, rng: std.Random, in: Stream, dt: Dtype, depth: u8, bud
     return .{ .op = prod.op, .params = prod.params, .children = kids };
 }
 
-const TREE_DTYPES = [_]Dtype{ .f16, .bf16, .f32, .u8, .u16, .u32, .i8, .i16, .i32 };
+const TREE_DTYPES = [_]Dtype{ .f16, .bf16, .f32, .f8_e4m3, .f8_e5m2, .u8, .u16, .u32, .i8, .i16, .i32 };
 
 test "program: random trees execute and decode losslessly" {
     const a = std.testing.allocator;
@@ -1184,6 +1187,39 @@ test "archive: back references resolve and reject cycles" {
     var parsed = try archive.parse(a, legacy.items);
     defer parsed.deinit();
     try expectEqual(@as(usize, 1), parsed.tensors.len);
+}
+
+test "archive: decoded lengths are checked per tensor" {
+    const a = std.testing.allocator;
+    const empty_shape = [_]u64{0};
+    const shape = [_]u64{4};
+    const tensors = [_]archive.ParsedTensor{
+        .{ .name = "empty", .dtype = .u8, .shape = &empty_shape, .frame_start = 0, .n_blocks = 0 },
+        .{ .name = "a", .dtype = .u8, .shape = &shape, .frame_start = 0, .n_blocks = 2 },
+        .{ .name = "b", .dtype = .u8, .shape = &shape, .frame_start = 0, .n_blocks = 1 },
+    };
+
+    var first = try Stream.init(a, 2, 8);
+    defer first.deinit(a);
+    var second = try Stream.init(a, 2, 8);
+    defer second.deinit(a);
+    var third = try Stream.init(a, 4, 8);
+    defer third.deinit(a);
+    var lengths: archive.TensorLengths = .{};
+    try lengths.accept(&tensors, &.{ first, second });
+    try lengths.accept(&tensors, &.{third});
+    try lengths.finish(&tensors);
+
+    var short = try Stream.init(a, 3, 8);
+    defer short.deinit(a);
+    var long = try Stream.init(a, 5, 8);
+    defer long.deinit(a);
+    const same_total = [_]archive.ParsedTensor{
+        .{ .name = "a", .dtype = .u8, .shape = &shape, .frame_start = 0, .n_blocks = 1 },
+        .{ .name = "b", .dtype = .u8, .shape = &shape, .frame_start = 0, .n_blocks = 1 },
+    };
+    lengths = .{};
+    try std.testing.expectError(error.ShapeDataMismatch, lengths.accept(&same_total, &.{ short, long }));
 }
 
 test "archive: original safetensors prefix and data order are byte-exact" {

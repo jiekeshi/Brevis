@@ -101,11 +101,51 @@ pub const ParsedBlock = struct {
 };
 
 pub const ParsedTensor = struct {
-    name: []u8,
+    name: []const u8,
     dtype: Dtype,
-    shape: []u64,
+    shape: []const u64,
     frame_start: usize,
     n_blocks: u32,
+
+    fn byteLen(self: ParsedTensor) usize {
+        var count: usize = 1;
+        for (self.shape) |dim| count *= @intCast(dim);
+        return count * self.dtype.elemSize();
+    }
+};
+
+pub const TensorLengths = struct {
+    index: usize = 0,
+    blocks: u32 = 0,
+    bytes: usize = 0,
+
+    fn skipEmpty(self: *TensorLengths, tensors: []const ParsedTensor) !void {
+        while (self.index < tensors.len and tensors[self.index].n_blocks == 0) : (self.index += 1) {
+            if (tensors[self.index].byteLen() != 0) return error.ShapeDataMismatch;
+        }
+    }
+
+    pub fn accept(self: *TensorLengths, tensors: []const ParsedTensor, streams: []const ?types.Stream) !void {
+        try self.skipEmpty(tensors);
+        for (streams) |maybe| {
+            if (self.index >= tensors.len) return error.ShapeDataMismatch;
+            const stream = maybe.?;
+            self.blocks += 1;
+            self.bytes += stream.count * stream.elemBytes();
+            if (self.blocks == tensors[self.index].n_blocks) {
+                if (self.bytes != tensors[self.index].byteLen()) return error.ShapeDataMismatch;
+                self.index += 1;
+                self.blocks = 0;
+                self.bytes = 0;
+                try self.skipEmpty(tensors);
+            }
+        }
+    }
+
+    pub fn finish(self: *TensorLengths, tensors: []const ParsedTensor) !void {
+        try self.skipEmpty(tensors);
+        if (self.index != tensors.len or self.blocks != 0) return error.ShapeDataMismatch;
+    }
 };
 
 pub const Parsed = struct {
@@ -220,8 +260,9 @@ pub fn parse(alloc: Allocator, bytes: []const u8) !Parsed {
         tensor.name = try a.dupe(u8, try r.take(name_len));
         tensor.dtype = std.enums.fromInt(Dtype, try r.u8v()) orelse return error.InvalidDtype;
         const ndim = try r.u8v();
-        tensor.shape = try a.alloc(u64, ndim);
-        for (tensor.shape) |*dim| dim.* = try r.u64v();
+        const shape = try a.alloc(u64, ndim);
+        for (shape) |*dim| dim.* = try r.u64v();
+        tensor.shape = shape;
         tensor.n_blocks = try r.u32v();
         tensor.frame_start = 0;
     }
