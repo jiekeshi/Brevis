@@ -57,11 +57,26 @@
       "sha256": "9efc125beb6666cd1f0c28eb83f1bd3fb94fb49433b8f0ac822e0572e4375d24",
       "uncompressed_bytes": 44048487,
       "uncompressed_sha256": "0d6565eaf784167a9fc7d7bc631c2a654909fa0d83c07513233be4ff7dda5e3c"
+    },
+    "dsl/aggregate.json.zst": {
+      "bytes": 74622,
+      "sha256": "2faf903b7643bd4edc334849e3339c4adf2a90a7000ee2ae6fecd9aa3f1821cd",
+      "uncompressed_bytes": 3889794,
+      "uncompressed_sha256": "f4cc9c607113804154014f329d254f524c98213c7b21168d559ebcca4e1e52bb"
     }
   },
   "dsl_generator": {
     "sha256": "0303f1b15ee040e13f02e2120b29a4c493713eb516c6940c0dd6544afc8e1b31",
     "accepted_semantic_reports": 4,
+    "tensor_records": 824,
+    "block_records": 7540,
+    "node_records": 23992,
+    "excluded_records": 0
+  },
+  "dsl_aggregator": {
+    "sha256": "39cecc14946cdcd158667af073bfa06823431d758e361e2888e660b2e3277948",
+    "aggregate_input_fingerprint_sha256": "a319ce61f26835c09ac17c6a5808be4288b91b9dec9fd12bd12eefc72f9a821c",
+    "formal_report_configurations": 4,
     "tensor_records": 824,
     "block_records": 7540,
     "node_records": 23992,

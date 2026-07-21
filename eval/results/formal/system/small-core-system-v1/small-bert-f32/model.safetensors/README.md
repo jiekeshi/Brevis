@@ -13,7 +13,10 @@ measured timing trial and links every aggregate to an exact JSON pointer in the
 raw result. The DSL directory contains the canonical analysis manifest and
 report records. Its larger tensor, block, and node JSONL files are stored as
 Zstandard frames. `dsl/manifest.json` gives their uncompressed byte counts and
-SHA-256 digests.
+SHA-256 digests. `dsl/aggregate.json.zst` is a derived, fail-closed summary of
+program length and depth, serialized bytecode, structures, operator and
+terminal combinations, tensor strata, and search-counter relationships. It
+does not treat the four configurations as independent models.
 
 This run used the direct formal harness before the campaign executor acquired
 its machine-level advisory lock. No other model benchmark was run concurrently,
@@ -32,6 +35,10 @@ PYTHONPATH=eval python3 eval/summarize_system_benchmarks.py \
 python3 eval/analyze_generated_dsl.py \
   eval/results/formal/system/small-core-system-v1/small-bert-f32/model.safetensors/result.json \
   --output-dir /tmp/brevis-bert-dsl-check
+
+python3 eval/summarize_generated_dsl.py \
+  eval/results/formal/system/small-core-system-v1/small-bert-f32/model.safetensors \
+  --output /tmp/brevis-bert-dsl-aggregate.json
 ```
 
 `artifact-manifest.json` records exact stored and uncompressed hashes, the
