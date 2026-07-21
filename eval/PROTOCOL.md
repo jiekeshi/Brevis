@@ -349,8 +349,20 @@ diagnostics cannot precondition timed archive tasks. The initial checkpoint
 contains the complete calibration/archive/diagnostic schedule and records task
 state transitions. Work and checkpoint filesystems receive separate capacity
 checks, including the old-plus-new peak of atomic checkpoint replacement.
-Full per-repetition bench reports are suitable for the first small-model stage;
-canonical report compaction is required before large-tier runs.
+
+Schema-4 diagnostic detail is deduplicated within each Brevis configuration.
+The first complete successful warmup is canonical; if none exists, the first
+complete successful measured repetition is canonical. Its `tensors` and
+`blocks` arrays remain inline. Matching repetitions remove only those two arrays
+and retain the complete remaining top-level report, internal planning/encoding
+times, a semantic SHA-256, and a reference that resolves inside the same
+checkpoint. The semantic fingerprint excludes `/planning_wall_ms`,
+`/encoding_wall_ms`, `/input`, and `/prior/path`, while preserving every other
+known or future field. Reports that fail validation are retained without being
+eligible as canonical. A semantic mismatch retains its complete arrays and
+fails closed. DSL analysis must resolve the one canonical detail once per
+configuration; diagnostic repetitions are technical replicates, not independent
+tensors or models.
 
 ## 8. Per-tensor and generated-DSL records
 

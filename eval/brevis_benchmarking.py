@@ -40,7 +40,7 @@ import benchmarking as common
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_BINARY = ROOT / "zig-out" / "bin" / "brevis"
 SCHEMA_ID = "brevis.system-benchmark"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_WARMUPS = 1
 DEFAULT_REPETITIONS = 6
 DEFAULT_SCHEDULE_SEED = 2701
@@ -50,10 +50,19 @@ DEFAULT_CALIBRATION_SEED = 0x5EED_B10C
 DEFAULT_DISK_RESERVE_FRACTION = 0.30
 DEFAULT_TEMP_MULTIPLIER = 3.0
 DEFAULT_TEMP_FIXED_BYTES = 256 << 20
-DEFAULT_REPORT_FRACTION_PER_ITERATION = 0.25
+DEFAULT_CANONICAL_REPORT_FRACTION_PER_CONFIGURATION = 0.25
+DEFAULT_COMPACT_REPORT_BYTES_PER_ITERATION = 128 << 10
 DEFAULT_CHECKPOINT_FIXED_BYTES = 64 << 20
 CORE_CONFIGURATION_IDS = ("raw-terminal", "fixed", "uniform", "phog")
 PROGRAM_SEQUENCE_SPEC_ID = "brevis.program-bytecode-sequence.v1"
+BENCH_DETAIL_FINGERPRINT_SPEC_ID = "brevis.bench-detail-semantics.v1"
+BENCH_DETAIL_FIELDS = ("tensors", "blocks")
+BENCH_DETAIL_FINGERPRINT_EXCLUDED_JSON_PATHS = (
+    "/input",
+    "/planning_wall_ms",
+    "/encoding_wall_ms",
+    "/prior/path",
+)
 
 
 class BenchmarkError(RuntimeError):
@@ -214,6 +223,295 @@ def _embed_json_stdout(
         "base64": None,
     }
     return report
+
+
+def _bench_detail_semantic_projection(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the schema-4 report semantics used to identify DSL repetitions.
+
+    Only the two internal wall-clock observations and machine-local input/prior
+    paths are excluded.  In particular, the tensor and block arrays, unknown
+    future fields, search settings, accounting, program evidence, and every
+    other top-level value remain part of the fingerprint.
+    """
+
+    projection = dict(report)
+    projection.pop("input", None)
+    projection.pop("planning_wall_ms", None)
+    projection.pop("encoding_wall_ms", None)
+    prior = projection.get("prior")
+    if isinstance(prior, Mapping):
+        projected_prior = dict(prior)
+        projected_prior.pop("path", None)
+        projection["prior"] = projected_prior
+    return projection
+
+
+def _bench_detail_semantic_sha256(report: Mapping[str, Any]) -> str:
+    """Fingerprint all stable schema-4 report semantics in canonical JSON."""
+
+    try:
+        encoded = json.dumps(
+            _bench_detail_semantic_projection(report),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise BenchmarkError(
+            f"bench report cannot be semantically fingerprinted: {exc}"
+        ) from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _new_bench_detail_consistency() -> dict[str, Any]:
+    return {
+        "status_code": "awaiting_successful_report",
+        "fingerprint_spec_id": BENCH_DETAIL_FINGERPRINT_SPEC_ID,
+        "hash": "sha256",
+        "canonical_json_encoding": "utf-8 sorted-key compact JSON; finite values only",
+        "excluded_json_paths": list(BENCH_DETAIL_FINGERPRINT_EXCLUDED_JSON_PATHS),
+        "detail_fields": list(BENCH_DETAIL_FIELDS),
+        "canonical_reference": None,
+        "successful_reports": 0,
+        "matching_reports_including_canonical": 0,
+        "mismatching_reports": 0,
+        "failed_or_incomplete_reports_retained": 0,
+        "reports_unavailable": 0,
+        "analysis_policy": (
+            "resolve tensors/blocks from the single checkpoint-local canonical report "
+            "once per configuration; warmup/measured diagnostic repetitions are technical "
+            "replicates for timing and consistency, not independent tensors"
+        ),
+    }
+
+
+def _refresh_bench_detail_consistency_status(consistency: dict[str, Any]) -> None:
+    if consistency["mismatching_reports"]:
+        consistency["status_code"] = "semantic_mismatch"
+    elif consistency["canonical_reference"] is None:
+        consistency["status_code"] = "awaiting_successful_report"
+    elif (
+        consistency["failed_or_incomplete_reports_retained"]
+        or consistency["reports_unavailable"]
+    ):
+        consistency["status_code"] = "incomplete_reports_retained"
+    else:
+        consistency["status_code"] = "consistent"
+
+
+def _bench_detail_reference(
+    configuration: Mapping[str, Any], run: Mapping[str, Any], semantic_sha256: str,
+) -> dict[str, Any]:
+    phase = run.get("phase")
+    index = run.get("index")
+    if phase not in ("warmup", "measured"):
+        raise BenchmarkError("bench detail source has an invalid phase")
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise BenchmarkError("bench detail source has an invalid repetition index")
+    return {
+        "scope": "same_checkpoint_configuration",
+        "configuration_id": configuration.get("id"),
+        "phase": phase,
+        "run_index": index,
+        "report_field": "bench_report",
+        "detail_fields": list(BENCH_DETAIL_FIELDS),
+        "semantic_sha256": semantic_sha256,
+        "resolution": (
+            "find the unique run with this phase/run_index in the same configuration, "
+            "then read bench_report.tensors and bench_report.blocks"
+        ),
+    }
+
+
+def _find_bench_detail_source(
+    configuration: Mapping[str, Any], reference: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    if reference.get("configuration_id") != configuration.get("id"):
+        raise BenchmarkError("bench detail reference targets a different configuration")
+    phase = reference.get("phase")
+    collection_name = "warmups" if phase == "warmup" else "runs" if phase == "measured" else None
+    if collection_name is None:
+        raise BenchmarkError("bench detail reference has an invalid phase")
+    collection = configuration.get(collection_name)
+    if not isinstance(collection, list):
+        raise BenchmarkError("bench detail reference collection is unavailable")
+    matches = [
+        run for run in collection
+        if isinstance(run, Mapping)
+        and run.get("index") == reference.get("run_index")
+    ]
+    if len(matches) != 1:
+        raise BenchmarkError("bench detail reference does not resolve to exactly one run")
+    report = matches[0].get("bench_report")
+    if not isinstance(report, Mapping):
+        raise BenchmarkError("bench detail reference source has no report")
+    if not all(isinstance(report.get(field), list) for field in BENCH_DETAIL_FIELDS):
+        raise BenchmarkError("bench detail reference source has no inline tensor/block arrays")
+    return report
+
+
+def _materialize_bench_report_detail(
+    configuration: Mapping[str, Any], run: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve a compact report using only records in the same checkpoint."""
+
+    report = run.get("bench_report")
+    detail = run.get("bench_report_detail")
+    if not isinstance(report, Mapping) or not isinstance(detail, Mapping):
+        raise BenchmarkError("run has no materializable bench report detail")
+    materialized = dict(report)
+    inline = all(isinstance(materialized.get(field), list) for field in BENCH_DETAIL_FIELDS)
+    if not inline:
+        reference = detail.get("canonical_reference")
+        if not isinstance(reference, Mapping):
+            raise BenchmarkError("compact bench report has no canonical reference")
+        canonical = _find_bench_detail_source(configuration, reference)
+        for field in BENCH_DETAIL_FIELDS:
+            materialized[field] = canonical[field]
+    expected = detail.get("semantic_sha256")
+    actual = _bench_detail_semantic_sha256(materialized)
+    if expected != actual:
+        raise BenchmarkError("materialized bench report semantic SHA-256 is inconsistent")
+    return materialized
+
+
+def _apply_bench_detail_compaction(
+    configuration: dict[str, Any], run: dict[str, Any],
+) -> str | None:
+    """Deduplicate one valid diagnostic report, retaining failures verbatim.
+
+    Returns a failure message when an otherwise successful diagnostic differs
+    semantically from the configuration's canonical report.
+    """
+
+    consistency = configuration["bench_report_detail_consistency"]
+    canonical = consistency.get("canonical_reference")
+    report = run.get("bench_report")
+    metadata: dict[str, Any] = {
+        "status_code": "report_unavailable",
+        "fingerprint_spec_id": BENCH_DETAIL_FINGERPRINT_SPEC_ID,
+        "hash": "sha256",
+        "semantic_sha256": None,
+        "excluded_json_paths": list(BENCH_DETAIL_FINGERPRINT_EXCLUDED_JSON_PATHS),
+        "detail_fields": list(BENCH_DETAIL_FIELDS),
+        "detail_fields_inline": False,
+        "canonical_reference": canonical,
+        "matches_canonical": None,
+        "eligible_for_dsl_analysis": False,
+    }
+    run["bench_report_detail"] = metadata
+    if not isinstance(report, Mapping):
+        consistency["reports_unavailable"] += 1
+        _refresh_bench_detail_consistency_status(consistency)
+        return None
+
+    try:
+        semantic_sha256 = _bench_detail_semantic_sha256(report)
+    except BenchmarkError as exc:
+        consistency["failed_or_incomplete_reports_retained"] += 1
+        _refresh_bench_detail_consistency_status(consistency)
+        metadata.update({
+            "status_code": "unfingerprintable_report_retained",
+            "detail_fields_inline": all(
+                isinstance(report.get(field), list) for field in BENCH_DETAIL_FIELDS
+            ),
+        })
+        return str(exc)
+
+    detail_inline = all(isinstance(report.get(field), list) for field in BENCH_DETAIL_FIELDS)
+    metadata.update({
+        "semantic_sha256": semantic_sha256,
+        "detail_fields_inline": detail_inline,
+    })
+    complete_success = (
+        run.get("archive_pipeline_success") is True
+        and run.get("diagnostic_success") is True
+        and run.get("failure") is None
+        and detail_inline
+    )
+    if not complete_success:
+        consistency["failed_or_incomplete_reports_retained"] += 1
+        _refresh_bench_detail_consistency_status(consistency)
+        metadata.update({
+            "status_code": "failed_or_incomplete_report_retained",
+            "storage": "inline_uncompacted" if detail_inline else "detail_fields_unavailable",
+        })
+        return None
+
+    if canonical is None:
+        reference = _bench_detail_reference(configuration, run, semantic_sha256)
+        consistency.update({
+            "status_code": "consistent",
+            "canonical_reference": reference,
+            "successful_reports": consistency["successful_reports"] + 1,
+            "matching_reports_including_canonical": 1,
+        })
+        metadata.update({
+            "status_code": "inline_canonical",
+            "storage": "inline_canonical",
+            "canonical_reference": reference,
+            "matches_canonical": True,
+            "eligible_for_dsl_analysis": True,
+        })
+        # Earlier failed/incomplete reports may have been checkpointed before a
+        # canonical source existed. Their audit metadata can now point at the
+        # self-contained canonical detail without claiming a semantic match.
+        for collection_name in ("warmups", "runs"):
+            collection = configuration.get(collection_name)
+            if not isinstance(collection, list):
+                continue
+            for previous in collection:
+                previous_detail = (
+                    previous.get("bench_report_detail")
+                    if isinstance(previous, Mapping) else None
+                )
+                if (
+                    isinstance(previous_detail, dict)
+                    and previous_detail.get("canonical_reference") is None
+                ):
+                    previous_detail["canonical_reference"] = reference
+        _refresh_bench_detail_consistency_status(consistency)
+        return None
+
+    if not isinstance(canonical, Mapping):
+        raise BenchmarkError("bench detail canonical reference is malformed")
+    canonical_sha256 = canonical.get("semantic_sha256")
+    if semantic_sha256 == canonical_sha256:
+        # Resolve before dropping the duplicate arrays, ensuring that the next
+        # atomic checkpoint contains no dangling or external reference.
+        _find_bench_detail_source(configuration, canonical)
+        for field in BENCH_DETAIL_FIELDS:
+            report.pop(field, None)
+        consistency["successful_reports"] += 1
+        consistency["matching_reports_including_canonical"] += 1
+        _refresh_bench_detail_consistency_status(consistency)
+        metadata.update({
+            "status_code": "canonical_reference",
+            "storage": "checkpoint_local_canonical_reference",
+            "detail_fields_inline": False,
+            "canonical_reference": canonical,
+            "matches_canonical": True,
+            "eligible_for_dsl_analysis": False,
+        })
+        # Exercise the resolver and semantic check before checkpointing.
+        _materialize_bench_report_detail(configuration, run)
+        return None
+
+    consistency["mismatching_reports"] += 1
+    _refresh_bench_detail_consistency_status(consistency)
+    metadata.update({
+        "status_code": "semantic_mismatch_retained",
+        "storage": "inline_mismatch",
+        "canonical_reference": canonical,
+        "matches_canonical": False,
+        "eligible_for_dsl_analysis": False,
+    })
+    return (
+        "diagnostic bench report semantics differ from the configuration canonical "
+        f"detail ({semantic_sha256} != {canonical_sha256}); full mismatching "
+        "tensors/blocks were retained"
+    )
 
 
 def _process_failure(label: str, process: Mapping[str, Any]) -> str | None:
@@ -439,6 +737,7 @@ def _disk_gate(
     checkpoint_path: pathlib.Path | None,
     source_size: int,
     iterations: int,
+    configurations: int,
     keep_artifacts: bool,
     reserve_fraction: float,
     temp_multiplier: float,
@@ -464,13 +763,14 @@ def _disk_gate(
     checkpoint_device = (
         os.stat(checkpoint_parent).st_dev if checkpoint_parent is not None else None
     )
-    # The checkpoint estimate covers every embedded structured bench report and the
-    # old-plus-new peak of atomic replacement. It is intentionally conservative
-    # for the small tier; report compaction is required before larger tiers.
+    # One full tensor/block report is retained per successful configuration. Each
+    # repetition retains its top-level report, process evidence, and a local
+    # canonical reference. Atomic replacement temporarily needs old plus new JSON.
     estimated_final_checkpoint = (
-        math.ceil(
-            source_size * DEFAULT_REPORT_FRACTION_PER_ITERATION * max(1, iterations)
-        ) + DEFAULT_CHECKPOINT_FIXED_BYTES
+        math.ceil(source_size * DEFAULT_CANONICAL_REPORT_FRACTION_PER_CONFIGURATION)
+        * max(1, configurations)
+        + DEFAULT_COMPACT_REPORT_BYTES_PER_ITERATION * max(1, iterations)
+        + DEFAULT_CHECKPOINT_FIXED_BYTES
         if checkpoint_parent is not None else 0
     )
     checkpoint_atomic_peak = estimated_final_checkpoint * 2
@@ -506,6 +806,7 @@ def _disk_gate(
         "source_size_bytes": source_size,
         "keep_artifacts": keep_artifacts,
         "scheduled_pipeline_iterations": iterations,
+        "scheduled_configurations": configurations,
         "reserve_fraction": reserve_fraction,
         "same_work_and_checkpoint_filesystem": same_filesystem,
         "work": {
@@ -530,14 +831,17 @@ def _disk_gate(
         },
         "checkpoint": checkpoint_record,
         "checkpoint_estimate_policy": {
-            "report_fraction_of_source_per_pipeline_iteration": (
-                DEFAULT_REPORT_FRACTION_PER_ITERATION
+            "canonical_report_fraction_of_source_per_configuration": (
+                DEFAULT_CANONICAL_REPORT_FRACTION_PER_CONFIGURATION
+            ),
+            "compact_top_level_bytes_per_pipeline_iteration": (
+                DEFAULT_COMPACT_REPORT_BYTES_PER_ITERATION
             ),
             "fixed_bytes": DEFAULT_CHECKPOINT_FIXED_BYTES,
             "atomic_replace_copies_at_peak": 2,
             "note": (
-                "conservative small-tier bound; large-tier execution requires canonical "
-                "report compaction or a revised preregistered estimate"
+                "one successful canonical tensors/blocks report per configuration; "
+                "matching technical repetitions retain top-level reports and local references"
             ),
         },
         "failure": None if passes else (
@@ -1662,6 +1966,7 @@ def benchmark_file(
         checkpoint_path=checkpoint,
         source_size=source_size,
         iterations=total_pipeline_iterations,
+        configurations=len(requested_ids),
         keep_artifacts=keep_artifacts,
         reserve_fraction=disk_reserve_fraction,
         temp_multiplier=temp_multiplier,
@@ -1832,6 +2137,9 @@ def benchmark_file(
                 "unframed raw/copy generic baseline",
                 "cache residency is best effort and machine-specific",
                 "PHOG calibration is input-local and its cost is reported separately",
+                "schema-4 tensor/block arrays are stored once per successful configuration; "
+                "matching diagnostic repetitions retain all top-level fields and resolve the "
+                "checkpoint-local canonical detail by semantic SHA-256",
             ],
         }
 
@@ -1975,6 +2283,7 @@ def benchmark_file(
                 "warmups": [],
                 "runs": [],
                 "measured_archive_consistency": _new_archive_consistency(),
+                "bench_report_detail_consistency": _new_bench_detail_consistency(),
                 "status_code": "ready" if failure is None else "configuration_failed",
                 "failure": failure,
             }
@@ -2294,12 +2603,39 @@ def benchmark_file(
                 run_dir, record, f"{spec.identifier}-{phase}-{index}-diagnostic",
                 field="diagnostic_cleanup",
             )
+            try:
+                detail_failure = _apply_bench_detail_compaction(configuration, record)
+            except Exception as exc:
+                detail_failure = (
+                    "bench detail compaction harness error: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                record.setdefault("bench_report_detail", {
+                    "status_code": "compaction_harness_error",
+                    "semantic_sha256": None,
+                    "canonical_reference": configuration[
+                        "bench_report_detail_consistency"
+                    ].get("canonical_reference"),
+                    "eligible_for_dsl_analysis": False,
+                })
+            if detail_failure is not None:
+                record["diagnostic_success"] = False
+                record["success"] = False
+                record["status_code"] = "bench_detail_semantic_failure"
+                record["failure"] = (
+                    f"{record['failure']}; {detail_failure}"
+                    if record.get("failure") else detail_failure
+                )
             schedule_entry["status"] = "completed"
             schedule_entry["completed_at_utc"] = common._utc_now()
             schedule_entry["success"] = bool(record.get("diagnostic_success"))
             save_checkpoint()
 
         for configuration in configurations:
+            detail_consistency = configuration["bench_report_detail_consistency"]
+            _refresh_bench_detail_consistency_status(detail_consistency)
+            if detail_consistency["canonical_reference"] is None:
+                detail_consistency["status_code"] = "no_successful_canonical_report"
             failures = [
                 run for run in (*configuration["warmups"], *configuration["runs"])
                 if not run.get("success")

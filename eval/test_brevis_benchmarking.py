@@ -212,7 +212,14 @@ elif command == "bench":
             "program_transform_depth": 0,
             "terminal_count": 1,
         }],
-        "future_schema_field": {"preserved": True},
+        "future_schema_field": {
+            "preserved": True,
+            "semantic_nonce": (
+                os.getpid()
+                if os.environ.get("FAKE_BREVIS_SEMANTIC_NONDETERMINISTIC")
+                else 0
+            ),
+        },
     }))
 elif command == "compress":
     source = pathlib.Path(sys.argv[2])
@@ -328,6 +335,38 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
             system._program_sequence_sha256([], []),
         )
 
+    def test_bench_detail_fingerprint_excludes_only_timing_and_local_paths(self):
+        report = {
+            "schema": 4,
+            "kind": "brevis.bench-report",
+            "input": "/local/a/model.safetensors",
+            "planning_wall_ms": 3,
+            "encoding_wall_ms": 4,
+            "prior": {"path": "/local/a/prior.bin", "sha256": "a" * 64},
+            "search": {"max_depth": 2},
+            "tensors": [{"name": "weight", "program": "raw"}],
+            "blocks": [{"program_bytecode_sha256": "b" * 64}],
+            "future": {"must_remain_semantic": 7},
+        }
+        changed_observations = json.loads(json.dumps(report))
+        changed_observations.update({
+            "input": "/different/mount/model.safetensors",
+            "planning_wall_ms": 300,
+            "encoding_wall_ms": 400,
+        })
+        changed_observations["prior"]["path"] = "/different/mount/prior.bin"
+        self.assertEqual(
+            system._bench_detail_semantic_sha256(report),
+            system._bench_detail_semantic_sha256(changed_observations),
+        )
+
+        changed_semantics = json.loads(json.dumps(changed_observations))
+        changed_semantics["future"]["must_remain_semantic"] = 8
+        self.assertNotEqual(
+            system._bench_detail_semantic_sha256(report),
+            system._bench_detail_semantic_sha256(changed_semantics),
+        )
+
     def test_complete_core_run_is_integrity_bound_paired_exact_and_checkpointed(self):
         output = self.root / "result.json"
         result = system.benchmark_file(
@@ -375,6 +414,11 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
                 self.assertEqual(2, len(configuration["runs"]))
                 self.assertEqual("consistent",
                                  configuration["measured_archive_consistency"]["status_code"])
+                detail_consistency = configuration["bench_report_detail_consistency"]
+                self.assertEqual("consistent", detail_consistency["status_code"])
+                self.assertEqual("warmup", detail_consistency["canonical_reference"]["phase"])
+                self.assertEqual(3, detail_consistency["matching_reports_including_canonical"])
+                self.assertEqual(0, detail_consistency["mismatching_reports"])
                 for run in (*configuration["warmups"], *configuration["runs"]):
                     self.assertTrue(run["success"], run["failure"])
                     self.assertTrue(run["verification"]["bit_exact"])
@@ -393,8 +437,33 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
                         run["bench_report"]["program_bytecode_evidence"]["sequence_sha256"],
                         run["archive"]["program_bytecode_evidence"]["sequence_sha256"],
                     )
+                    materialized = system._materialize_bench_report_detail(
+                        configuration, run,
+                    )
+                    self.assertEqual(1, len(materialized["tensors"]))
+                    self.assertEqual(1, len(materialized["blocks"]))
+                    self.assertEqual(
+                        run["bench_report_detail"]["semantic_sha256"],
+                        system._bench_detail_semantic_sha256(materialized),
+                    )
                     self.assertTrue(run["archive"]["unchanged_during_decode"])
                     self.assertIsNone(run["artifact_directory"])
+                canonical = configuration["warmups"][0]
+                self.assertEqual("inline_canonical",
+                                 canonical["bench_report_detail"]["status_code"])
+                self.assertIn("tensors", canonical["bench_report"])
+                self.assertIn("blocks", canonical["bench_report"])
+                for run in configuration["runs"]:
+                    self.assertEqual("canonical_reference",
+                                     run["bench_report_detail"]["status_code"])
+                    self.assertEqual(
+                        set(canonical["bench_report"]) - {"tensors", "blocks"},
+                        set(run["bench_report"]),
+                    )
+                    self.assertNotIn("tensors", run["bench_report"])
+                    self.assertNotIn("blocks", run["bench_report"])
+                    self.assertEqual(2, run["bench_report"]["planning_wall_ms"])
+                    self.assertEqual(1, run["bench_report"]["encoding_wall_ms"])
 
         schedule = result["configuration"]["execution_schedule"]
         self.assertTrue(schedule)
@@ -406,11 +475,94 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
         first = [entry["configuration"] for entry in measured if entry["repetition"] == 0]
         second = [entry["configuration"] for entry in measured if entry["repetition"] == 1]
         self.assertEqual(first[::-1], second)
-        self.assertEqual("complete", json.loads(output.read_text())["status"])
+        checkpoint_document = json.loads(output.read_text())
+        self.assertEqual("complete", checkpoint_document["status"])
+        checkpoint_configuration = checkpoint_document["configurations"][0]
+        system._materialize_bench_report_detail(
+            checkpoint_configuration, checkpoint_configuration["runs"][0],
+        )
         self.assertIsNone(result["configuration"]["artifact_root"])
         self.assertTrue(result["cleanup"]["artifact_root"]["success"])
         self.assertIsNotNone(result["disk_gate"]["checkpoint"])
         self.assertFalse([path for path in (self.root / "work").glob("brevis-system-*")])
+
+    def test_first_measured_report_is_canonical_when_warmups_are_disabled(self):
+        result = system.benchmark_file(
+            self.source,
+            **self.arguments(
+                configuration_ids=("uniform",), warmups=0, repetitions=2,
+            ),
+        )
+        self.assertTrue(result["success"], result["failure"])
+        configuration = result["configurations"][0]
+        consistency = configuration["bench_report_detail_consistency"]
+        self.assertEqual("measured", consistency["canonical_reference"]["phase"])
+        self.assertEqual(0, consistency["canonical_reference"]["run_index"])
+        first, second = configuration["runs"]
+        self.assertEqual("inline_canonical", first["bench_report_detail"]["status_code"])
+        self.assertIn("tensors", first["bench_report"])
+        self.assertEqual("canonical_reference", second["bench_report_detail"]["status_code"])
+        self.assertNotIn("tensors", second["bench_report"])
+        self.assertEqual(
+            first["bench_report_detail"]["semantic_sha256"],
+            second["bench_report_detail"]["semantic_sha256"],
+        )
+        self.assertEqual(
+            first["bench_report"]["tensors"],
+            system._materialize_bench_report_detail(configuration, second)["tensors"],
+        )
+
+    def test_semantic_mismatch_retains_full_detail_and_fails_closed(self):
+        with mock.patch.dict(
+            os.environ, {"FAKE_BREVIS_SEMANTIC_NONDETERMINISTIC": "1"},
+        ):
+            result = system.benchmark_file(
+                self.source,
+                **self.arguments(
+                    configuration_ids=("uniform",), warmups=1, repetitions=1,
+                ),
+            )
+        self.assertFalse(result["success"])
+        configuration = result["configurations"][0]
+        canonical = configuration["warmups"][0]
+        mismatch = configuration["runs"][0]
+        self.assertEqual(
+            "semantic_mismatch",
+            configuration["bench_report_detail_consistency"]["status_code"],
+        )
+        self.assertEqual(1, configuration["bench_report_detail_consistency"]
+                         ["mismatching_reports"])
+        self.assertEqual("inline_canonical",
+                         canonical["bench_report_detail"]["status_code"])
+        self.assertEqual("semantic_mismatch_retained",
+                         mismatch["bench_report_detail"]["status_code"])
+        self.assertFalse(mismatch["bench_report_detail"]["matches_canonical"])
+        self.assertIn("tensors", mismatch["bench_report"])
+        self.assertIn("blocks", mismatch["bench_report"])
+        self.assertFalse(mismatch["success"])
+        self.assertFalse(mismatch["diagnostic_success"])
+        self.assertIn("semantics differ", mismatch["failure"])
+
+    def test_failed_bench_report_never_becomes_canonical(self):
+        with mock.patch.dict(os.environ, {"FAKE_BREVIS_FAIL": "bench"}):
+            result = system.benchmark_file(
+                self.source,
+                **self.arguments(
+                    configuration_ids=("uniform",), warmups=1, repetitions=1,
+                ),
+            )
+        self.assertFalse(result["success"])
+        configuration = result["configurations"][0]
+        consistency = configuration["bench_report_detail_consistency"]
+        self.assertEqual("no_successful_canonical_report", consistency["status_code"])
+        self.assertIsNone(consistency["canonical_reference"])
+        self.assertEqual(2, consistency["reports_unavailable"])
+        for run in (*configuration["warmups"], *configuration["runs"]):
+            self.assertIsNone(run["bench_report"])
+            self.assertEqual("report_unavailable",
+                             run["bench_report_detail"]["status_code"])
+            self.assertIsNone(run["bench_report_detail"]["semantic_sha256"])
+            self.assertFalse(run["bench_report_detail"]["eligible_for_dsl_analysis"])
 
     def test_unknown_and_old_bench_schemas_are_structured_failures(self):
         with mock.patch.dict(os.environ, {"FAKE_BREVIS_BENCH_SCHEMA": "7"}):
@@ -422,6 +574,12 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
         future_run = future["configurations"][0]["runs"][0]
         self.assertEqual(7, future_run["bench_report"]["schema"])
         self.assertIn("supports bench schema 4 exactly", future_run["failure"])
+        self.assertEqual(
+            "failed_or_incomplete_report_retained",
+            future_run["bench_report_detail"]["status_code"],
+        )
+        self.assertIn("tensors", future_run["bench_report"])
+        self.assertIsNotNone(future_run["bench_report_detail"]["semantic_sha256"])
 
         with mock.patch.dict(os.environ, {"FAKE_BREVIS_BENCH_SCHEMA": "1"}):
             old = system.benchmark_file(
@@ -543,6 +701,18 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
         calibration_schedule = first["calibration"]["execution_schedule"]
         self.assertEqual(3, len(calibration_schedule))
         self.assertTrue(all(entry["status"] == "pending" for entry in calibration_schedule))
+        compact_references_checked = 0
+        for snapshot in snapshots:
+            for configuration in snapshot["configurations"]:
+                for run in (*configuration["warmups"], *configuration["runs"]):
+                    detail = run.get("bench_report_detail")
+                    if (
+                        isinstance(detail, dict)
+                        and detail.get("status_code") == "canonical_reference"
+                    ):
+                        system._materialize_bench_report_detail(configuration, run)
+                        compact_references_checked += 1
+        self.assertGreater(compact_references_checked, 0)
 
     def test_cleanup_failure_is_visible_and_invalidates_the_run(self):
         original_cleanup = system._cleanup_directory
