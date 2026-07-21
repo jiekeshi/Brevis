@@ -284,6 +284,14 @@ test "codec: huffman rejects malformed tables and truncated payloads" {
     var one_bit_entries = [_]codec.HuffmanTable.Entry{.{ .sym = 7, .len = 1 }};
     const one_bit: codec.HuffmanTable = .{ .entries = &one_bit_entries };
     try std.testing.expectError(error.CorruptHuffmanStream, codec.huffmanDecode(a, &.{0}, one_bit, 9, 8));
+    try std.testing.expectError(
+        error.CorruptHuffmanStream,
+        codec.huffmanDecode(a, &.{}, one_bit, std.math.maxInt(usize), 8),
+    );
+
+    var wide_entries = [_]codec.HuffmanTable.Entry{.{ .sym = 256, .len = 1 }};
+    const too_wide: codec.HuffmanTable = .{ .entries = &wide_entries };
+    try std.testing.expectError(error.CorruptHuffmanStream, codec.huffmanDecode(a, &.{0}, too_wide, 1, 8));
 }
 
 // ==================== operator inverses ====================

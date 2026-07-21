@@ -3,6 +3,7 @@
 
 import argparse
 import filecmp
+import hashlib
 import json
 import os
 import pathlib
@@ -36,6 +37,13 @@ def write_json(path, value):
     tmp = pathlib.Path(f"{path}.tmp")
     tmp.write_text(json.dumps(value, indent=2) + "\n")
     os.replace(tmp, path)
+
+
+def run_fingerprint():
+    digest = hashlib.sha256()
+    digest.update(BREVIS.read_bytes())
+    digest.update(pathlib.Path(__file__).read_bytes())
+    return digest.hexdigest()
 
 
 def fetch(repo, revision, fname, url=None):
@@ -209,12 +217,21 @@ def all_field(shards, field):
     return all(values) if all(value is not None for value in values) else None
 
 
-def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None):
+def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None, fingerprint=None):
     files = model_files(model)
     names = [name for name, _ in files]
-    reuse = previous is not None and previous.get("revision") == model["revision"] and previous.get("files") == names
+    reuse = (
+        previous is not None
+        and previous.get("repo") == model["repo"]
+        and previous.get("revision") == model["revision"]
+        and previous.get("files") == names
+    )
     old_shards = {shard["file"]: shard for shard in previous.get("shards", [])} if reuse else {}
-    if resumed is not None and (resumed.get("repo"), resumed.get("revision")) == (model["repo"], model["revision"]):
+    resume_matches = resumed is not None and (resumed.get("repo"), resumed.get("revision")) == (
+        model["repo"], model["revision"])
+    if fingerprint is not None:
+        resume_matches = resume_matches and resumed.get("fingerprint") == fingerprint
+    if resume_matches:
         completed = {shard["file"]: shard for shard in resumed["shards"]}
     else:
         completed = {}
@@ -292,6 +309,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not BREVIS.exists():
         parser.error(f"build first: cd {ROOT} && zig build -Doptimize=ReleaseFast")
+    fingerprint = run_fingerprint()
 
     models = json.loads(args.models.read_text())
     if args.tag:
@@ -308,23 +326,38 @@ def main(argv=None):
         previous = {row["tag"]: row for row in json.loads(args.results.read_text())}
     checkpoint_path = pathlib.Path(f"{args.results}.checkpoint")
     checkpoints = json.loads(checkpoint_path.read_text()) if checkpoint_path.exists() else []
-    checkpoints = {(row["repo"], row["revision"]): row for row in checkpoints}
+    checkpoints = {(row["repo"], row["revision"], row.get("fingerprint")): row for row in checkpoints}
 
     rows = []
     for model in models:
         print(f"\n=== {model['tag']}: {model['repo']} — {model['note']}")
-        key = model["repo"], model["revision"]
+        identity = model["repo"], model["revision"]
+        for stale in [key for key in checkpoints if key[:2] == identity and key[2] != fingerprint]:
+            del checkpoints[stale]
+        key = (*identity, fingerprint)
 
         def save_checkpoint(shards):
-            checkpoints[key] = {"repo": model["repo"], "revision": model["revision"], "shards": shards}
+            checkpoints[key] = {
+                "repo": model["repo"],
+                "revision": model["revision"],
+                "fingerprint": fingerprint,
+                "shards": shards,
+            }
             write_json(checkpoint_path, list(checkpoints.values()))
 
-        row = evaluate_model(model, work, previous.get(model["tag"]), checkpoints.get(key), save_checkpoint)
+        row = evaluate_model(
+            model, work, previous.get(model["tag"]), checkpoints.get(key), save_checkpoint, fingerprint
+        )
         rows.append(row)
         write_json(args.results, rows)
         print(f"  model total: {row['brevis']:,} bytes ({row['raw'] / row['brevis']:.3f}x), bit-exact")
 
-    checkpoint_path.unlink(missing_ok=True)
+    for model in models:
+        checkpoints.pop((model["repo"], model["revision"], fingerprint), None)
+    if checkpoints:
+        write_json(checkpoint_path, list(checkpoints.values()))
+    else:
+        checkpoint_path.unlink(missing_ok=True)
     print_summary(rows)
     print(f"\nwrote {args.results}")
 

@@ -153,6 +153,8 @@ class ModelEvalTests(unittest.TestCase):
         checkpoint = pathlib.Path(f"{results}.checkpoint")
         saved = json.loads(checkpoint.read_text())
         self.assertEqual([next(iter(self.sources))], [shard["file"] for shard in saved[0]["shards"]])
+        unselected = {"repo": "other/model", "revision": "c" * 40, "fingerprint": "other", "shards": []}
+        checkpoint.write_text(json.dumps([*saved, unselected]))
 
         compressed = []
 
@@ -170,9 +172,9 @@ class ModelEvalTests(unittest.TestCase):
         second = list(self.sources)[1]
         self.assertEqual([second, second], compressed)
         self.assertEqual(list(self.sources), [shard["file"] for shard in json.loads(results.read_text())[0]["shards"]])
-        self.assertFalse(checkpoint.exists())
+        self.assertEqual([unselected], json.loads(checkpoint.read_text()))
 
-    def test_checkpoint_from_another_revision_is_ignored(self):
+    def test_incompatible_checkpoint_is_ignored(self):
         compressed = []
 
         def record_compress(*cmd):
@@ -181,14 +183,19 @@ class ModelEvalTests(unittest.TestCase):
             return self.command(*cmd)
 
         first = next(iter(self.sources))
-        resumed = {"repo": self.model["repo"], "revision": "b" * 40, "shards": [{"file": first}]}
-        patches = self.patches()
-        patches = (patches[0], mock.patch.object(run_eval, "timed", side_effect=record_compress), *patches[2:])
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
-            run_eval.evaluate_model(self.model, self.work, resumed=resumed)
-
         names = list(self.sources)
-        self.assertEqual([names[0], names[0], names[1], names[1]], compressed)
+        cases = (
+            ({"repo": self.model["repo"], "revision": "b" * 40, "shards": [{"file": first}]}, None),
+            ({**self.model, "fingerprint": "old", "shards": [{"file": first}]}, "new"),
+        )
+        for resumed, fingerprint in cases:
+            with self.subTest(fingerprint=fingerprint):
+                patches = self.patches()
+                patches = (patches[0], mock.patch.object(run_eval, "timed", side_effect=record_compress), *patches[2:])
+                with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                    run_eval.evaluate_model(self.model, self.work, resumed=resumed, fingerprint=fingerprint)
+                self.assertEqual([names[0], names[0], names[1], names[1]], compressed)
+                compressed.clear()
 
 
 if __name__ == "__main__":

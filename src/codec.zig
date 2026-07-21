@@ -450,8 +450,12 @@ pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable,
 
     var counts = [_]u32{0} ** 33;
     var max_len: u8 = 0;
+    const max_symbol: u32 = if (bits_per_elem == 32)
+        std.math.maxInt(u32)
+    else
+        (@as(u32, 1) << @intCast(bits_per_elem)) - 1;
     for (table.entries, 0..) |e, i| {
-        if (e.len == 0 or e.len > 32) return error.CorruptHuffmanStream;
+        if (e.len == 0 or e.len > 32 or e.sym > max_symbol) return error.CorruptHuffmanStream;
         if (i != 0) {
             const prev = table.entries[i - 1];
             if (e.len < prev.len or (e.len == prev.len and e.sym <= prev.sym))
@@ -474,7 +478,11 @@ pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable,
         code = (code + counts[len]) << 1;
     }
 
-    const buf = try alloc.alloc(u8, count * elem_bytes);
+    const min_len = if (table.entries.len == 0) 0 else table.entries[0].len;
+    if (@as(u128, count) * min_len > @as(u128, payload.len) * 8)
+        return error.CorruptHuffmanStream;
+    const output_len = std.math.mul(usize, count, elem_bytes) catch return error.CorruptHuffmanStream;
+    const buf = try alloc.alloc(u8, output_len);
     var s: Stream = .{ .data = buf, .count = count, .bits_per_elem = bits_per_elem };
     errdefer s.deinit(alloc);
     if (count == 0) return s;
