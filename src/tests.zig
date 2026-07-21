@@ -712,6 +712,47 @@ test "search: huffman remains a legal terminal" {
     try expectEqual(OpKind.huffman, result.node.op);
 }
 
+test "search: runtime terminal mask changes the realized program" {
+    const a = std.testing.allocator;
+    var in = try Stream.init(a, 1024, 8);
+    defer in.deinit(a);
+    for (0..in.count) |i| in.setU32(i, if (i & 1 == 0) 0 else 255);
+
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
+    var result = try search.synthesize(a, in, .u8, &untrained, .{
+        .max_nodes = 1,
+        .max_depth = 0,
+        .sample_elems = 0,
+        .enabled_ops = ops.ALL_OPS_MASK & ~ops.opMask(.huffman),
+    });
+    defer result.deinit(a);
+    try expect(result.node.op != .huffman);
+
+    var decoded = try program.decode(a, result.node);
+    defer decoded.deinit(a);
+    try expectStreamsEqual(in, decoded);
+}
+
+test "search: raw fallback survives an empty operator mask" {
+    const a = std.testing.allocator;
+    var in = try Stream.init(a, 128, 8);
+    defer in.deinit(a);
+    for (0..in.count) |i| in.setU32(i, @intCast(i));
+
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
+    var result = try search.synthesize(a, in, .u8, &untrained, .{
+        .max_expansions = 8,
+        .enabled_ops = 0,
+    });
+    defer result.deinit(a);
+    try expectEqual(OpKind.raw, result.node.op);
+    var decoded = try program.decode(a, result.node);
+    defer decoded.deinit(a);
+    try expectStreamsEqual(in, decoded);
+}
+
 /// Synthetic blocks with the structure real weights have.
 fn makeBlock(a: Allocator, rng: std.Random, dt: Dtype, n: usize, kind: u8) !Stream {
     var s = try Stream.init(a, n, dt.bitWidth());
@@ -858,24 +899,31 @@ test "search: tensor planning reranks candidates on real blocks" {
     var in = try Stream.init(a, 300_000, 8);
     defer in.deinit(a);
 
-    const sample_len = ops.SEARCH_SAMPLE_ELEMS / 4;
-    const skipped = in.count - ops.SEARCH_SAMPLE_ELEMS;
-    var written: usize = 0;
-    for (0..4) |window| {
-        const start = written + window * skipped / 3;
-        for (0..sample_len) |i| in.setU32(start + i, @intCast(i & 15));
-        written += sample_len;
-    }
+    const sample_start = (in.count - ops.SEARCH_SAMPLE_ELEMS) / 2;
+    for (0..ops.SEARCH_SAMPLE_ELEMS) |i| in.setU32(sample_start + i, @intCast(i & 15));
 
     var uniform: prior.Prior = .empty;
     defer uniform.deinit(a);
     const opts: search.Options = .{ .max_nodes = 1, .max_depth = 0, .max_expansions = 16 };
     var sampled = try search.synthesizePlan(a, in, .u8, &uniform, opts);
     defer sampled.deinit(a);
+    var sample_only = try search.synthesizeTensorPlan(a, in, .u8, 1, &uniform, .{
+        .max_nodes = 1,
+        .max_depth = 0,
+        .max_expansions = 16,
+        .rerank_candidates = 0,
+    });
+    defer sample_only.deinit(a);
     var planned = try search.synthesizeTensorPlan(a, in, .u8, 1, &uniform, opts);
     defer planned.deinit(a);
     try expectEqual(OpKind.bitpack, sampled.root.op);
+    try expectEqual(sampled.root.op, sample_only.root.op);
     try expect(planned.root.op != sampled.root.op);
+    try expect(sample_only.candidates_realized > 0);
+    try expectEqual(@as(usize, 0), sample_only.candidates_reranked);
+    try expect(planned.candidates_reranked > 0);
+    try expect(planned.probe_blocks_used > 0);
+    try expect(planned.selected_sample_rank > 0);
 
     const blocks = try types.planBlocks(a, 0, .u8, in.count, 1);
     defer a.free(blocks);
@@ -922,7 +970,7 @@ test "search: fixed baseline is a typed reversible DSL program" {
     }
 }
 
-test "search: representative sampling covers arbitrary sizes" {
+test "search: centered contiguous sampling covers arbitrary sizes" {
     const a = std.testing.allocator;
     var in = try Stream.init(a, 20, 8);
     defer in.deinit(a);
@@ -931,8 +979,8 @@ test "search: representative sampling covers arbitrary sizes" {
     var sampled = try search.planningSample(a, in, 5);
     defer sampled.deinit(a);
     try expectEqual(@as(usize, 5), sampled.count);
-    try expectEqual(@as(u32, 1), sampled.getU32(0));
-    try expectEqual(@as(u32, 20), sampled.getU32(4));
+    try expectEqual(@as(u32, 8), sampled.getU32(0));
+    try expectEqual(@as(u32, 12), sampled.getU32(4));
     for (0..sampled.count) |i| try expect(sampled.getU32(i) != 0);
 
     var uniform: prior.Prior = .empty;

@@ -30,6 +30,15 @@ zig build -Doptimize=ReleaseFast
 
 # Emit a machine-readable per-tensor and per-block DSL/search report
 ./zig-out/bin/brevis bench model.safetensors --prior prior.bin --format json > bench.json
+
+# Override search and full-block reranking for controlled ablations
+./zig-out/bin/brevis bench model.safetensors --format json \
+  --max-expansions 64 --max-depth 1 --max-nodes 8 \
+  --sample-elems 2048 --rerank-candidates 0 \
+  --disable-op huffman --disable-op rle > ablation.json
+
+# Print the effective runtime configuration (the same flags are accepted)
+./zig-out/bin/brevis config --max-expansions 64 --max-depth 1
 ```
 
 ```bash
@@ -65,7 +74,7 @@ Transforms include constant XOR, modular addition, adjacent XOR, differencing, G
 
 Terminals are `raw`, `bitpack`, canonical Huffman, and rANS.
 
-Operator applicability depends on input bit width, dtype, tree depth, and arity. `raw` is always available as a reversible fallback, so every supported tensor has at least one valid program.
+Operator applicability depends on input bit width, dtype, tree depth, arity, and the runtime operator mask. Repeating `--disable-op NAME` removes individual transforms or terminal codecs from search for controlled ablations. The CLI does not allow `raw` to be disabled; direct API callers also retain it as an implicit reversible fallback, so every supported tensor has at least one valid program. Fixed-plan mode deliberately ignores the search mask and continues to execute the same typed template.
 
 ## Grammar-Guided A* Search
 
@@ -76,7 +85,7 @@ Brevis uses a probabilistic higher-order grammar (PHOG) to order the search. It 
 
 PHOG does not change the compression objective. It only changes candidate order within a bounded search budget. Without a prior, Brevis uses a uniform distribution so the prior's contribution can be measured directly.
 
-Single-stream search can prune with the serialized-byte bound; tensor planning instead collects candidates in grammar order under the 256-expansion budget without sample-incumbent byte pruning, because it ultimately compares them on representative full blocks.
+Single-stream search can prune with the serialized-byte bound; tensor planning instead collects candidates in grammar order under a per-tensor expansion budget without sample-incumbent byte pruning, because it ultimately compares them on representative full blocks. The defaults are 256 partial-program expansions, at most 2 transform layers, 12 total transform-and-terminal nodes, and a 4,096-element sample. A sample size of zero searches the complete tensor. These limits are runtime options so budget and depth can be swept without rebuilding the binary. The single-stream `max_realizations` guard is not applied to tensor planning, which collects every completed candidate reached within the expansion budget.
 
 Evaluation separates three modes: `fixed` executes a dtype-specific DSL template with the normal raw fallback, `uniform` runs A* without a learned prior, and `phog` runs the same A* search with an input-local prior. Comparing them isolates the value of the reversible language, adaptive search, and grammar guidance.
 
@@ -86,7 +95,9 @@ At those holes, the bound includes only required terminal-frame costs. A Shannon
 
 ### Input-Local Calibration
 
-Calibration requires no external corpus. It stratifies samples by dtype and tensor size, searches four contiguous windows per tensor, then reranks the top eight candidates on four representative blocks using actual encoded bytes.
+Calibration requires no external corpus. It stratifies tensors by dtype and size, searches one centered contiguous window per selected tensor, then, by default, reranks the top eight candidates on four representative full blocks using actual encoded bytes. A single window preserves true adjacency for delta-based transforms and features; concatenating disjoint windows would introduce artificial transitions. Setting either `--rerank-candidates 0` or `--rerank-blocks 0` disables full-block reranking and retains the candidate that is best on the search sample. Calibration, compression, and benchmarking receive the same runtime search options.
+
+`calibrate --format json` records the input and prior SHA-256 digests, sampled tensor count, requested and actual worker counts, seed, context counts, wall time, and full search configuration. A subsequent benchmark identifies the applied prior by the same digest, so calibration and evaluation settings can be audited rather than inferred from a filename.
 
 Winning programs become `(context, production)` counts. A context captures tree position, dtype, bit width, and bucketed entropy, zero rate, and delta features. Three-level backoff reduces sparsity.
 
@@ -108,7 +119,7 @@ Output order and per-tensor lengths are checked before and after writing.
 
 [`eval/models-tiered.json`](eval/models-tiered.json) and [`eval/PROTOCOL.md`](eval/PROTOCOL.md) preregister the heterogeneous model matrix, staged resource gates, repetition policy, and the non-extrapolating GLM-5.2 shard sample. The older compact manifests remain available for smoke tests and historical reruns.
 
-`brevis bench --format json` separates tensor planning from block encoding time and records every tensor's dtype, shape, selected program, search expansions, encoded bytes, and raw-fallback count. It also records the realized program and encoded bytes for every block. These byte counts exclude archive frame headers and are intended for generated-DSL analysis; use complete `.brv` file sizes for storage comparisons.
+`brevis bench --format json` separates tensor planning from block encoding time and records every tensor's dtype, shape, selected program, search expansions, realized and reranked candidate counts, selected sample rank, encoded bytes, and raw-fallback count. It also records the realized program and encoded bytes for every block, plus the applied prior's path, SHA-256 digest, and context counts. `program_node_depth` includes the terminal layer, whereas `program_transform_depth` counts only transform layers and matches `--max-depth`. These byte counts exclude archive frame headers and are intended for generated-DSL analysis; use complete `.brv` file sizes for storage comparisons.
 
 The evaluator rebuilds the ReleaseFast binary so recorded source settings match the executable. Existing result files predate this schema and must be rerun before comparison with the current planner.
 

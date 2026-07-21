@@ -65,6 +65,16 @@ pub const OpKind = enum(u8) {
     }
 };
 
+pub fn opMask(op: OpKind) u64 {
+    return @as(u64, 1) << @as(u6, @intCast(@intFromEnum(op)));
+}
+
+pub const ALL_OPS_MASK: u64 = blk: {
+    var mask: u64 = 0;
+    for (@typeInfo(OpKind).@"enum".fields) |field| mask |= @as(u64, 1) << @intCast(field.value);
+    break :blk mask;
+};
+
 /// Number of child streams. Depends on input width for the bit/byte planes.
 pub fn arity(op: OpKind, in_bpe: u8) usize {
     return switch (op) {

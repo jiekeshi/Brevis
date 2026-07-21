@@ -32,6 +32,15 @@ pub const Options = struct {
     /// Bound the stream used by A*. Tensor planning realizes only the shortlist
     /// on full blocks. Zero searches the complete input.
     sample_elems: usize = ops.SEARCH_SAMPLE_ELEMS,
+    /// Number of sample-ranked candidates to rerank on representative full
+    /// blocks. Zero disables full-block reranking and keeps the sample winner.
+    rerank_candidates: usize = ops.PLAN_CANDIDATES,
+    /// Number of full blocks, spread across the tensor, used for reranking.
+    /// Zero disables reranking, as does rerank_candidates == 0.
+    rerank_blocks: usize = ops.PLAN_PROBE_BLOCKS,
+    /// Bit mask over OpKind values. Raw remains an implicit fallback even for
+    /// direct API callers that clear its bit.
+    enabled_ops: u64 = ops.ALL_OPS_MASK,
 };
 
 pub const Result = struct {
@@ -50,6 +59,10 @@ pub const Result = struct {
 pub const Plan = struct {
     root: Node,
     expanded: usize,
+    candidates_realized: usize = 0,
+    candidates_reranked: usize = 0,
+    probe_blocks_used: usize = 0,
+    selected_sample_rank: usize = 0,
 
     pub fn deinit(self: *Plan, alloc: Allocator) void {
         self.root.deinit(alloc);
@@ -161,8 +174,8 @@ fn shannonBits(alloc: Allocator, s: Stream) !u64 {
     return codec.entropyBits(hist, s.count);
 }
 
-fn holeBits(alloc: Allocator, s: Stream, depth: u8) !u64 {
-    if (depth < ops.K_TRANSFORM_LAYERS) return 0;
+fn holeBits(alloc: Allocator, s: Stream, depth: u8, max_depth: u8) !u64 {
+    if (depth < max_depth) return 0;
     return shannonBits(alloc, s);
 }
 
@@ -231,29 +244,47 @@ fn addProduction(out: *[MAX_PRODUCTIONS]OpKind, len: *usize, op: OpKind) void {
     len.* += 1;
 }
 
-fn legalProductions(hole_bpe: u8, depth: u8, dtype: Dtype, is_root: bool, out: *[MAX_PRODUCTIONS]OpKind) []const OpKind {
+fn addEnabledProduction(
+    out: *[MAX_PRODUCTIONS]OpKind,
+    len: *usize,
+    op: OpKind,
+    enabled_ops: u64,
+) void {
+    if (enabled_ops & ops.opMask(op) != 0) addProduction(out, len, op);
+}
+
+fn legalProductions(
+    hole_bpe: u8,
+    depth: u8,
+    max_depth: u8,
+    dtype: Dtype,
+    is_root: bool,
+    enabled_ops: u64,
+    out: *[MAX_PRODUCTIONS]OpKind,
+) []const OpKind {
     var len: usize = 0;
+    // Raw is a structural safety net and cannot be removed by an ablation.
     addProduction(out, &len, .raw);
-    addProduction(out, &len, .bitpack);
+    addEnabledProduction(out, &len, .bitpack, enabled_ops);
     if (hole_bpe <= ops.MAX_ENTROPY_BPE) {
-        addProduction(out, &len, .huffman);
-        addProduction(out, &len, .rans);
+        addEnabledProduction(out, &len, .huffman, enabled_ops);
+        addEnabledProduction(out, &len, .rans, enabled_ops);
     }
-    if (depth >= ops.K_TRANSFORM_LAYERS) return out[0..len];
+    if (depth >= max_depth) return out[0..len];
 
     const elementwise = [_]OpKind{
         .xor_const, .add_const_mod, .xor_prev,    .diff_mod, .zigzag,
         .gray,      .rotate_bits,   .bit_reverse, .rle,      .deinterleave,
     };
-    for (elementwise) |op| addProduction(out, &len, op);
+    for (elementwise) |op| addEnabledProduction(out, &len, op, enabled_ops);
 
     if (hole_bpe > 1) {
-        addProduction(out, &len, .split_field);
-        addProduction(out, &len, .topk_codebook);
-        addProduction(out, &len, .bit_plane);
+        addEnabledProduction(out, &len, .split_field, enabled_ops);
+        addEnabledProduction(out, &len, .topk_codebook, enabled_ops);
+        addEnabledProduction(out, &len, .bit_plane, enabled_ops);
     }
-    if (hole_bpe > 8) addProduction(out, &len, .byte_plane);
-    if (is_root and dtype.isFloat()) addProduction(out, &len, .split_float);
+    if (hole_bpe > 8) addEnabledProduction(out, &len, .byte_plane, enabled_ops);
+    if (is_root and dtype.isFloat()) addEnabledProduction(out, &len, .split_float, enabled_ops);
     return out[0..len];
 }
 
@@ -261,11 +292,13 @@ fn completionScoreLowerBound(
     pr: *const prior.Prior,
     bpe: u8,
     depth: u8,
+    max_depth: u8,
     dtype: Dtype,
     is_root: bool,
+    enabled_ops: u64,
 ) u32 {
     var storage: [MAX_PRODUCTIONS]OpKind = undefined;
-    const productions = legalProductions(bpe, depth, dtype, is_root, &storage);
+    const productions = legalProductions(bpe, depth, max_depth, dtype, is_root, enabled_ops, &storage);
     return pr.scoreLowerBound(productions.len);
 }
 
@@ -488,9 +521,11 @@ fn candidateCost(
     full: Stream,
     blocks: []const types.Block,
     dtype: Dtype,
+    probe_blocks: usize,
 ) !u64 {
     const plan: Plan = .{ .root = candidate.node, .expanded = candidate.expanded };
-    const n = @min(ops.PLAN_PROBE_BLOCKS, blocks.len);
+    const n = @min(probe_blocks, blocks.len);
+    std.debug.assert(n > 0);
     var total: u64 = 0;
     for (0..n) |probe| {
         const index = if (n == 1) 0 else probe * (blocks.len - 1) / (n - 1);
@@ -524,18 +559,25 @@ pub fn synthesizeTensorPlan(
         alloc.free(candidates);
     }
 
-    const blocks = try types.planBlocks(alloc, 0, dtype, full.count, inner);
-    defer alloc.free(blocks);
     var best: usize = 0;
-    var best_cost = try candidateCost(alloc, candidates[0], full, blocks, dtype);
-    for (candidates[1..@min(ops.PLAN_CANDIDATES, candidates.len)], 1..) |candidate, i| {
-        const cost = try candidateCost(alloc, candidate, full, blocks, dtype);
-        if (cost < best_cost) {
-            best = i;
-            best_cost = cost;
+    var candidates_reranked: usize = 0;
+    var probe_blocks_used: usize = 0;
+    if (opts.rerank_candidates > 0 and opts.rerank_blocks > 0) {
+        const blocks = try types.planBlocks(alloc, 0, dtype, full.count, inner);
+        defer alloc.free(blocks);
+        candidates_reranked = @min(opts.rerank_candidates, candidates.len);
+        probe_blocks_used = @min(opts.rerank_blocks, blocks.len);
+        var best_cost = try candidateCost(alloc, candidates[0], full, blocks, dtype, probe_blocks_used);
+        for (candidates[1..candidates_reranked], 1..) |candidate, i| {
+            const cost = try candidateCost(alloc, candidate, full, blocks, dtype, probe_blocks_used);
+            if (cost < best_cost) {
+                best = i;
+                best_cost = cost;
+            }
         }
     }
 
+    const candidates_realized = candidates.len;
     for (candidates, 0..) |*candidate, i| {
         if (i != best) candidate.deinit(alloc);
     }
@@ -543,7 +585,14 @@ pub fn synthesizeTensorPlan(
     alloc.free(candidates);
     dropRuntime(alloc, &picked.node);
     alloc.free(picked.payload);
-    return .{ .root = picked.node, .expanded = picked.expanded };
+    return .{
+        .root = picked.node,
+        .expanded = picked.expanded,
+        .candidates_realized = candidates_realized,
+        .candidates_reranked = candidates_reranked,
+        .probe_blocks_used = probe_blocks_used,
+        .selected_sample_rank = best,
+    };
 }
 
 pub fn synthesize(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const prior.Prior, opts: Options) !Result {
@@ -554,29 +603,17 @@ pub fn synthesize(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const prior.P
     return result;
 }
 
-/// Contiguous windows spread over the block. Contiguity matters: strided
-/// sampling would break neighbour relations and make xor_prev/diff_mod look
-/// useless when they are in fact the right answer.
+/// A centered contiguous window. Contiguity preserves the true neighbour
+/// relations used by xor_prev, diff_mod, and PHOG delta features. Concatenating
+/// disjoint windows would create artificial transitions at their boundaries.
 pub fn planningSample(alloc: Allocator, in: Stream, want: usize) !Stream {
     const total = @min(want, in.count);
     if (total == in.count) return in.dupe(alloc);
     var out = try Stream.init(alloc, total, in.bits_per_elem);
     errdefer out.deinit(alloc);
     if (total == 0) return out;
-
-    const n_windows = @min(@as(usize, 4), total);
-    const skipped = in.count - total;
-    var written: usize = 0;
-    for (0..n_windows) |window| {
-        const len = total / n_windows + @intFromBool(window < total % n_windows);
-        const gap = if (n_windows == 1) skipped / 2 else window * skipped / (n_windows - 1);
-        const start = written + gap;
-        for (0..len) |i| {
-            out.setU32(written, in.getU32(start + i));
-            written += 1;
-        }
-    }
-    std.debug.assert(written == total);
+    const start = (in.count - total) / 2;
+    for (0..total) |i| out.setU32(i, in.getU32(start + i));
     return out;
 }
 
@@ -640,8 +677,16 @@ fn run(
     var path: std.ArrayList(u8) = .empty;
     defer path.deinit(alloc);
 
-    const root_bits = try holeBits(alloc, in, 0);
-    const root_score_lb = completionScoreLowerBound(pr, in.bits_per_elem, 0, dtype, true);
+    const root_bits = try holeBits(alloc, in, 0, opts.max_depth);
+    const root_score_lb = completionScoreLowerBound(
+        pr,
+        in.bits_per_elem,
+        0,
+        opts.max_depth,
+        dtype,
+        true,
+        opts.enabled_ops,
+    );
     try q.push(alloc, .{
         .root = .{ .hole = .{
             .depth = 0,
@@ -713,7 +758,15 @@ fn run(
             prior.Context{};
 
         var prod_storage: [MAX_PRODUCTIONS]OpKind = undefined;
-        const prods = legalProductions(hs.bits_per_elem, hole.depth, dtype, hole.depth == 0, &prod_storage);
+        const prods = legalProductions(
+            hs.bits_per_elem,
+            hole.depth,
+            opts.max_depth,
+            dtype,
+            hole.depth == 0,
+            opts.enabled_ops,
+            &prod_storage,
+        );
         var scores: [MAX_PRODUCTIONS]u32 = undefined;
         pr.scoreSet(ctx, prods, scores[0..prods.len]);
 
@@ -740,7 +793,7 @@ fn run(
             } else if (prod.isAlphabetPermutation()) {
                 // Histogram is permuted, entropy identical: no forward needed.
                 add = NODE_HDR;
-                kid_bits[0] = try holeBits(alloc, hs, hole.depth + 1);
+                kid_bits[0] = try holeBits(alloc, hs, hole.depth + 1, opts.max_depth);
                 kid_scores[0] = 0;
             } else {
                 var outs: std.ArrayList(Stream) = .empty;
@@ -753,13 +806,15 @@ fn run(
                 try ops.forward(alloc, prod, params, hs, &outs, &side);
                 add = NODE_HDR + sideBody(side);
                 for (outs.items, 0..) |s, i| {
-                    kid_bits[i] = try holeBits(alloc, s, hole.depth + 1);
+                    kid_bits[i] = try holeBits(alloc, s, hole.depth + 1, opts.max_depth);
                     kid_scores[i] = completionScoreLowerBound(
                         pr,
                         s.bits_per_elem,
                         hole.depth + 1,
+                        opts.max_depth,
                         dtype,
                         false,
+                        opts.enabled_ops,
                     );
                 }
             }
@@ -810,7 +865,47 @@ test "uniform root completion score uses cheapest legal production" {
     for (0..stream.count) |i| stream.setU32(i, @intCast(i));
     var untrained: prior.Prior = .empty;
     defer untrained.deinit(alloc);
-    try std.testing.expectEqual(@as(u32, 4186), completionScoreLowerBound(&untrained, 8, 0, .i8, true));
+    try std.testing.expectEqual(
+        @as(u32, 4186),
+        completionScoreLowerBound(
+            &untrained,
+            8,
+            0,
+            ops.K_TRANSFORM_LAYERS,
+            .i8,
+            true,
+            ops.ALL_OPS_MASK,
+        ),
+    );
+}
+
+test "runtime depth limit controls transform productions" {
+    var shallow_storage: [MAX_PRODUCTIONS]OpKind = undefined;
+    const shallow = legalProductions(8, 2, 2, .u8, false, ops.ALL_OPS_MASK, &shallow_storage);
+    for (shallow) |production| try std.testing.expect(production.isTerminal());
+
+    var deeper_storage: [MAX_PRODUCTIONS]OpKind = undefined;
+    const deeper = legalProductions(8, 2, 3, .u8, false, ops.ALL_OPS_MASK, &deeper_storage);
+    var found_transform = false;
+    for (deeper) |production| found_transform = found_transform or production.isTransform();
+    try std.testing.expect(found_transform);
+}
+
+test "operator mask removes productions but preserves raw fallback" {
+    const enabled = ops.ALL_OPS_MASK & ~ops.opMask(.huffman) & ~ops.opMask(.diff_mod);
+    var storage: [MAX_PRODUCTIONS]OpKind = undefined;
+    const productions = legalProductions(8, 0, 2, .u8, true, enabled, &storage);
+    var found_raw = false;
+    for (productions) |production| {
+        found_raw = found_raw or production == .raw;
+        try std.testing.expect(production != .huffman);
+        try std.testing.expect(production != .diff_mod);
+    }
+    try std.testing.expect(found_raw);
+
+    var raw_only_storage: [MAX_PRODUCTIONS]OpKind = undefined;
+    const raw_only = legalProductions(8, 0, 2, .u8, true, 0, &raw_only_storage);
+    try std.testing.expectEqualSlices(OpKind, &.{.raw}, raw_only);
 }
 
 test "hole lower bound includes a terminal frame" {

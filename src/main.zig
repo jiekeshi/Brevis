@@ -49,6 +49,13 @@ pub fn main(init: std.process.Init) !void {
     var opt_tensors: usize = calibrate.DEFAULT_TENSORS;
     var opt_plan: PlanMode = .search;
     var opt_format: ReportFormat = .text;
+    var opt_search: search.Options = .{};
+    var saw_prior = false;
+    var saw_jobs = false;
+    var saw_tensors = false;
+    var saw_plan = false;
+    var saw_format = false;
+    var saw_search_option = false;
 
     const rest = argv.items[2..];
     var i: usize = 0;
@@ -62,25 +69,69 @@ pub fn main(init: std.process.Init) !void {
         if (i >= rest.len) try usage(err);
         const v = rest[i];
         if (std.mem.eql(u8, a, "--prior")) {
+            saw_prior = true;
             opt_prior = v;
         } else if (std.mem.eql(u8, a, "--jobs")) {
+            saw_jobs = true;
             opt_jobs = try std.fmt.parseInt(usize, v, 10);
         } else if (std.mem.eql(u8, a, "--tensors")) {
+            saw_tensors = true;
             opt_tensors = try std.fmt.parseInt(usize, v, 10);
         } else if (std.mem.eql(u8, a, "--plan")) {
+            saw_plan = true;
             if (std.mem.eql(u8, v, "search")) opt_plan = .search else if (std.mem.eql(u8, v, "fixed")) opt_plan = .fixed else try usage(err);
         } else if (std.mem.eql(u8, a, "--format")) {
+            saw_format = true;
             if (std.mem.eql(u8, v, "text")) opt_format = .text else if (std.mem.eql(u8, v, "json")) opt_format = .json else try usage(err);
+        } else if (std.mem.eql(u8, a, "--max-expansions")) {
+            saw_search_option = true;
+            opt_search.max_expansions = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--max-nodes")) {
+            saw_search_option = true;
+            opt_search.max_nodes = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--max-depth")) {
+            saw_search_option = true;
+            opt_search.max_depth = try std.fmt.parseInt(u8, v, 10);
+        } else if (std.mem.eql(u8, a, "--sample-elems")) {
+            saw_search_option = true;
+            opt_search.sample_elems = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--rerank-candidates")) {
+            saw_search_option = true;
+            opt_search.rerank_candidates = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--rerank-blocks")) {
+            saw_search_option = true;
+            opt_search.rerank_blocks = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--disable-op")) {
+            saw_search_option = true;
+            const op = std.meta.stringToEnum(ops.OpKind, v) orelse try usage(err);
+            if (op == .raw) try usage(err);
+            opt_search.enabled_ops &= ~ops.opMask(op);
         } else try usage(err);
     }
+    if (opt_search.max_expansions == 0 or opt_search.max_nodes == 0) try usage(err);
+    if (opt_jobs) |jobs| if (jobs == 0) try usage(err);
+    if (saw_tensors and opt_tensors == 0) try usage(err);
+    const is_calibrate = std.mem.eql(u8, cmd, "calibrate");
+    const is_compress = std.mem.eql(u8, cmd, "compress");
+    const is_decompress = std.mem.eql(u8, cmd, "decompress");
+    const is_bench = std.mem.eql(u8, cmd, "bench");
+    const is_config = std.mem.eql(u8, cmd, "config");
+    if (saw_prior and !(is_compress or is_bench)) try usage(err);
+    if (saw_jobs and !(is_calibrate or is_compress or is_decompress or is_bench)) try usage(err);
+    if (saw_tensors and !is_calibrate) try usage(err);
+    if (saw_plan and !(is_compress or is_bench)) try usage(err);
+    if (saw_format and !(is_calibrate or is_bench)) try usage(err);
+    const accepts_search_options = std.mem.eql(u8, cmd, "calibrate") or
+        is_compress or is_bench or is_config;
+    if (saw_search_option and !accepts_search_options) try usage(err);
     const p = pos.items;
 
     if (std.mem.eql(u8, cmd, "calibrate")) {
         if (p.len != 2) try usage(err);
-        try cmdCalibrate(io, out, p[0], p[1], opt_tensors, opt_jobs);
+        try cmdCalibrate(io, out, p[0], p[1], opt_tensors, opt_jobs, opt_search, opt_format);
     } else if (std.mem.eql(u8, cmd, "compress")) {
         if (p.len != 2) try usage(err);
-        try cmdCompress(io, out, p[0], p[1], opt_prior, opt_jobs, opt_plan);
+        try cmdCompress(io, out, p[0], p[1], opt_prior, opt_jobs, opt_plan, opt_search);
     } else if (std.mem.eql(u8, cmd, "decompress")) {
         if (p.len != 2) try usage(err);
         try cmdDecompress(io, out, p[0], p[1], opt_jobs);
@@ -89,10 +140,10 @@ pub fn main(init: std.process.Init) !void {
         try cmdVerify(alloc, io, out, p[0], p[1]);
     } else if (std.mem.eql(u8, cmd, "bench")) {
         if (p.len != 1) try usage(err);
-        try cmdBench(io, out, p[0], opt_prior, opt_jobs, opt_plan, opt_format);
+        try cmdBench(io, out, p[0], opt_prior, opt_jobs, opt_plan, opt_format, opt_search);
     } else if (std.mem.eql(u8, cmd, "config")) {
         if (p.len != 0) try usage(err);
-        try cmdConfig(out);
+        try cmdConfig(out, opt_search);
     } else if (std.mem.eql(u8, cmd, "demo")) {
         try cmdDemo(io, out);
     } else if (std.mem.eql(u8, cmd, "make-fixture")) {
@@ -109,7 +160,7 @@ fn usage(w: *std.Io.Writer) !noreturn {
     try w.writeAll(
         \\brevis — bit-exact lossless tensor compression via program synthesis
         \\
-        \\  brevis calibrate   <model.safetensors> <prior.bin> [--tensors N] [--jobs N]
+        \\  brevis calibrate   <model.safetensors> <prior.bin> [--tensors N] [--jobs N] [--format text|json]
         \\  brevis compress    <model.safetensors> <out.brv> [--plan search|fixed] [--prior p.bin] [--jobs N]
         \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
         \\  brevis verify      <in.brv> <orig.safetensors>
@@ -118,40 +169,83 @@ fn usage(w: *std.Io.Writer) !noreturn {
         \\  brevis demo
         \\  brevis make-fixture <out.safetensors>
         \\
+        \\Search options (calibrate, compress, bench, and config):
+        \\  --max-expansions N --max-nodes N --max-depth N --sample-elems N
+        \\  --rerank-candidates N --rerank-blocks N --disable-op NAME (repeatable)
+        \\
     );
     try w.flush();
     std.process.exit(2);
 }
 
-fn cmdConfig(out: *std.Io.Writer) !void {
-    try out.print(
-        \\{{
-        \\  "transform_layers": {d},
-        \\  "max_entropy_bpe": {d},
-        \\  "max_nodes": {d},
-        \\  "max_expansions": {d},
-        \\  "sample_elems": {d},
-        \\  "target_block_bytes": {d},
-        \\  "rerank_candidates": {d},
-        \\  "rerank_blocks": {d},
-        \\  "uniform_score": {d},
-        \\  "phog_weight": {d},
-        \\  "candidate_collection": "all_within_expansion_budget",
-        \\  "sample_byte_pruning": false
-        \\}}
-        \\
-    , .{
-        ops.K_TRANSFORM_LAYERS,
-        ops.MAX_ENTROPY_BPE,
-        ops.MAX_NODES,
-        ops.MAX_EXPANSIONS,
-        ops.SEARCH_SAMPLE_ELEMS,
-        types.TARGET_BLOCK_BYTES,
-        ops.PLAN_CANDIDATES,
-        ops.PLAN_PROBE_BLOCKS,
-        ops.UNIFORM_SCORE,
-        prior.PHOG_WEIGHT,
-    });
+fn writeSearchConfigFields(json: *std.json.Stringify, options: search.Options) !void {
+    try json.objectField("transform_layers");
+    try json.write(options.max_depth);
+    try json.objectField("max_depth");
+    try json.write(options.max_depth);
+    try json.objectField("max_depth_semantics");
+    try json.write("maximum_transform_layers");
+    try json.objectField("max_entropy_bpe");
+    try json.write(ops.MAX_ENTROPY_BPE);
+    try json.objectField("max_nodes");
+    try json.write(options.max_nodes);
+    try json.objectField("max_nodes_semantics");
+    try json.write("transforms_plus_terminals_per_program");
+    try json.objectField("max_expansions");
+    try json.write(options.max_expansions);
+    try json.objectField("max_expansions_scope");
+    try json.write("partial_program_pops_per_tensor");
+    try json.objectField("max_realizations");
+    try json.write(options.max_realizations);
+    try json.objectField("max_realizations_scope");
+    try json.write("single_stream_search_only");
+    try json.objectField("tensor_search_uses_max_realizations");
+    try json.write(false);
+    try json.objectField("sample_elems");
+    try json.write(options.sample_elems);
+    try json.objectField("sampling_policy");
+    try json.write("single_centered_contiguous_window");
+    try json.objectField("target_block_bytes");
+    try json.write(types.TARGET_BLOCK_BYTES);
+    try json.objectField("rerank_candidates");
+    try json.write(options.rerank_candidates);
+    try json.objectField("rerank_blocks");
+    try json.write(options.rerank_blocks);
+    try json.objectField("rerank_enabled");
+    try json.write(options.rerank_candidates > 0 and options.rerank_blocks > 0);
+    try json.objectField("enabled_ops_mask");
+    try json.write(options.enabled_ops);
+    try json.objectField("enabled_ops");
+    try json.beginArray();
+    for (std.enums.values(ops.OpKind)) |op| {
+        if (options.enabled_ops & ops.opMask(op) != 0) try json.write(@tagName(op));
+    }
+    try json.endArray();
+    try json.objectField("disabled_ops");
+    try json.beginArray();
+    for (std.enums.values(ops.OpKind)) |op| {
+        if (options.enabled_ops & ops.opMask(op) == 0) try json.write(@tagName(op));
+    }
+    try json.endArray();
+    try json.objectField("uniform_score");
+    try json.write(ops.UNIFORM_SCORE);
+    try json.objectField("phog_weight");
+    try json.write(prior.PHOG_WEIGHT);
+    try json.objectField("candidate_collection");
+    try json.write("all_within_expansion_budget");
+    try json.objectField("sample_byte_pruning");
+    try json.write(false);
+}
+
+fn cmdConfig(out: *std.Io.Writer, options: search.Options) !void {
+    var json: std.json.Stringify = .{
+        .writer = out,
+        .options = .{ .whitespace = .indent_2 },
+    };
+    try json.beginObject();
+    try writeSearchConfigFields(&json, options);
+    try json.endObject();
+    try out.writeByte('\n');
 }
 
 // ==================== shared pipeline ====================
@@ -181,6 +275,23 @@ fn loadPrior(alloc: Allocator, path: ?[]const u8) !prior.Prior {
     return .empty;
 }
 
+fn sha256File(io: std.Io, path: []const u8) ![64]u8 {
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    var reader_buffer: [64 * 1024]u8 = undefined;
+    var chunk: [64 * 1024]u8 = undefined;
+    var reader = file.reader(io, &reader_buffer);
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    while (true) {
+        const n = try reader.interface.readSliceShort(&chunk);
+        hash.update(chunk[0..n]);
+        if (n < chunk.len) break;
+    }
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    hash.final(&digest);
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
 const PlanJob = struct {
     next: std.atomic.Value(usize),
     fails: std.atomic.Value(usize),
@@ -189,6 +300,7 @@ const PlanJob = struct {
     plans: []?search.Plan,
     pr: *const prior.Prior,
     mode: PlanMode,
+    search_options: search.Options,
     alloc: Allocator,
 
     fn run(self: *PlanJob) void {
@@ -205,7 +317,14 @@ const PlanJob = struct {
             };
             const inner: usize = if (view.shape.len == 0) 1 else @intCast(view.shape[view.shape.len - 1]);
             self.plans[tensor_idx] = switch (self.mode) {
-                .search => search.synthesizeTensorPlan(self.alloc, stream, view.dtype, inner, self.pr, .{}),
+                .search => search.synthesizeTensorPlan(
+                    self.alloc,
+                    stream,
+                    view.dtype,
+                    inner,
+                    self.pr,
+                    self.search_options,
+                ),
                 .fixed => search.fixedPlan(self.alloc, view.dtype),
             } catch |err| {
                 std.debug.print("tensor {d} dtype {s}: {t}\n", .{ tensor_idx, @tagName(view.dtype), err });
@@ -343,6 +462,7 @@ fn synthesizePlans(
     pr: *const prior.Prior,
     n_threads: usize,
     mode: PlanMode,
+    search_options: search.Options,
 ) ![]?search.Plan {
     const plans = try alloc.alloc(?search.Plan, tensors.len);
     errdefer freePlans(alloc, plans);
@@ -362,6 +482,7 @@ fn synthesizePlans(
         .plans = plans,
         .pr = pr,
         .mode = mode,
+        .search_options = search_options,
         .alloc = alloc,
     };
     if (tensor_indices.items.len > 0) {
@@ -410,8 +531,9 @@ fn synthesizeBlocks(
     pr: *const prior.Prior,
     n_threads: usize,
     mode: PlanMode,
+    search_options: search.Options,
 ) ![]?search.Result {
-    const plans = try synthesizePlans(alloc, tensors, pr, n_threads, mode);
+    const plans = try synthesizePlans(alloc, tensors, pr, n_threads, mode, search_options);
     defer freePlans(alloc, plans);
     return encodeBlocks(alloc, tensors, blocks, plans, n_threads, null);
 }
@@ -460,7 +582,7 @@ fn rawBytes(tensors: []const safetensors.Tensor) u64 {
 }
 
 fn threadCount(opt: ?usize) usize {
-    return opt orelse (std.Thread.getCpuCount() catch 8);
+    return @max(@as(usize, 1), opt orelse (std.Thread.getCpuCount() catch 8));
 }
 
 fn cmdCalibrate(
@@ -470,6 +592,8 @@ fn cmdCalibrate(
     prior_path: []const u8,
     n_sample: usize,
     jobs: ?usize,
+    search_options: search.Options,
+    format: ReportFormat,
 ) !void {
     const alloc = std.heap.smp_allocator;
 
@@ -478,21 +602,93 @@ fn cmdCalibrate(
     try checkTensors(loaded.tensors);
 
     const n_threads = threadCount(jobs);
-    try out.print("calibrate: {d} tensors, sampling up to {d} on {d} threads\n", .{
-        loaded.tensors.len, n_sample, n_threads,
-    });
-    try out.flush();
+    if (format == .text) {
+        try out.print("calibrate: {d} tensors, sampling up to {d} on at most {d} threads\n", .{
+            loaded.tensors.len, n_sample, n_threads,
+        });
+        try out.flush();
+    }
 
     const t0 = std.Io.Timestamp.now(io, .awake);
-    var trained = try calibrate.train(alloc, loaded.tensors, .{ .max_tensors = n_sample, .threads = n_threads });
+    var trained = try calibrate.train(alloc, loaded.tensors, .{
+        .max_tensors = n_sample,
+        .threads = n_threads,
+        .search_options = search_options,
+    });
     defer trained.prior.deinit(alloc);
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
     try trained.prior.save(alloc, prior_path);
-    try out.print("calibrated {d} tensors in {d}ms; contexts L0={d} L1={d} L2={d} -> {s}\n", .{
-        trained.sampled,                 ms,
-        trained.prior.levels[0].count(), trained.prior.levels[1].count(),
-        trained.prior.levels[2].count(), prior_path,
-    });
+    const context_counts: [3]usize = .{
+        trained.prior.levels[0].count(),
+        trained.prior.levels[1].count(),
+        trained.prior.levels[2].count(),
+    };
+    switch (format) {
+        .text => try out.print("calibrated {d} tensors on {d} threads in {d}ms; contexts L0={d} L1={d} L2={d} -> {s}\n", .{
+            trained.sampled,   trained.threads_used, ms,
+            context_counts[0], context_counts[1],    context_counts[2],
+            prior_path,
+        }),
+        .json => {
+            const input_digest = try sha256File(io, in_path);
+            const prior_digest = try sha256File(io, prior_path);
+            var json: std.json.Stringify = .{
+                .writer = out,
+                .options = .{ .whitespace = .indent_2 },
+            };
+            try json.beginObject();
+            try json.objectField("schema");
+            try json.write(1);
+            try json.objectField("kind");
+            try json.write("brevis.calibration-report");
+            try json.objectField("input");
+            try json.beginObject();
+            try json.objectField("path");
+            try json.write(in_path);
+            try json.objectField("size_bytes");
+            try json.write(loaded.bytes.len);
+            try json.objectField("sha256");
+            try json.write(input_digest[0..]);
+            try json.endObject();
+            try json.objectField("output_prior");
+            try json.beginObject();
+            try json.objectField("path");
+            try json.write(prior_path);
+            try json.objectField("sha256");
+            try json.write(prior_digest[0..]);
+            try json.objectField("nonempty");
+            try json.write(!trained.prior.isEmpty());
+            try json.objectField("context_counts_by_backoff_level");
+            try json.write(context_counts);
+            try json.endObject();
+            try json.objectField("configuration");
+            try json.beginObject();
+            try json.objectField("max_tensors");
+            try json.write(n_sample);
+            try json.objectField("seed");
+            try json.write(calibrate.DEFAULT_SEED);
+            try json.objectField("requested_threads");
+            try json.write(n_threads);
+            try json.objectField("threads_used");
+            try json.write(trained.threads_used);
+            try json.objectField("search");
+            try json.beginObject();
+            try writeSearchConfigFields(&json, search_options);
+            try json.endObject();
+            try json.endObject();
+            try json.objectField("observed");
+            try json.beginObject();
+            try json.objectField("available_tensors");
+            try json.write(loaded.tensors.len);
+            try json.objectField("sampled_tensors");
+            try json.write(trained.sampled);
+            try json.objectField("training_wall_ms");
+            try json.write(ms);
+            try json.endObject();
+            try json.endObject();
+            try out.writeByte('\n');
+        },
+    }
 }
 
 // ==================== compress ====================
@@ -505,6 +701,7 @@ fn cmdCompress(
     prior_path: ?[]const u8,
     jobs: ?usize,
     mode: PlanMode,
+    search_options: search.Options,
 ) !void {
     const alloc = std.heap.smp_allocator;
 
@@ -529,7 +726,7 @@ fn cmdCompress(
     try out.flush();
 
     const t0 = std.Io.Timestamp.now(io, .awake);
-    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads, mode);
+    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads, mode, search_options);
     defer freePlans(alloc, plans);
     const metas = try tensorMetas(alloc, loaded.tensors, blocks);
     defer alloc.free(metas);
@@ -922,6 +1119,13 @@ fn programDepth(node: program.Node) usize {
     return depth;
 }
 
+fn programTransformDepth(node: program.Node) usize {
+    if (node.op.isTerminal()) return 0;
+    var depth: usize = 1;
+    for (node.children) |child| depth = @max(depth, 1 + programTransformDepth(child));
+    return depth;
+}
+
 fn programTerminals(node: program.Node) usize {
     if (node.op.isTerminal()) return 1;
     var n: usize = 0;
@@ -929,21 +1133,27 @@ fn programTerminals(node: program.Node) usize {
     return n;
 }
 
-fn modeName(mode: PlanMode, prior_path: ?[]const u8) []const u8 {
-    return if (mode == .fixed) "fixed" else if (prior_path == null) "uniform" else "phog";
+fn modeName(mode: PlanMode, learned_prior: bool) []const u8 {
+    return if (mode == .fixed) "fixed" else if (learned_prior) "phog" else "uniform";
 }
 
 fn reportJson(
     alloc: Allocator,
     out: *std.Io.Writer,
     in_path: []const u8,
+    input_size_bytes: usize,
+    input_sha256: []const u8,
     tensors: []const safetensors.Tensor,
     blocks: []const Block,
     plans: []const ?search.Plan,
     results: []const ?search.Result,
     mode: PlanMode,
     prior_path: ?[]const u8,
+    prior_sha256: ?[]const u8,
+    learned_prior: bool,
+    prior_counts: [3]usize,
     n_threads: usize,
+    search_options: search.Options,
     planning_ms: i64,
     encoding_ms: i64,
 ) !void {
@@ -958,15 +1168,56 @@ fn reportJson(
     };
     try json.beginObject();
     try json.objectField("schema");
-    try json.write(1);
+    try json.write(2);
     try json.objectField("input");
     try json.write(in_path);
+    try json.objectField("input_size_bytes");
+    try json.write(input_size_bytes);
+    try json.objectField("input_sha256");
+    try json.write(input_sha256);
+    try json.objectField("timing_scope");
+    try json.write("planning_and_block_encoding_only; input/prior hashing excluded");
+    try json.objectField("cache_preconditioning");
+    try json.write("full input SHA-256 scan completed before planning");
     try json.objectField("mode");
-    try json.write(modeName(mode, prior_path));
+    try json.write(modeName(mode, learned_prior));
+    try json.objectField("prior");
+    try json.beginObject();
+    try json.objectField("supplied");
+    try json.write(prior_path != null);
+    try json.objectField("loaded");
+    try json.write(mode == .search and prior_path != null);
+    try json.objectField("applied");
+    try json.write(learned_prior);
+    try json.objectField("guidance_active");
+    try json.write(learned_prior);
+    try json.objectField("path");
+    if (prior_path) |path| try json.write(path) else try json.write(null);
+    try json.objectField("sha256");
+    if (prior_sha256) |digest| try json.write(digest) else try json.write(null);
+    try json.objectField("nonempty");
+    try json.write(learned_prior);
+    try json.objectField("context_counts_by_backoff_level");
+    try json.write(prior_counts);
+    try json.endObject();
     try json.objectField("threads");
     try json.write(n_threads);
+    try json.objectField("requested_threads");
+    try json.write(n_threads);
+    var nonempty_tensors: usize = 0;
+    for (tensors) |tensor| nonempty_tensors += @intFromBool(tensor.view.numel() > 0);
+    try json.objectField("planning_workers_used");
+    try json.write(if (nonempty_tensors == 0) 0 else @min(n_threads, nonempty_tensors));
+    try json.objectField("encoding_workers_used");
+    try json.write(if (blocks.len == 0) 0 else @min(n_threads, blocks.len));
     try json.objectField("target_block_bytes");
     try json.write(types.TARGET_BLOCK_BYTES);
+    try json.objectField("search_options_applied");
+    try json.write(mode == .search);
+    try json.objectField("search");
+    try json.beginObject();
+    try writeSearchConfigFields(&json, search_options);
+    try json.endObject();
     try json.objectField("planning_wall_ms");
     try json.write(planning_ms);
     try json.objectField("encoding_wall_ms");
@@ -1023,16 +1274,36 @@ fn reportJson(
             try renderProgram(a, &buf, plan.root);
             try json.objectField("search_expansions");
             try json.write(plan.expanded);
+            try json.objectField("candidates_realized");
+            if (mode == .search) try json.write(plan.candidates_realized) else try json.write(null);
+            try json.objectField("candidates_reranked");
+            if (mode == .search) try json.write(plan.candidates_reranked) else try json.write(null);
+            try json.objectField("probe_blocks_used");
+            if (mode == .search) try json.write(plan.probe_blocks_used) else try json.write(null);
+            try json.objectField("selected_sample_rank_zero_based");
+            if (mode == .search) try json.write(plan.selected_sample_rank) else try json.write(null);
             try json.objectField("program");
             try json.write(buf.items);
             try json.objectField("program_nodes");
             try json.write(programNodes(plan.root));
             try json.objectField("program_depth");
             try json.write(programDepth(plan.root));
+            try json.objectField("program_node_depth");
+            try json.write(programDepth(plan.root));
+            try json.objectField("program_transform_depth");
+            try json.write(programTransformDepth(plan.root));
             try json.objectField("terminal_count");
             try json.write(programTerminals(plan.root));
         } else {
             try json.objectField("search_expansions");
+            try json.write(null);
+            try json.objectField("candidates_realized");
+            try json.write(null);
+            try json.objectField("candidates_reranked");
+            try json.write(null);
+            try json.objectField("probe_blocks_used");
+            try json.write(null);
+            try json.objectField("selected_sample_rank_zero_based");
             try json.write(null);
             try json.objectField("program");
             try json.write(null);
@@ -1066,6 +1337,10 @@ fn reportJson(
         try json.write(programNodes(result.node));
         try json.objectField("program_depth");
         try json.write(programDepth(result.node));
+        try json.objectField("program_node_depth");
+        try json.write(programDepth(result.node));
+        try json.objectField("program_transform_depth");
+        try json.write(programTransformDepth(result.node));
         try json.objectField("terminal_count");
         try json.write(programTerminals(result.node));
         try json.endObject();
@@ -1083,33 +1358,51 @@ fn cmdBench(
     jobs: ?usize,
     mode: PlanMode,
     format: ReportFormat,
+    search_options: search.Options,
 ) !void {
     const alloc = std.heap.smp_allocator;
 
     var loaded = try safetensors.loadFromPath(alloc, io, in_path);
     defer loaded.deinitMmap(alloc, io);
     try checkTensors(loaded.tensors);
+    var input_digest: ?[64]u8 = null;
+    if (format == .json) input_digest = try sha256File(io, in_path);
 
     var pr = try loadPrior(alloc, if (mode == .search) prior_path else null);
     defer pr.deinit(alloc);
+    const learned_prior = mode == .search and !pr.isEmpty();
+    var prior_digest: ?[64]u8 = null;
+    if (mode == .search) {
+        if (prior_path) |path| prior_digest = try sha256File(io, path);
+    }
+    const prior_counts: [3]usize = .{
+        pr.levels[0].count(),
+        pr.levels[1].count(),
+        pr.levels[2].count(),
+    };
+    const prior_digest_slice: ?[]const u8 = if (prior_digest) |*digest| digest[0..] else null;
 
     const blocks = try planAll(alloc, loaded.tensors);
     defer alloc.free(blocks);
 
     const n_threads = threadCount(jobs);
     if (format == .text) {
-        try out.print("=== brevis bench: {s} ({d} tensors, {d} blocks, {d} threads, {s}) ===\n", .{
+        var nonempty_tensors: usize = 0;
+        for (loaded.tensors) |tensor| nonempty_tensors += @intFromBool(tensor.view.numel() > 0);
+        try out.print("=== brevis bench: {s} ({d} tensors, {d} blocks, {d} requested threads, {d}/{d} planning/encoding workers, {s}) ===\n", .{
             in_path,
             loaded.tensors.len,
             blocks.len,
             n_threads,
-            modeName(mode, prior_path),
+            if (nonempty_tensors == 0) 0 else @min(n_threads, nonempty_tensors),
+            if (blocks.len == 0) 0 else @min(n_threads, blocks.len),
+            modeName(mode, learned_prior),
         });
         try out.flush();
     }
 
     const planning_start = std.Io.Timestamp.now(io, .awake);
-    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads, mode);
+    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads, mode, search_options);
     defer freePlans(alloc, plans);
     const planning_ms = planning_start.durationTo(.now(io, .awake)).toMilliseconds();
 
@@ -1127,13 +1420,19 @@ fn cmdBench(
             alloc,
             out,
             in_path,
+            loaded.bytes.len,
+            if (input_digest) |*digest| digest[0..] else unreachable,
             loaded.tensors,
             blocks,
             plans,
             results,
             mode,
             prior_path,
+            prior_digest_slice,
+            learned_prior,
+            prior_counts,
             n_threads,
+            search_options,
             planning_ms,
             encoding_ms,
         ),
@@ -1234,7 +1533,7 @@ fn cmdDemo(io: std.Io, out: *std.Io.Writer) !void {
     try out.flush();
 
     const t0 = std.Io.Timestamp.now(io, .awake);
-    const results = try synthesizeBlocks(alloc, tensors.items, blocks, &pr, threadCount(null), .search);
+    const results = try synthesizeBlocks(alloc, tensors.items, blocks, &pr, threadCount(null), .search, .{});
     defer freeResults(alloc, results);
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
 

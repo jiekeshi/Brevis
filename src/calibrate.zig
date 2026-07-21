@@ -11,16 +11,19 @@ const Stream = types.Stream;
 const Dtype = types.Dtype;
 const ROOT_PARENT: u8 = 255;
 pub const DEFAULT_TENSORS: usize = 200;
+pub const DEFAULT_SEED: u64 = 0x5EED_B10C;
 
 pub const Options = struct {
     max_tensors: usize = DEFAULT_TENSORS,
     threads: usize = 1,
-    seed: u64 = 0x5EED_B10C,
+    seed: u64 = DEFAULT_SEED,
+    search_options: search.Options = .{},
 };
 
 pub const Result = struct {
     prior: prior.Prior,
     sampled: usize,
+    threads_used: usize,
 };
 
 fn pickTensors(alloc: Allocator, tensors: []const safetensors.Tensor, n: usize, seed: u64) ![]u32 {
@@ -98,6 +101,7 @@ const Job = struct {
     tensors: []const safetensors.Tensor,
     picked: []const u32,
     counts: []prior.Counts,
+    search_options: search.Options,
 
     fn run(self: *Job, slot: usize) void {
         var next = slot;
@@ -118,9 +122,19 @@ const Job = struct {
             .owns_data = false,
         };
         const inner: usize = if (view.shape.len == 0) 1 else @intCast(view.shape[view.shape.len - 1]);
-        var plan = try search.synthesizeTensorPlan(self.alloc, full, view.dtype, inner, &prior.Prior.empty, .{});
+        var plan = try search.synthesizeTensorPlan(
+            self.alloc,
+            full,
+            view.dtype,
+            inner,
+            &prior.Prior.empty,
+            self.search_options,
+        );
         defer plan.deinit(self.alloc);
-        var sample = try search.planningSample(self.alloc, full, ops.SEARCH_SAMPLE_ELEMS);
+        var sample = if (self.search_options.sample_elems == 0)
+            try full.dupe(self.alloc)
+        else
+            try search.planningSample(self.alloc, full, self.search_options.sample_elems);
         defer sample.deinit(self.alloc);
         try accumulate(self.alloc, &self.counts[slot], plan.root, sample, tensor.view.dtype, 0, 0, ROOT_PARENT, 1);
     }
@@ -140,6 +154,7 @@ fn mergeCounts(alloc: Allocator, dst: *prior.Counts, src: prior.Counts) !void {
 pub fn train(alloc: Allocator, tensors: []const safetensors.Tensor, options: Options) !Result {
     const picked = try pickTensors(alloc, tensors, options.max_tensors, options.seed);
     defer alloc.free(picked);
+    if (picked.len == 0) return error.NoCalibrationTensors;
     const n_threads = @max(@as(usize, 1), @min(options.threads, @max(picked.len, 1)));
     const per_thread = try alloc.alloc(prior.Counts, n_threads);
     defer {
@@ -148,7 +163,13 @@ pub fn train(alloc: Allocator, tensors: []const safetensors.Tensor, options: Opt
     }
     for (per_thread) |*counts| counts.* = prior.Counts.init(alloc);
 
-    var job: Job = .{ .alloc = alloc, .tensors = tensors, .picked = picked, .counts = per_thread };
+    var job: Job = .{
+        .alloc = alloc,
+        .tensors = tensors,
+        .picked = picked,
+        .counts = per_thread,
+        .search_options = options.search_options,
+    };
     const threads = try alloc.alloc(std.Thread, n_threads);
     defer alloc.free(threads);
     var spawned: usize = 0;
@@ -163,7 +184,11 @@ pub fn train(alloc: Allocator, tensors: []const safetensors.Tensor, options: Opt
     var counts = prior.Counts.init(alloc);
     defer counts.deinit(alloc);
     for (per_thread) |thread_counts| try mergeCounts(alloc, &counts, thread_counts);
-    return .{ .prior = try counts.toPrior(alloc), .sampled = picked.len };
+    return .{
+        .prior = try counts.toPrior(alloc),
+        .sampled = picked.len,
+        .threads_used = n_threads,
+    };
 }
 
 test "calibration trains a tensor planning sample" {
@@ -180,5 +205,13 @@ test "calibration trains a tensor planning sample" {
     var trained = try train(alloc, &.{tensor}, .{});
     defer trained.prior.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 1), trained.sampled);
+    try std.testing.expectEqual(@as(usize, 1), trained.threads_used);
     try std.testing.expect(trained.prior.levels[0].count() > 0);
+}
+
+test "calibration rejects an empty tensor selection" {
+    try std.testing.expectError(
+        error.NoCalibrationTensors,
+        train(std.testing.allocator, &.{}, .{}),
+    );
 }
