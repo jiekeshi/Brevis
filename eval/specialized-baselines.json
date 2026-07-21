@@ -1,0 +1,593 @@
+{
+  "schema": "brevis.specialized-baseline-protocol",
+  "schema_version": 1,
+  "protocol_status": "preregistered_not_run",
+  "frozen_at_utc": "2026-07-21",
+  "contains_experimental_results": false,
+  "model_manifest": {
+    "path": "eval/models-tiered.json",
+    "sha256": "84202aee827632724d7441e9ae4725633778cdafacc4f31eaf4449a044b988ad"
+  },
+  "global_rules": {
+    "evaluation_unit": "one exact manifest-listed safetensors file; model results sum file-level raw bytes, charged archive bytes, and elapsed times",
+    "strict_whole_file_accounting": {
+      "raw_bytes": "the complete input file, including the safetensors length word, JSON header, metadata, padding or gaps, tensor payloads, and any trailing bytes",
+      "charged_archive_bytes": "the sum of every file or byte range that must be retained to restore the input without consulting the original",
+      "must_charge": [
+        "codec payloads",
+        "raw or unsupported-dtype passthrough payloads",
+        "verbatim container bytes and padding",
+        "codebooks, dtype and shape tables, offset tables, and framing",
+        "a selected pipeline or program description",
+        "any input-specific generated artifact required by the decoder"
+      ],
+      "may_exclude": "a pinned, input-independent codec executable or library, under the same convention used for gzip, Brevis, and the other baselines",
+      "fresh_decode_rule": "a fresh process must restore the complete file using only the charged archive and pinned input-independent software",
+      "correctness": "restored byte length and SHA-256 must equal the manifest-bound input; tensor equality or model-output equality alone is insufficient",
+      "effectiveness_metrics": [
+        "raw_bytes",
+        "charged_archive_bytes",
+        "compression_ratio_raw_over_archive",
+        "storage_saving_one_minus_archive_over_raw"
+      ],
+      "expansion_policy": "retain and report negative storage saving; never replace an expanded archive with an omitted row"
+    },
+    "timing": {
+      "cache_condition": "best-effort buffered-cache conditioning, not guaranteed warm-cache and not cold-I/O throughput",
+      "small_and_medium": {
+        "warmups": 1,
+        "measured_repetitions": 6
+      },
+      "large_and_ultra": {
+        "warmups": 1,
+        "measured_repetitions": 4
+      },
+      "order": "seeded forward/reverse method-order pairs",
+      "schedule_seed": 2701,
+      "primary_cpu_workers": 1,
+      "record_per_operation": [
+        "wall_seconds",
+        "direct_child_peak_rss_bytes",
+        "exit_code",
+        "stdout_sha256",
+        "stderr_sha256"
+      ],
+      "aggregate_statistics": [
+        "all observations",
+        "arithmetic mean",
+        "sample standard deviation with ddof=1",
+        "median",
+        "minimum",
+        "maximum",
+        "coefficient of variation"
+      ],
+      "separate_phases": [
+        "source verification",
+        "build",
+        "adapter preparation",
+        "search when applicable",
+        "code generation when applicable",
+        "compression",
+        "decompression",
+        "post-timing whole-file verification"
+      ]
+    },
+    "coverage": {
+      "row_policy": "emit one row for every preregistered method/profile/model file combination, including failures and inapplicable combinations",
+      "no_selective_reporting": true,
+      "domain_policy": "domain-mismatched byte-exact runs remain labeled and are not pooled with in-domain specialized-baseline results"
+    },
+    "allowed_runtime_statuses": [
+      "success",
+      "failed_input_integrity",
+      "failed_source_integrity",
+      "failed_build",
+      "failed_adapter",
+      "failed_domain_gate",
+      "failed_gpu_gate",
+      "failed_compress",
+      "failed_decompress",
+      "failed_roundtrip",
+      "timeout",
+      "oom",
+      "skipped_resource",
+      "not_applicable"
+    ],
+    "failure_record_requirements": [
+      "status",
+      "phase",
+      "method and profile",
+      "model tag and filename",
+      "source and executable hashes available before failure",
+      "exact argv and relevant environment",
+      "timeout and memory limits",
+      "exit code or signal",
+      "stdout and stderr hashes",
+      "human-readable reason"
+    ]
+  },
+  "baselines": [
+    {
+      "id": "zipnn-0.5.4-strict",
+      "display_name": "ZipNN",
+      "baseline_decision": "conditional_planned",
+      "protocol_status": "not_run_adapter_required",
+      "source": {
+        "repository": "https://github.com/zipnn/zipnn",
+        "version": "0.5.4",
+        "git_commit": "6009704271394f0497dd6352f72aedc6b947bfc0",
+        "sdist": {
+          "url": "https://files.pythonhosted.org/packages/97/3c/08fd51416b56a40e3da4cb968b2b1ad424a7123db5c82397076f4d199390/zipnn-0.5.4.tar.gz",
+          "sha256": "abf45dbf41838f83aa2601dfb59c856b557b1df9c07cc243d93098ed889ce650"
+        }
+      },
+      "references": [
+        "https://arxiv.org/abs/2411.05239"
+      ],
+      "domain_match": {
+        "native_tensor_dtypes": [
+          "F32",
+          "F16",
+          "BF16"
+        ],
+        "unsupported_tensor_policy": "store verbatim and charge in full; do not describe I8 or FP8 payloads as natively ZipNN-compressed",
+        "classification_by_model": {
+          "small-bert-f32": "native_dtype",
+          "small-vit-f32": "native_dtype",
+          "small-smollm-w8a8": "mixed_native_and_raw_passthrough",
+          "medium-tinyllama-bf16": "native_dtype",
+          "medium-whisper-v3-f16": "native_dtype",
+          "medium-sdxl-base-f16": "native_dtype",
+          "large-qwen3-8b-bf16": "native_dtype",
+          "large-qwen3-30b-a3b-bf16": "native_dtype",
+          "large-qwen3-30b-a3b-fp8": "mixed_native_and_raw_passthrough",
+          "ultra-glm52-bf16-positional-3shard": "native_dtype"
+        }
+      },
+      "profiles": [
+        {
+          "id": "safetensors-huffman",
+          "upstream_method": "HUFFMAN",
+          "threads": 1,
+          "purpose": "primary serial specialized baseline using the pinned release's documented safetensors path"
+        }
+      ],
+      "strict_adapter_contract": {
+        "implementation_status": "not_implemented",
+        "block_formal_runs_until_implemented_and_tested": true,
+        "requirements": [
+          "parse tensor spans without rewriting the original safetensors representation",
+          "retain every non-tensor byte verbatim",
+          "apply ZipNN only to F32, F16, and BF16 tensor payloads",
+          "store unsupported tensors and non-beneficial compressed tensors verbatim",
+          "charge the wrapper header, per-tensor mode table, ZipNN payloads, and all passthrough bytes",
+          "restore original tensor order, offsets, metadata, padding, and trailing bytes",
+          "verify exact whole-file SHA-256 in a fresh process"
+        ],
+        "upstream_script_is_not_sufficient": "the pinned safetensors scripts load tensors and call save_file, so tensor equality does not establish byte-identical restoration of the original container"
+      },
+      "cost_accounting": {
+        "compression": "strict-adapter parse plus ZipNN encoding plus archive write",
+        "decompression": "archive read plus ZipNN decoding plus exact original-file materialization",
+        "verification": "outside codec timing but mandatory",
+        "parallel_scaling": "repeat separately with --threads equal to each preregistered worker count"
+      },
+      "repeat_policy": "use the global tier-specific warmup and measured-repetition schedule after the adapter gate passes"
+    },
+    {
+      "id": "dfloat11-0.5.0-tinyllama-strict",
+      "display_name": "DFloat11",
+      "baseline_decision": "conditional_planned",
+      "protocol_status": "not_run_adapter_and_gpu_gate_required",
+      "source": {
+        "repository": "https://github.com/LeanModels/DFloat11",
+        "version": "0.5.0",
+        "git_commit": "457733886ce6ebc6d8dda1621fad1ffa2661e028",
+        "decode_ptx": {
+          "url": "https://raw.githubusercontent.com/LeanModels/DFloat11/457733886ce6ebc6d8dda1621fad1ffa2661e028/dfloat11/decode.ptx",
+          "sha256": "cc9b78f6a14c9118abf46a733390f14ef66a9c2eb4db04ded9b74183a02665cf"
+        },
+        "decode_cu": {
+          "url": "https://raw.githubusercontent.com/LeanModels/DFloat11/457733886ce6ebc6d8dda1621fad1ffa2661e028/dfloat11/decode.cu",
+          "sha256": "9b9a3c7c491bcdd4a85949da4c337ac1ce7f9de627eea3d18cd335878d186950"
+        }
+      },
+      "references": [
+        "https://arxiv.org/abs/2504.11651",
+        "https://openreview.net/forum?id=xdNAVP7TGy"
+      ],
+      "domain_match": {
+        "eligible_model_tags": [
+          "medium-tinyllama-bf16"
+        ],
+        "classification": "BF16 Llama-family weight compression with architecture-specific module patterns",
+        "all_other_manifest_tags": "not_applicable",
+        "reason_for_narrow_scope": "the current comparison requires an exact original-input compression path; publisher-precompressed DFloat11 models and unrelated architectures are not substitutes for the pinned TinyLlama file"
+      },
+      "profile": {
+        "id": "single-file-bf16",
+        "upstream_function": "dfloat11.compress_model",
+        "save_single_file": true,
+        "check_correctness": true,
+        "block_range": [
+          0,
+          10000
+        ],
+        "pattern_dict": "must be architecture-specific, frozen in the adapter before the first formal run, and retained verbatim in raw results"
+      },
+      "gpu_gate": {
+        "status": "not_run",
+        "requirements": [
+          "CUDA 12-compatible runtime and PyTorch/CuPy builds",
+          "record GPU model, compute capability, driver, CUDA runtime, PyTorch, and CuPy versions",
+          "verify the pinned decode.ptx and decode.cu SHA-256 values",
+          "load the pinned PTX on the actual evaluation GPU without a PTX-JIT or kernel-image error",
+          "decode a deterministic BF16 smoke tensor and compare every output bit",
+          "record peak GPU memory and synchronize CUDA around timed decode regions"
+        ],
+        "failure_status": "failed_gpu_gate"
+      },
+      "strict_adapter_contract": {
+        "implementation_status": "not_implemented",
+        "block_formal_runs_until_implemented_and_tested": true,
+        "requirements": [
+          "compress the manifest-bound TinyLlama BF16 file rather than downloading a precompressed replacement",
+          "charge every generated safetensors file, DFloat11 table, configuration field, and input-specific sidecar needed for decoding",
+          "retain verbatim original container bytes needed to reconstruct the exact safetensors serialization",
+          "materialize the original complete file, not merely weights in GPU memory or equivalent model outputs",
+          "verify exact whole-file SHA-256 in a fresh process"
+        ]
+      },
+      "cost_accounting": {
+        "offline_compression": "record model load, DFloat11 encoding, strict framing, and archive write separately and end to end",
+        "archive_decompression": "time exact file materialization for the storage comparison",
+        "on_the_fly_gpu_decode": "may be reported as a separate systems metric, never substituted for archive decompression time",
+        "inference": "outside the primary storage benchmark unless a separately preregistered inference experiment is added"
+      },
+      "repeat_policy": "one global medium-tier warmup plus six measured archive operations after both adapter and GPU gates pass; CUDA timing also requires explicit synchronization"
+    },
+    {
+      "id": "fpcompress-1.0.3-cpu",
+      "display_name": "FPcompress",
+      "baseline_decision": "planned",
+      "protocol_status": "not_run",
+      "source": {
+        "repository": "https://github.com/burtscher/FPcompress",
+        "version": "1.0.3",
+        "git_commit": "97f037249bd28682bfd83462ea1129e14df36d81",
+        "artifact_doi": "https://doi.org/10.5281/zenodo.14061031"
+      },
+      "references": [
+        "https://userweb.cs.txstate.edu/~burtscher/papers/asplos25.pdf"
+      ],
+      "domain_match": {
+        "eligible_model_tags": [
+          "small-bert-f32",
+          "small-vit-f32"
+        ],
+        "classification": "predominantly_in_domain_f32_with_container_header",
+        "all_other_manifest_tags": "not_applicable",
+        "hard_gates": [
+          "complete file size is positive and less than 2147483648 bytes because the pinned CPU programs use int-sized file lengths",
+          "complete file size is divisible by 4",
+          "manifest and local SHA-256 match"
+        ],
+        "input_policy": "pass the complete safetensors file directly; the header is processed and charged rather than stripped"
+      },
+      "build": {
+        "script": "python3 compile.py",
+        "required_outputs": [
+          "single_src/bin/speed-cpu-compress.exe",
+          "single_src/bin/speed-cpu-decompress.exe",
+          "single_src/bin/ratio-cpu-compress.exe",
+          "single_src/bin/ratio-cpu-decompress.exe"
+        ],
+        "gate": "require all CPU outputs even if compile.py itself returns success after an individual compiler failure; record compiler version, full command, and executable SHA-256"
+      },
+      "profiles": [
+        {
+          "id": "SPspeed",
+          "pipeline": "DIFFMS_4 HCLOG_4",
+          "compress_argv": [
+            "single_src/bin/speed-cpu-compress.exe",
+            "{input}",
+            "{archive}"
+          ],
+          "decompress_argv": [
+            "single_src/bin/speed-cpu-decompress.exe",
+            "{archive}",
+            "{restored}"
+          ]
+        },
+        {
+          "id": "SPratio",
+          "pipeline": "DIFFMS_4 BIT_4 RZE_1",
+          "compress_argv": [
+            "single_src/bin/ratio-cpu-compress.exe",
+            "{input}",
+            "{archive}"
+          ],
+          "decompress_argv": [
+            "single_src/bin/ratio-cpu-decompress.exe",
+            "{archive}",
+            "{restored}"
+          ]
+        }
+      ],
+      "environment": {
+        "OMP_NUM_THREADS": "1 for the primary serial comparison; use the exact requested worker count only in a separately labeled scaling run"
+      },
+      "strict_adapter_contract": {
+        "implementation_status": "direct_whole_file_cli",
+        "charged_output": "the complete executable-produced archive",
+        "correctness": "exact restored length and SHA-256"
+      },
+      "repeat_policy": "one warmup plus six measured repetitions on each of the two eligible small-model files for each profile"
+    },
+    {
+      "id": "spdp-1.1",
+      "display_name": "SPDP",
+      "baseline_decision": "planned",
+      "protocol_status": "not_run",
+      "source": {
+        "homepage": "https://userweb.cs.txstate.edu/~burtscher/research/SPDPcompressor/",
+        "version": "1.1",
+        "source_file": {
+          "url": "https://userweb.cs.txstate.edu/~burtscher/research/SPDPcompressor/SPDP_11.c",
+          "sha256": "c0b6caa9bca5671b7bf72d4d6be763f3231edbbe4c53e1f3a4a8bcbb8a863116"
+        }
+      },
+      "domain_match": {
+        "classification_by_model": {
+          "small-bert-f32": "predominantly_in_domain_f32_with_container_header",
+          "small-vit-f32": "predominantly_in_domain_f32_with_container_header",
+          "small-smollm-w8a8": "out_of_domain_but_byte_exact",
+          "medium-tinyllama-bf16": "out_of_domain_but_byte_exact",
+          "medium-whisper-v3-f16": "out_of_domain_but_byte_exact",
+          "medium-sdxl-base-f16": "out_of_domain_but_byte_exact",
+          "large-qwen3-8b-bf16": "out_of_domain_but_byte_exact",
+          "large-qwen3-30b-a3b-bf16": "out_of_domain_but_byte_exact",
+          "large-qwen3-30b-a3b-fp8": "out_of_domain_but_byte_exact",
+          "ultra-glm52-bf16-positional-3shard": "out_of_domain_but_byte_exact"
+        },
+        "reporting_rule": "report out-of-domain rows separately and do not use them to claim a matched floating-point-specialized comparison"
+      },
+      "build": {
+        "argv": [
+          "gcc",
+          "-O3",
+          "SPDP_11.c",
+          "-o",
+          "spdp"
+        ],
+        "record": "gcc version, exact argv, source SHA-256, and executable SHA-256"
+      },
+      "profiles": [
+        {
+          "id": "level-0-speed",
+          "level": 0,
+          "compress_shell_equivalent": "spdp 0 < {input} > {archive}",
+          "decompress_shell_equivalent": "spdp < {archive} > {restored}"
+        },
+        {
+          "id": "level-5-middle",
+          "level": 5,
+          "compress_shell_equivalent": "spdp 5 < {input} > {archive}",
+          "decompress_shell_equivalent": "spdp < {archive} > {restored}"
+        },
+        {
+          "id": "level-9-ratio",
+          "level": 9,
+          "compress_shell_equivalent": "spdp 9 < {input} > {archive}",
+          "decompress_shell_equivalent": "spdp < {archive} > {restored}"
+        }
+      ],
+      "thread_policy": "single process with no exposed worker control",
+      "strict_adapter_contract": {
+        "implementation_status": "direct_whole_file_stdio",
+        "charged_output": "every byte written to stdout by the compressor",
+        "correctness": "exact restored length and SHA-256"
+      },
+      "repeat_policy": "use the global tier-specific schedule on every manifest file, subject to preregistered timeout and resource gates"
+    },
+    {
+      "id": "fpzip-1.3.0-full-precision",
+      "display_name": "fpzip",
+      "baseline_decision": "planned",
+      "protocol_status": "not_run",
+      "source": {
+        "repository": "https://github.com/LLNL/fpzip",
+        "version": "1.3.0",
+        "git_commit": "4a539c06d98b1c029b08324a086d4b75689a2b72"
+      },
+      "references": [
+        "https://computing.llnl.gov/projects/fpzip"
+      ],
+      "domain_match": {
+        "eligible_model_tags": [
+          "small-bert-f32",
+          "small-vit-f32"
+        ],
+        "classification": "dtype_matched_but_unstructured_1d_and_container_header",
+        "all_other_manifest_tags": "not_applicable",
+        "limitation": "fpzip targets correlated floating-point arrays and its own README says it is not suitable for unstructured streams; these rows test the two F32 files without implying a spatial-data match"
+      },
+      "profile": {
+        "id": "f32-1d-full-precision",
+        "precision_bits": 32,
+        "input_geometry_by_model": {
+          "small-bert-f32": {
+            "nx": 110112442,
+            "input_bytes": 440449768
+          },
+          "small-vit-f32": {
+            "nx": 86573463,
+            "input_bytes": 346293852
+          }
+        },
+        "compress_argv": [
+          "fpzip",
+          "-q",
+          "-t",
+          "float",
+          "-p",
+          "32",
+          "-1",
+          "{input_bytes_divided_by_4}",
+          "-i",
+          "{input}",
+          "-o",
+          "{archive}"
+        ],
+        "decompress_argv": [
+          "fpzip",
+          "-d",
+          "-q",
+          "-i",
+          "{archive}",
+          "-o",
+          "{restored}"
+        ]
+      },
+      "hard_gates": [
+        "input length equals the preregistered value",
+        "input length is divisible by 4",
+        "nx equals input_bytes / 4",
+        "precision is exactly 32, never a lossy setting"
+      ],
+      "strict_adapter_contract": {
+        "implementation_status": "direct_whole_file_cli",
+        "charged_output": "the complete fpzip stream, including its header",
+        "correctness": "exact restored length and SHA-256"
+      },
+      "repeat_policy": "one warmup plus six measured repetitions on each eligible small-model file"
+    },
+    {
+      "id": "adaptivefc-lc-1.2-ga",
+      "display_name": "AdaptiveFC via LC framework",
+      "baseline_decision": "conditional_planned",
+      "protocol_status": "not_run_resource_gated",
+      "source": {
+        "repository": "https://github.com/burtscher/LC-framework",
+        "version": "1.2",
+        "git_commit": "0553cd874ceabd7189653dd5d28958c68256bf3b"
+      },
+      "references": [
+        "https://userweb.cs.txstate.edu/~burtscher/papers/essa24.pdf"
+      ],
+      "domain_match": {
+        "eligible_model_tags": [
+          "small-bert-f32",
+          "small-vit-f32"
+        ],
+        "classification": "paper_domain_f32_with_container_header_charged",
+        "all_other_manifest_tags": "not_applicable",
+        "explicit_exclusion": "the mixed-I8/BF16 SmolLM and every GB-scale non-F32 entry are dtype/domain mismatches for this preregistered paper-inspired protocol, not resource skips"
+      },
+      "ga_configuration": {
+        "stages": 5,
+        "generations": 140,
+        "population": 20,
+        "mutation_rate": 0.8,
+        "elitism_cutoff": 0.1,
+        "selection_method": "tournament",
+        "crossover_method": "masked",
+        "preprocessors": "none",
+        "component_space": "the pinned LC 1.2 lossless component list",
+        "pilot_seed": 0,
+        "expanded_seeds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "seed_provenance": "the AdaptiveFC paper reports nine runs but does not publish the nine seed values; 0 through 8 are newly preregistered Brevis seeds",
+        "replication_label": "reproduction_inspired_not_exact_seed_replication",
+        "command_template": [
+          "python3",
+          "scripts/ga_search.py",
+          "--stages",
+          "5",
+          "--generations",
+          "140",
+          "--population",
+          "20",
+          "--mutation_rate",
+          "0.8",
+          "--elitism_cutoff",
+          "0.1",
+          "--SELECTION_METHOD",
+          "tournament",
+          "--CROSSOVER_METHOD",
+          "masked",
+          "--randomseed",
+          "{seed}",
+          "--logger",
+          "{input}"
+        ]
+      },
+      "resource_gate": {
+        "stage_1": "run one seed-0 pilot on each eligible file and retain its complete logs, costs, selected pipeline, and correctness status",
+        "stage_2": "run all seeds 0 through 8 only if both pilots pass whole-file correctness and the recorded wall-time, memory, and disk budget permits the complete expansion",
+        "partial_policy": "if expansion stops, retain completed seeds, mark missing seeds skipped_resource with the same threshold, and do not call the subset a nine-seed reproduction"
+      },
+      "search_and_cost_accounting": {
+        "must_record_separately": [
+          "framework generation and build time",
+          "GA search time and peak RSS for every seed",
+          "number of unique pipelines evaluated",
+          "selected pipeline and its measured objective",
+          "standalone code-generation time",
+          "selected-codec build time",
+          "archive compression time and peak RSS",
+          "archive decompression time and peak RSS"
+        ],
+        "end_to_end_compression_time": "GA search plus per-input code generation/build plus one archive compression; framework build is also reported and included if it is input-specific",
+        "steady_state_time": "compression or decompression using the already selected pipeline, labeled separately from end to end",
+        "selection_rule": "report every completed seed; do not choose the best seed as the primary result",
+        "optional_best_of_nine": "may appear only as a labeled secondary analysis whose cost includes all nine searches"
+      },
+      "strict_adapter_contract": {
+        "implementation_status": "not_implemented",
+        "requirements": [
+          "search and compress the complete safetensors bytes, including the header",
+          "place a complete selected-pipeline description and framing in the charged archive",
+          "decode in a fresh process using only the archive and pinned input-independent LC software",
+          "if an input-specific generated binary is required and cannot be replaced by an input-independent decoder plus the archived description, include and charge that binary",
+          "verify exact restored length and SHA-256"
+        ]
+      },
+      "repeat_policy": "GA variability uses the fixed seed protocol; after selection, seed 0's fixed pipeline receives one warmup plus six measured steady-state compression/decompression repetitions, while every completed seed receives at least one full round-trip correctness run"
+    },
+    {
+      "id": "weight-compression-audit-only",
+      "display_name": "brianbell-x/weight-compression",
+      "baseline_decision": "excluded_not_executable_baseline",
+      "protocol_status": "not_a_baseline",
+      "source": {
+        "repository": "https://github.com/brianbell-x/weight-compression",
+        "git_commit": "b9510aaac657b04e11d2f0d0d51a9b94af159590"
+      },
+      "domain_match": {
+        "classification": "BF16 weight-compression research artifact"
+      },
+      "exclusion_reasons": [
+        "the reported K15 charged-format number is an estimate and was not independently serialized and decoded at GLM scale",
+        "the byte-split path validates tensor round trips but does not provide the matched, timed complete-file archive/decompress interface required here",
+        "the dense 12-bit GPU prototype does not fuse the sparse exact correction and is not a complete exact serving path",
+        "using an estimate or a partial prototype as an observed archive baseline would violate strict whole-file accounting"
+      ],
+      "permitted_use": [
+        "related work",
+        "experimental-design evidence",
+        "a seed for future adapter work after a complete exact archive path exists"
+      ],
+      "result_row_policy": "do not emit compression-ratio or timing measurements; preserve this explicit exclusion record"
+    }
+  ]
+}
