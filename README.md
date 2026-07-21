@@ -1,25 +1,27 @@
 # Brevis
 
-Brevis 对神经网络张量做逐比特精确的无损压缩。核心不是手写一个固定编解码器，而是在有限、类型化、构造上可逆的 DSL 中，为每个张量合成一个短程序。
+Brevis provides bit-exact lossless compression for neural-network tensors.
 
-压缩产物是“程序 + 叶子数据 + 必要元数据”。解压不做搜索，只执行已保存的程序，精确重建原始 safetensors 文件。
+Instead of using a fixed, hand-written codec, it synthesizes a short program for each tensor in a finite, typed language whose operations are reversible by construction.
 
-项目使用 Zig 0.16。
+An archive contains the program, leaf data, and required metadata. Decompression performs no search; it executes the stored program to reconstruct the original safetensors file exactly.
 
-## 快速开始
+Brevis uses Zig 0.16.
+
+## Quick Start
 
 ```bash
 zig build -Doptimize=ReleaseFast
 
-# 可选：从当前模型校准 PHOG 先验
+# Optional: calibrate a grammar prior from the current model
 ./zig-out/bin/brevis calibrate model.safetensors prior.bin
 
-# 不传 --prior 即为 uniform 搜索
+# Compress with the prior; omit --prior to use uniform search
 ./zig-out/bin/brevis compress model.safetensors model.brv --prior prior.bin
 ./zig-out/bin/brevis decompress model.brv restored.safetensors
 ./zig-out/bin/brevis verify model.brv model.safetensors
 
-# 控制线程数或校准张量数
+# Set the thread count or number of calibration tensors
 ./zig-out/bin/brevis compress model.safetensors model.brv --jobs 12
 ./zig-out/bin/brevis calibrate model.safetensors prior.bin --tensors 200
 ```
@@ -29,94 +31,104 @@ zig build test -Doptimize=ReleaseFast
 python3 -m unittest discover -s eval -p 'test_*.py'
 ```
 
-## 整体流程
+## Pipeline
 
 ```text
 safetensors
-  → mmap 读取并按张量规划 block
-  → 在张量样本上搜索可逆程序模板
-  → 为每个 block 拟合少量参数并执行程序
-  → 终端用 raw / bitpack / Huffman / rANS 编码
-  → 流式写入 .brv
+  → memory-map the input and plan blocks per tensor
+  → search for a reversible program template on tensor samples
+  → fit small per-block parameters and execute the program
+  → encode terminal streams with raw / bitpack / Huffman / rANS
+  → stream output to .brv
 
 .brv
-  → 读取程序、side information 和 payload
-  → 执行终端解码
-  → 逆序执行可逆变换
-  → 恢复原始 safetensors header 与张量字节
+  → read the program, side information, and payload
+  → decode terminal streams
+  → apply reversible transforms in reverse order
+  → restore the original safetensors header and tensor bytes
 ```
 
-输入和 archive 均使用 mmap。压缩结果分批生成并顺序写盘，不在内存中保存整模型 archive，因此可以处理多分片大模型。
+Inputs and archives are memory-mapped when read. Compression generates frames in batches and writes them in order instead of retaining the complete archive in memory, allowing bounded-memory processing of large sharded models.
 
-## 可逆 DSL
+## Reversible Language
 
-搜索状态是一棵带 hole 的类型化程序树。每个非终端算子都定义了 `forward` 和对应逆变换；终端算子把最后的整数流编码成字节。
+A search state is a typed program tree with holes. Every nonterminal operator defines a `forward` transform and its inverse; terminal operators encode the final integer streams as bytes.
 
-变换包括常量异或、模加、相邻异或、差分、Gray、位旋转、字段拆分、浮点字段拆分、RLE、codebook、bit-plane 和 byte-plane。终端为 `raw`、`bitpack`、canonical Huffman 与 rANS。
+Transforms include constant XOR, modular addition, adjacent XOR, differencing, Gray coding, bit rotation, field and floating-point field splitting, run-length encoding, codebooks, bit planes, and byte planes.
 
-算子的合法性由输入位宽、dtype、树深和 arity 决定。`raw` 始终提供可逆回退，因此任意受支持张量都有合法程序。
+Terminals are `raw`, `bitpack`, canonical Huffman, and rANS.
 
-## PHOG 引导的 A*
+Operator applicability depends on input bit width, dtype, tree depth, and arity. `raw` is always available as a reversible fallback, so every supported tensor has at least one valid program.
 
-搜索同时维护两种彼此独立的成本：
+## Grammar-Guided A* Search
 
-- `p` 是 PHOG 给出的语法描述长度，只决定 A* 先展开哪个 partial program。
-- `g_bytes + lowerBound` 是序列化字节下界，用于安全剪枝；完整程序最终按真实 archive 字节数比较。
+Brevis uses a probabilistic higher-order grammar (PHOG) to order the search. It maintains two independent costs:
 
-PHOG 不改变压缩目标，只在有限搜索预算内改变候选到达顺序。没有 prior 时使用 uniform 分布，便于直接测量先验的贡献。
+- `p` is the grammar description length. It only determines which partial program A* expands first.
+- `g_bytes + lowerBound` is a lower bound on serialized bytes. It enables safe pruning; complete programs are compared by their actual archive size.
 
-在变换仍可使用的浅层 hole 上，经验熵不是合法下界，因为可逆变换可能大幅降低它。此时只计算必需的 terminal frame 成本；达到最大变换深度后，才加入 Shannon payload 下界。
+PHOG does not change the compression objective. It only changes candidate order within a bounded search budget. Without a prior, Brevis uses a uniform distribution so the prior's contribution can be measured directly.
 
-### 模型内校准
+Empirical entropy is not a valid lower bound at shallow holes where transforms remain available, because a reversible transform may reduce it sharply.
 
-校准不依赖外部训练语料。它按 dtype 和张量规模分层抽样，在每个张量的四个连续窗口上搜索候选，再把前八个候选放到四个代表 block 上按真实编码字节复排。
+At those holes, the bound includes only required terminal-frame costs. A Shannon payload bound is added only after the maximum transform depth is reached.
 
-获胜程序被转换成 `(context, production)` 计数。Context 包含树位置、dtype、位宽以及分桶后的熵、零值比例和差分特征，并使用三级 backoff。最终 prior 与 uniform 混合，避免过度相信稀疏统计。
+### Model-Local Calibration
 
-## Archive 与解码
+Calibration requires no external corpus. It stratifies samples by dtype and tensor size, searches four contiguous windows per tensor, then reranks the top eight candidates on four representative blocks using actual encoded bytes.
 
-当前 writer 生成 schema 6 archive。每个 block frame 保存程序 bytecode、side information 和 payload；footer 保存张量名称、dtype、shape、block 数量以及原始 safetensors header。
+Winning programs become `(context, production)` counts. A context captures tree position, dtype, bit width, and bucketed entropy, zero rate, and delta features. Three-level backoff reduces sparsity.
 
-新 archive 不生成跨 block back-reference，使每个 frame 保持独立且易于并行。Reader 仍能读取旧 schema 5/6 back-reference，并拒绝前向引用、自引用和损坏长度。
+The final prior is mixed with the uniform distribution to avoid overfitting sparse statistics.
 
-单线程解码直接在调用线程执行。多线程模式复用固定 worker pool，并让当前 batch 写盘时并行解码下一批；输出顺序和逐张量长度会在写入前后验证。
+## Archive and Decoding
 
-## 完整 8B 实测
+The current writer produces schema 6 archives. Each block frame stores program bytecode, side information, and payload. The footer stores tensor names, dtypes, shapes, block counts, and the original safetensors header.
 
-Qwen3-8B-Base 五个 BF16 分片共 16,381,516,776 B，在 12 核 M4 Pro 上的完整结果如下：
+New archives contain no cross-block back-references, keeping every frame independent and easy to parallelize. The reader still supports legacy schema 5/6 back-references and rejects forward references, self-references, and invalid lengths.
 
-| 模式 | Archive | 压缩 | 解码 |
-| --- | ---: | ---: | ---: |
-| PHOG，首次使用 | 10,922,326,421 B | 8.19s 校准 + 11.04s 压缩 | 6.49s（12 线程） |
-| PHOG，复用 prior | 10,922,326,421 B | 11.04s | 40.41s（单线程） |
-| Uniform | 10,922,803,714 B | 24.60s | 已逐比特验证 |
+Single-threaded decoding runs directly on the calling thread. Multithreaded mode reuses a fixed worker pool and decodes the next batch while the current batch is written.
 
-PHOG 在该模型上比 uniform 少 477,293 B，收益很小但稳定；它的主要作用是更快到达同一批高质量程序，而不是替代真实字节目标。
+Output order and per-tensor lengths are checked before and after writing.
 
-完整逐分片结果及 gzip、zstd、xz、OpenZL baseline 位于 [`eval/results-large.json`](eval/results-large.json)。评测入口是 [`eval/run_eval.py`](eval/run_eval.py)。
+## Full 8B Benchmark
 
-## 代码结构
+The five bfloat16 shards of Qwen3-8B-Base total 16,381,516,776 bytes. Full results on a 12-core Apple M4 Pro are:
+
+| Search mode | Archive size | Compression time |
+| --- | ---: | ---: |
+| PHOG, first use | 10,922,326,421 bytes | 8.19 s calibration + 11.04 s compression |
+| PHOG, reused prior | 10,922,326,421 bytes | 11.04 s |
+| Uniform | 10,922,803,714 bytes | 24.60 s |
+
+Bit-exact decompression takes 6.49 seconds with 12 threads and 40.41 seconds with one thread.
+
+PHOG saves 477,293 bytes over uniform search on this model. The gain is small but stable: its main role is to reach the same high-quality programs faster, not to replace the measured archive-size objective.
+
+Per-shard results and gzip, zstd, xz, and OpenZL baselines are in [`eval/results-large.json`](eval/results-large.json). The evaluation entry point is [`eval/run_eval.py`](eval/run_eval.py).
+
+## Source Layout
 
 ```text
-src/types.zig        dtype、Stream、TensorView、block 规划
-src/ops.zig          可逆 DSL 算子
-src/program.zig      程序执行、逆执行与序列化
-src/search.zig       PHOG 引导的 A* 与字节下界
-src/prior.zig        Context、三级 backoff prior
-src/calibrate.zig    模型内抽样、候选复排和先验训练
-src/codec.zig        bitpack、Huffman、rANS
-src/archive.zig      流式 .brv 格式与兼容 reader
-src/safetensors.zig  safetensors mmap 读写
-src/main.zig         CLI、批处理与并行流水线
-eval/                多分片端到端评测
+src/types.zig        dtypes, Stream, TensorView, and block planning
+src/ops.zig          reversible language operators
+src/program.zig      program execution, inversion, and serialization
+src/search.zig       PHOG-guided A* and byte lower bounds
+src/prior.zig        contexts and three-level backoff prior
+src/calibrate.zig    model-local sampling, reranking, and prior fitting
+src/codec.zig        bitpack, Huffman, and rANS codecs
+src/archive.zig      streaming .brv format and compatible reader
+src/safetensors.zig  memory-mapped safetensors I/O
+src/main.zig         CLI, batching, and parallel pipeline
+eval/                end-to-end multishard evaluation
 ```
 
-## 正确性
+## Correctness
 
-测试覆盖所有算子的随机往返、程序和 archive 往返、uniform 等价性、搜索剪枝、FP8/u32、损坏 Huffman/rANS、旧 archive 引用以及单线程/并行解码。
+Tests cover randomized round trips for every operator, program and archive round trips, uniform equivalence, search pruning, FP8 and u32 data types, malformed Huffman and rANS streams, legacy references, and serial and parallel decoding.
 
-大型评测会对 uniform、PHOG、`--jobs 1`、默认并行解码和所有 baseline 分别做完整字节比较。
+Large evaluations perform complete byte comparisons for uniform and PHOG search, `--jobs 1`, default parallel decoding, and every baseline.
 
 ## License
 
-见 [LICENSE](LICENSE)。
+See [LICENSE](LICENSE).
