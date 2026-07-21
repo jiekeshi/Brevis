@@ -109,6 +109,23 @@ class ModelEvalTests(unittest.TestCase):
 
         self.assertFalse([path for path in self.work.rglob("*") if path.is_file()])
 
+    def test_reused_baselines_stay_attached_to_each_shard(self):
+        patches = self.patches()
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            previous = run_eval.evaluate_model(self.model, self.work)
+
+        patches = self.patches()
+        no_baseline = mock.patch.object(run_eval, "baseline", side_effect=AssertionError("baseline reran"))
+        no_openzl = mock.patch.object(run_eval, "openzl", side_effect=AssertionError("OpenZL reran"))
+        with patches[0], patches[1], patches[2], no_baseline, no_openzl:
+            row = run_eval.evaluate_model(self.model, self.work, previous=previous)
+
+        self.assertTrue(row["baselines_reused"])
+        for old, new in zip(previous["shards"], row["shards"]):
+            for key in run_eval.BASELINE_KEYS:
+                self.assertEqual(old[key], new[key])
+                self.assertEqual(old[f"{key}_exact"], new[f"{key}_exact"])
+
     def test_main_resumes_completed_shards_from_checkpoint(self):
         models = self.root / "models.json"
         results = self.root / "results.json"

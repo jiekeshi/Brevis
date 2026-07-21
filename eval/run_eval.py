@@ -213,6 +213,7 @@ def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None):
     files = model_files(model)
     names = [name for name, _ in files]
     reuse = previous is not None and previous.get("revision") == model["revision"] and previous.get("files") == names
+    old_shards = {shard["file"]: shard for shard in previous.get("shards", [])} if reuse else {}
     if resumed is not None and (resumed.get("repo"), resumed.get("revision")) == (model["repo"], model["revision"]):
         completed = {shard["file"]: shard for shard in resumed["shards"]}
     else:
@@ -226,7 +227,12 @@ def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None):
         print(f"  [{index}/{len(files)}] {fname}")
         src = fetch(model["repo"], model["revision"], fname, url)
         sh(sys.executable, ROOT / "eval" / "tensor_stats.py", src)
-        shards.append(evaluate_shard(model, src, fname, index, work, not reuse))
+        shard = evaluate_shard(model, src, fname, index, work, not reuse)
+        if fname in old_shards:
+            for key in BASELINE_KEYS:
+                for field in (key, f"t_{key}", f"t_{key}_dec", f"{key}_exact"):
+                    shard[field] = old_shards[fname].get(field)
+        shards.append(shard)
         if checkpoint is not None:
             checkpoint(shards)
 
