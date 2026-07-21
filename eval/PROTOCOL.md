@@ -4,6 +4,14 @@ Status: preregistered evaluation design, not an experimental result. The model
 identities and the GLM-5.2 shard rule below were fixed on 2026-07-21 before
 inspecting Brevis compression results for the newly added models.
 
+Protocol amendment, 2026-07-21, before any formal tiered timing result was
+inspected: measured repetition counts are even so that each seeded method order
+can be paired with its reverse. Small and medium variants use six measured
+runs; large variants and the GLM-5.2 sample use four. The generic-codec harness
+also binds every model label to the matching SHA-verified manifest entry. This
+amendment follows harness safety review and does not depend on compression
+outcomes.
+
 `models-tiered.json` is the machine-readable source of truth for this protocol.
 It remains compatible with `run_eval.py`: the evaluator consumes `tag`, `repo`,
 `revision`, `files`, and `note`, and ignores the additional audit metadata. The
@@ -256,15 +264,15 @@ time. Downloads, hash verification, and tensor-statistics scans are outside code
 time and must be timed separately if reported. Do not combine calibration and
 compression unless the metric is explicitly labeled end to end.
 
-The current evaluator gives one timing observation per invocation. One
+The legacy evaluator gives one timing observation per invocation. One
 observation is adequate for deterministic size validation but not for a final
 speed claim. Use the following fixed timing schedule:
 
-* small and medium complete variants: one unreported warm-up plus five measured
+* small and medium complete variants: one unreported warm-up plus six measured
   repetitions;
-* large complete variants: one unreported warm-up plus three measured
+* large complete variants: one unreported warm-up plus four measured
   repetitions; and
-* the GLM-5.2 three-shard sample: one unreported warm-up plus three measured
+* the GLM-5.2 three-shard sample: one unreported warm-up plus four measured
   repetitions.
 
 If resources prevent the specified repetitions, publish the completed raw runs,
@@ -274,9 +282,10 @@ sample standard deviation with `ddof=1`, median, minimum, maximum, and coefficie
 of variation. Size results should be identical across repetitions; any mismatch
 is a correctness failure.
 
-This container cannot reliably flush host page cache, so the timed repetitions
-are a warm-cache codec benchmark. The warm-up is not a claimed cold-start run.
-Record this cache condition and do not label it cold I/O throughput.
+This container cannot reliably flush host page cache. Hashing, independent copy
+staging, and warm-ups condition buffered I/O, but they do not guarantee that
+every page remains resident. Record this best-effort cache condition and do not
+label the measurements cold I/O throughput or guaranteed warm-cache throughput.
 
 For parallel scaling, preregister worker counts `1, 2, 4, 8, ...` up to the
 smaller of the available physical cores and the evaluator's supported maximum.
@@ -315,6 +324,14 @@ version, full arguments, environment variables that alter behavior, worker
 count, input digest, output digest, and verification command. Results from a
 different compression level are a different configuration, not additional
 timing repetitions of the same configuration.
+
+`benchmarking.py` implements the serial generic-codec track with raw copy and
+three pinned profiles for gzip, bzip2, xz, Zstandard, LZ4, and Brotli. It uses
+seeded forward/reverse order pairs, independent staging inodes, process-group
+timeouts, direct-child RSS, per-run archive hashes, and complete post-timing
+round-trip verification. Measured archive sizes and hashes must agree across
+repetitions. This serial registry is not a substitute for the separate
+matched-worker scaling track.
 
 ## 8. Per-tensor and generated-DSL records
 

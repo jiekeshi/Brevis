@@ -117,6 +117,19 @@ Output order and per-tensor lengths are checked before and after writing.
 
 [`eval/run_eval.py`](eval/run_eval.py) evaluates fixed, uniform, and PHOG-guided plans together with gzip, Zstandard, xz, and OpenZL. Schema-3 results record the Git commit and dirty state, full command, binary and evaluation-script hashes, the complete manifest hash, each input hash and their ordered aggregate, per-shard prior hashes, thread counts, search settings, and the command mode behind every result field. When the manifest supplies expected byte counts and SHA-256 digests, the evaluator enforces them before invoking a codec and includes the integrity decision in the shard record.
 
+[`eval/benchmarking.py`](eval/benchmarking.py) is the repeated generic-codec harness. It benchmarks raw copy plus speed-, default-, and ratio-oriented gzip, bzip2, xz, Zstandard, LZ4, and Brotli configurations. The default protocol uses one warmup and six measured repetitions in seeded, paired forward/reverse orders. Every iteration stores raw compression and decompression time, direct-child peak RSS, archive size and SHA-256, complete round-trip verification, and structured failures. Model-labelled runs must match the declared source size and SHA-256 and a SHA-verified manifest entry. This registry is intentionally a serial-codec track; matched-worker and scaling experiments are reported separately.
+
+```bash
+python3 eval/benchmarking.py eval/cache/.../model.safetensors \
+  --output eval/results/generic-small-bert.json \
+  --model-tag small-bert-f32 --model-repo google-bert/bert-base-uncased \
+  --model-revision 86b5e0934494bd15c9632b12f734a8a67f723594 \
+  --manifest eval/models-tiered.json --shard model.safetensors \
+  --expected-source-size 440449768 \
+  --expected-source-sha256 68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3 \
+  --expected-manifest-sha256 84202aee827632724d7441e9ae4725633778cdafacc4f31eaf4449a044b988ad
+```
+
 [`eval/models-tiered.json`](eval/models-tiered.json) and [`eval/PROTOCOL.md`](eval/PROTOCOL.md) preregister the heterogeneous model matrix, staged resource gates, repetition policy, and the non-extrapolating GLM-5.2 shard sample. The older compact manifests remain available for smoke tests and historical reruns.
 
 `brevis bench --format json` separates tensor planning from block encoding time and records every tensor's dtype, shape, selected program, search expansions, realized and reranked candidate counts, selected sample rank, encoded bytes, and raw-fallback count. It also records the realized program and encoded bytes for every block, plus the applied prior's path, SHA-256 digest, and context counts. `program_node_depth` includes the terminal layer, whereas `program_transform_depth` counts only transform layers and matches `--max-depth`. These byte counts exclude archive frame headers and are intended for generated-DSL analysis; use complete `.brv` file sizes for storage comparisons.
