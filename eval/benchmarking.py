@@ -761,7 +761,8 @@ def _run_iteration(
     if compressed_exists:
         try:
             # The archive scan is outside compression and decompression timing.
-            # It also makes the subsequent decode an explicitly warm-cache run.
+            # It also conditions the archive cache before decode, without
+            # guaranteeing that every page remains resident.
             archive_sha256 = _sha256_file(compressed)
         except OSError as exc:
             archive_hash_error = f"{type(exc).__name__}: {exc}"

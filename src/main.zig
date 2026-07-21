@@ -1152,6 +1152,53 @@ fn modeName(mode: PlanMode, learned_prior: bool) []const u8 {
     return if (mode == .fixed) "fixed" else if (learned_prior) "phog" else "uniform";
 }
 
+const PROGRAM_SEQUENCE_SPEC_ID = "brevis.program-bytecode-sequence.v1";
+
+const ProgramBytecodeEvidence = struct {
+    lengths: []u32,
+    sha256_by_block: [][64]u8,
+    sequence_sha256: [64]u8,
+};
+
+fn collectProgramBytecodeEvidence(
+    alloc: Allocator,
+    results: []const ?search.Result,
+) !ProgramBytecodeEvidence {
+    const lengths = try alloc.alloc(u32, results.len);
+    const digests = try alloc.alloc([64]u8, results.len);
+    var sequence = std.crypto.hash.sha2.Sha256.init(.{});
+    sequence.update(PROGRAM_SEQUENCE_SPEC_ID);
+    sequence.update(&.{0});
+    var count_bytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &count_bytes, @intCast(results.len), .little);
+    sequence.update(&count_bytes);
+
+    for (results, 0..) |maybe, index| {
+        const result = maybe orelse return error.SynthesisFailed;
+        const bytecode = try program.serialize(alloc, result.node);
+        defer alloc.free(bytecode);
+        if (bytecode.len != result.bytes - result.payload.len) return error.InvalidProgram;
+        lengths[index] = std.math.cast(u32, bytecode.len) orelse return error.Overflow;
+        var raw_digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+        var block_hash = std.crypto.hash.sha2.Sha256.init(.{});
+        block_hash.update(bytecode);
+        block_hash.final(&raw_digest);
+        digests[index] = std.fmt.bytesToHex(raw_digest, .lower);
+
+        var length_bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &length_bytes, lengths[index], .little);
+        sequence.update(&length_bytes);
+        sequence.update(&raw_digest);
+    }
+    var sequence_digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    sequence.final(&sequence_digest);
+    return .{
+        .lengths = lengths,
+        .sha256_by_block = digests,
+        .sequence_sha256 = std.fmt.bytesToHex(sequence_digest, .lower),
+    };
+}
+
 fn reportJson(
     alloc: Allocator,
     out: *std.Io.Writer,
@@ -1177,6 +1224,7 @@ fn reportJson(
     defer arena.deinit();
     const a = arena.allocator();
     var buf: std.ArrayList(u8) = .empty;
+    const program_evidence = try collectProgramBytecodeEvidence(a, results);
 
     var json: std.json.Stringify = .{
         .writer = out,
@@ -1184,7 +1232,7 @@ fn reportJson(
     };
     try json.beginObject();
     try json.objectField("schema");
-    try json.write(3);
+    try json.write(4);
     try json.objectField("kind");
     try json.write("brevis.bench-report");
     try json.objectField("input");
@@ -1194,7 +1242,7 @@ fn reportJson(
     try json.objectField("input_sha256");
     try json.write(input_sha256);
     try json.objectField("timing_scope");
-    try json.write("planning_and_block_encoding_only; input/prior hashing excluded");
+    try json.write("planning_and_block_encoding_only; input/prior hashing and JSON/program-evidence serialization excluded");
     try json.objectField("cache_preconditioning");
     try json.write("full input SHA-256 scan completed before planning");
     try json.objectField("mode");
@@ -1275,6 +1323,19 @@ fn reportJson(
     try json.write("planned_raw means the selected tensor plan has a raw root; fallback_raw means a non-raw tensor plan produced a raw-root block because it did not beat raw or could not be applied; raw terminals below a transform root are not classified as raw-root blocks");
     try json.objectField("program_tree_semantics");
     try json.write("tensor program_tree is the selected planning template and its parameters come from planning; block program_tree is the realized archive program after per-block parameter refitting");
+    try json.objectField("program_bytecode_evidence");
+    try json.beginObject();
+    try json.objectField("version");
+    try json.write(1);
+    try json.objectField("hash");
+    try json.write("sha256");
+    try json.objectField("sequence_spec_id");
+    try json.write(PROGRAM_SEQUENCE_SPEC_ID);
+    try json.objectField("block_count");
+    try json.write(blocks.len);
+    try json.objectField("sequence_sha256");
+    try json.write(program_evidence.sequence_sha256[0..]);
+    try json.endObject();
 
     try json.objectField("tensors");
     try json.beginArray();
@@ -1417,6 +1478,8 @@ fn reportJson(
         try json.write(result.bytes);
         try json.objectField("program_bytecode_bytes");
         try json.write(result.bytes - result.payload.len);
+        try json.objectField("program_bytecode_sha256");
+        try json.write(program_evidence.sha256_by_block[index][0..]);
         try json.objectField("packed_terminal_payload_bytes");
         try json.write(result.payload.len);
         try json.objectField("frame_header_bytes");

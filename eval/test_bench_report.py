@@ -1,3 +1,4 @@
+import hashlib
 import json
 import pathlib
 import struct
@@ -75,7 +76,7 @@ class BenchReportTests(unittest.TestCase):
                 block["framed_bytes"],
             )
 
-    def compress_and_parse_frames(self) -> tuple[bytes, list[tuple[int, int]]]:
+    def compress_and_parse_frames(self) -> tuple[bytes, list[tuple[bytes, int]]]:
         archive = pathlib.Path(self.temporary.name) / "fixture.brv"
         subprocess.run((
             BREVIS, "compress", self.source, archive, "--plan", "fixed", "--jobs", "1",
@@ -88,10 +89,12 @@ class BenchReportTests(unittest.TestCase):
         position = 8
         while position < index_offset:
             bytecode_bytes = struct.unpack_from("<I", encoded, position)[0]
-            position += 4 + bytecode_bytes
+            position += 4
+            bytecode = encoded[position:position + bytecode_bytes]
+            position += bytecode_bytes
             packed_payload_bytes = struct.unpack_from("<Q", encoded, position)[0]
             position += 8 + packed_payload_bytes
-            frames.append((bytecode_bytes, packed_payload_bytes))
+            frames.append((bytecode, packed_payload_bytes))
         self.assertEqual(index_offset, position)
         return encoded, frames
 
@@ -123,9 +126,9 @@ class BenchReportTests(unittest.TestCase):
             int(tree["terminal"]) + sum(metric[3] for metric in child_metrics),
         )
 
-    def test_schema_three_exposes_structured_programs_offsets_and_framing(self):
+    def test_schema_four_binds_structured_programs_to_archive_bytecode(self):
         report = self.bench("--plan", "fixed")
-        self.assertEqual(3, report["schema"])
+        self.assertEqual(4, report["schema"])
         self.assertEqual("brevis.bench-report", report["kind"])
         self.assertEqual(self.source.stat().st_size, report["input_size_bytes"])
         source_bytes = self.source.read_bytes()
@@ -190,10 +193,23 @@ class BenchReportTests(unittest.TestCase):
 
         encoded, frames = self.compress_and_parse_frames()
         self.assertEqual(len(report["blocks"]), len(frames))
-        for block, (bytecode_bytes, packed_payload_bytes) in zip(report["blocks"], frames):
-            self.assertEqual(bytecode_bytes, block["program_bytecode_bytes"])
+        for block, (bytecode, packed_payload_bytes) in zip(report["blocks"], frames):
+            self.assertEqual(len(bytecode), block["program_bytecode_bytes"])
+            self.assertEqual(
+                hashlib.sha256(bytecode).hexdigest(), block["program_bytecode_sha256"],
+            )
             self.assertEqual(packed_payload_bytes, block["packed_terminal_payload_bytes"])
-        frame_bytes = sum(bytecode + payload + 12 for bytecode, payload in frames)
+        sequence = hashlib.sha256()
+        sequence.update(b"brevis.program-bytecode-sequence.v1\x00")
+        sequence.update(struct.pack("<Q", len(frames)))
+        for bytecode, _ in frames:
+            sequence.update(struct.pack("<I", len(bytecode)))
+            sequence.update(hashlib.sha256(bytecode).digest())
+        evidence = report["program_bytecode_evidence"]
+        self.assertEqual("brevis.program-bytecode-sequence.v1", evidence["sequence_spec_id"])
+        self.assertEqual(len(frames), evidence["block_count"])
+        self.assertEqual(sequence.hexdigest(), evidence["sequence_sha256"])
+        frame_bytes = sum(len(bytecode) + payload + 12 for bytecode, payload in frames)
         self.assertEqual(report["block_frame_bytes_excluding_container_header_footer"], frame_bytes)
         self.assertEqual(len(encoded), report["projected_archive_bytes"])
         self.assertEqual(8, report["container_header_bytes"])

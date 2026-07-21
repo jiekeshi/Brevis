@@ -229,8 +229,10 @@ python eval/run_eval.py \
 The literal run ID, job count, calibration count, and command must be recorded,
 not copied from this placeholder. Long experiments start only after the exact
 manifest, command configuration, and code revision are committed. Formal runs
-use a clean tree. If an emergency or pilot run uses a dirty tree, preserve the
-diff and mark the result `pilot_dirty`; do not use it for a paper number.
+use a clean tree, declared input/manifest integrity, and a ReleaseFast build
+performed by the harness. Disabling any gate machine-labels the result
+`run_class=pilot`, records the exact ineligibility reasons, and excludes it from
+paper numbers. Preserve the diff separately for a dirty pilot.
 
 Before each stage, record available bytes, expected input bytes, largest expected
 concurrent temporary footprint, and the stop threshold. Do not begin a download
@@ -304,6 +306,11 @@ candidate collection and reranking settings, calibration tensor count, terminal
 codec set, reversible-operator set, worker count, and random seed, if any, belong
 in the raw provenance.
 
+The system harness names its internal raw configuration `raw-terminal`: it
+disables every non-raw production exposed by the running binary and verifies
+the effective mask. This is a framed Brevis archive, not the generic track's
+unframed `raw/copy` entry.
+
 For each ablation, change exactly the named factor where the implementation
 allows it. If disabling an operator or codec changes the valid-program space,
 record that fact. If the current CLI cannot express a requested ablation, label
@@ -333,6 +340,18 @@ round-trip verification. Measured archive sizes and hashes must agree across
 repetitions. This serial registry is not a substitute for the separate
 matched-worker scaling track.
 
+`brevis_benchmarking.py` implements repeated Brevis runs with independent
+calibration, a canonical measured prior, paired method orders, process-level
+RSS, complete archives, and post-timing byte verification. It executes every
+timed archive pipeline before any diagnostic replay. Thus, bench planning time
+is not an exact decomposition of compression wall time, and method-specific
+diagnostics cannot precondition timed archive tasks. The initial checkpoint
+contains the complete calibration/archive/diagnostic schedule and records task
+state transitions. Work and checkpoint filesystems receive separate capacity
+checks, including the old-plus-new peak of atomic checkpoint replacement.
+Full per-repetition bench reports are suitable for the first small-model stage;
+canonical report compaction is required before large-tier runs.
+
 ## 8. Per-tensor and generated-DSL records
 
 Console summaries are not raw data. For every tensor, retain a machine-readable
@@ -358,10 +377,18 @@ counts, while embeddings and expert matrices dominate bytes. Associations are
 descriptive unless a statistical model and its assumptions were preregistered.
 Do not treat tensors from the same model as independent model-level replicates.
 
-`tensor_stats.py` currently prints a summary to stdout, and its entropy sampler
-does not cover every dtype in the tiered matrix. Capture its stdout for audit,
-but do not treat that summary as the required per-tensor dataset. Final DSL
-claims must wait for machine-readable per-tensor records from the evaluator.
+Bench schema 4 provides tensor offsets, structured programs and parameters,
+search counters, raw-root classification, per-block payload and framing bytes,
+and exact projected archive accounting. Per-block and ordered aggregate
+bytecode digests bind the diagnostic programs to an independent scan of the
+actual archive frames. The harness accepts this schema exactly for formal DSL
+evidence and preserves the full report. Tensor-level search time, per-terminal
+payload attribution in multi-leaf programs, and tensor entropy/zero/delta
+statistics are not present; use search counters as a declared cost proxy and
+do not infer the missing quantities.
+`tensor_stats.py` remains a sampled stdout summary, and the current tools still
+lack some requested per-tensor search statistics and per-tensor timings. Claims
+requiring those fields remain incomplete.
 
 ## 9. Environment, failures, and limitations
 
@@ -396,7 +423,8 @@ Known design limitations that must accompany the eventual evaluation include:
 * publisher-created INT8 and FP8 variants do not measure lossless conversion
   from higher precision;
 * the GLM-5.2 result is a structurally biased three-shard sample; and
-* timing on this instance is warm-cache and machine-specific.
+* timing uses best-effort buffered I/O and is machine-specific; neither
+  cold-cache nor guaranteed warm-cache residency is established.
 
 ## 10. Result-to-paper traceability and change control
 
