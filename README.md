@@ -104,7 +104,9 @@ Output order and per-tensor lengths are checked before and after writing.
 
 ## Evaluation
 
-[`eval/run_eval.py`](eval/run_eval.py) evaluates fixed, uniform, and PHOG-guided plans together with gzip, Zstandard, xz, and OpenZL. New result files record the Git commit and dirty state, binary and evaluation-script hashes, each input hash and their ordered aggregate, the configured model manifest, per-shard prior hashes, thread counts, search settings, and the command mode behind every result field.
+[`eval/run_eval.py`](eval/run_eval.py) evaluates fixed, uniform, and PHOG-guided plans together with gzip, Zstandard, xz, and OpenZL. Schema-3 results record the Git commit and dirty state, full command, binary and evaluation-script hashes, the complete manifest hash, each input hash and their ordered aggregate, per-shard prior hashes, thread counts, search settings, and the command mode behind every result field. When the manifest supplies expected byte counts and SHA-256 digests, the evaluator enforces them before invoking a codec and includes the integrity decision in the shard record.
+
+[`eval/models-tiered.json`](eval/models-tiered.json) and [`eval/PROTOCOL.md`](eval/PROTOCOL.md) preregister the heterogeneous model matrix, staged resource gates, repetition policy, and the non-extrapolating GLM-5.2 shard sample. The older compact manifests remain available for smoke tests and historical reruns.
 
 `brevis bench --format json` separates tensor planning from block encoding time and records every tensor's dtype, shape, selected program, search expansions, encoded bytes, and raw-fallback count. It also records the realized program and encoded bytes for every block. These byte counts exclude archive frame headers and are intended for generated-DSL analysis; use complete `.brv` file sizes for storage comparisons.
 

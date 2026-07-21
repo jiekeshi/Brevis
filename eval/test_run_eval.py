@@ -199,8 +199,12 @@ class ModelEvalTests(unittest.TestCase):
         second = list(self.sources)[1]
         self.assertEqual([second, second, second], compressed)
         document = json.loads(results.read_text())
-        self.assertEqual(2, document["schema"])
+        self.assertEqual(run_eval.RESULT_SCHEMA, document["schema"])
         provenance = document["provenance"]
+        self.assertEqual(run_eval.RESULT_SCHEMA, provenance["result_schema"])
+        self.assertEqual(provenance["fingerprint"], saved[0]["fingerprint"])
+        self.assertEqual(run_eval.sha256_path(models), provenance["model_manifest"]["sha256"])
+        self.assertIn("run_eval.py", provenance["command"][1])
         self.assertEqual({"fixed", "uniform", "phog"}, set(provenance["modes"]))
         self.assertEqual("fixed", provenance["modes"]["fixed"]["plan"])
         self.assertEqual("raw", provenance["modes"]["fixed"]["fallback"])
@@ -237,6 +241,46 @@ class ModelEvalTests(unittest.TestCase):
                     run_eval.evaluate_model(self.model, self.work, resumed=resumed, fingerprint=fingerprint)
                 self.assertEqual([names[0], names[0], names[0], names[1], names[1], names[1]], compressed)
                 compressed.clear()
+
+    def test_manifest_identity_includes_expected_file_hash(self):
+        first = next(iter(self.sources))
+        digest = run_eval.sha256_path(self.sources[first])
+        model = {
+            **self.model,
+            "files": [{"file": first, "bytes": self.sources[first].stat().st_size,
+                       "sha256": digest}],
+        }
+        changed = {**model, "files": [{**model["files"][0], "sha256": "f" * 64}]}
+        self.assertNotEqual(run_eval.model_manifest_sha256(model),
+                            run_eval.model_manifest_sha256(changed))
+
+    def test_local_integrity_gate_rejects_size_and_sha_mismatch(self):
+        first = next(iter(self.sources))
+        path = self.sources[first]
+        base = {"file": first, "url": None, "bytes": path.stat().st_size,
+                "sha256": run_eval.sha256_path(path)}
+        verified = run_eval.validate_local_file(self.model, base, path)
+        self.assertTrue(verified["verified"])
+        self.assertEqual(base["sha256"], verified["observed_sha256"])
+
+        with self.assertRaisesRegex(run_eval.EvalError, "expected .* bytes"):
+            run_eval.validate_local_file(self.model, {**base, "bytes": base["bytes"] + 1}, path)
+        with self.assertRaisesRegex(run_eval.EvalError, "SHA-256 mismatch"):
+            run_eval.validate_local_file(self.model, {**base, "sha256": "f" * 64}, path)
+
+    def test_manifest_validation_rejects_duplicate_tags_and_bad_size_sum(self):
+        with self.assertRaisesRegex(run_eval.EvalError, "duplicate model tag"):
+            run_eval.validate_models([self.model, dict(self.model)])
+
+        first = next(iter(self.sources))
+        bad = {
+            **self.model,
+            "files": [{"file": first, "bytes": self.sources[first].stat().st_size,
+                       "sha256": run_eval.sha256_path(self.sources[first])}],
+            "selected_bytes": 1,
+        }
+        with self.assertRaisesRegex(run_eval.EvalError, "selected_bytes"):
+            run_eval.validate_models([bad])
 
 
 if __name__ == "__main__":

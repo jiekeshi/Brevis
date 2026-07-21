@@ -2,12 +2,14 @@
 """End-to-end eval over complete single-file or sharded models."""
 
 import argparse
+import datetime as dt
 import filecmp
 import hashlib
 import json
 import os
 import pathlib
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -23,7 +25,9 @@ GENERIC_BASELINES = (
     ("xz", ["-9"], ["-d"], "xz"),
 )
 BASELINE_KEYS = ("gzip", "zstd", "xz", "openzl")
-RESULT_SCHEMA = 2
+RESULT_SCHEMA = 3
+HEX40 = re.compile(r"^[0-9a-f]{40}$")
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class EvalError(RuntimeError):
@@ -63,12 +67,14 @@ def named_digest(records, field):
 
 
 def model_manifest_sha256(model):
-    manifest = {
-        "repo": model["repo"],
-        "revision": model["revision"],
-        "files": model_files(model),
-    }
-    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+    """Hash the complete model entry, including expected file identities.
+
+    A filename-only digest would allow a changed expected size or SHA-256 to
+    reuse an incompatible checkpoint or baseline result.
+    """
+
+    encoded = json.dumps(model, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def binary_config():
@@ -93,6 +99,7 @@ def provenance(jobs, calibration_tensors):
     search = binary_config()
     search["calibration_tensors"] = calibration_tensors
     return {
+        "result_schema": RESULT_SCHEMA,
         "git_commit": git_output("rev-parse", "HEAD"),
         "git_dirty": bool(git_output("status", "--porcelain")),
         "binary_sha256": sha256_path(BREVIS),
@@ -153,9 +160,9 @@ def fetch(repo, revision, fname, url=None):
 
 
 def timed(*cmd):
-    started = time.time()
+    started = time.perf_counter()
     sh(*cmd, stdout=subprocess.DEVNULL)
-    return time.time() - started
+    return time.perf_counter() - started
 
 
 def stream_matches(path, command):
@@ -214,21 +221,97 @@ def openzl(path, out):
         out.unlink(missing_ok=True)
 
 
-def model_files(model):
+def normalized_model_files(model):
     entries = model.get("files")
     if entries is None:
+        if "file" not in model:
+            raise EvalError(f"{model.get('tag', '<unknown>')}: no safetensors files configured")
         entries = [model["file"]]
     if not entries:
         raise EvalError(f"{model['tag']}: no safetensors files configured")
     files = []
     for entry in entries:
         if isinstance(entry, str):
-            files.append((entry, None))
+            normalized = {"file": entry, "url": None, "bytes": None, "sha256": None}
+        elif isinstance(entry, dict):
+            normalized = {
+                "file": entry.get("file"),
+                "url": entry.get("url"),
+                "bytes": entry.get("bytes"),
+                "sha256": entry.get("sha256"),
+            }
         else:
-            files.append((entry["file"], entry.get("url")))
-    if len({name for name, _ in files}) != len(files):
+            raise EvalError(f"{model['tag']}: file entry must be a string or object")
+        if not isinstance(normalized["file"], str) or not normalized["file"]:
+            raise EvalError(f"{model['tag']}: invalid safetensors filename")
+        if normalized["bytes"] is not None and (
+            not isinstance(normalized["bytes"], int) or normalized["bytes"] <= 0
+        ):
+            raise EvalError(f"{model['tag']}:{normalized['file']}: invalid expected byte size")
+        if normalized["sha256"] is not None and (
+            not isinstance(normalized["sha256"], str) or not HEX64.fullmatch(normalized["sha256"])
+        ):
+            raise EvalError(f"{model['tag']}:{normalized['file']}: invalid expected SHA-256")
+        files.append(normalized)
+    if len({entry["file"] for entry in files}) != len(files):
         raise EvalError(f"{model['tag']}: duplicate safetensors file")
     return files
+
+
+def model_files(model):
+    """Return the legacy ``(filename, URL)`` view used by callers and tests."""
+
+    return [(entry["file"], entry["url"]) for entry in normalized_model_files(model)]
+
+
+def validate_models(models):
+    if not isinstance(models, list) or not models:
+        raise EvalError("model manifest must be a nonempty JSON array")
+    tags = set()
+    for model in models:
+        if not isinstance(model, dict):
+            raise EvalError("every model manifest entry must be an object")
+        tag = model.get("tag")
+        if not isinstance(tag, str) or not tag:
+            raise EvalError("every model manifest entry needs a nonempty tag")
+        if tag in tags:
+            raise EvalError(f"duplicate model tag: {tag}")
+        tags.add(tag)
+        if not isinstance(model.get("repo"), str) or not model["repo"]:
+            raise EvalError(f"{tag}: missing repository")
+        revision = model.get("revision")
+        if not isinstance(revision, str) or not HEX40.fullmatch(revision):
+            raise EvalError(f"{tag}: revision must be a 40-character lowercase Git SHA")
+        files = normalized_model_files(model)
+        selected_bytes = model.get("selected_bytes")
+        if selected_bytes is not None:
+            known_sizes = [entry["bytes"] for entry in files]
+            if any(size is None for size in known_sizes) or sum(known_sizes) != selected_bytes:
+                raise EvalError(f"{tag}: selected_bytes does not match the file-size sum")
+
+
+def validate_local_file(model, entry, path):
+    actual_size = path.stat().st_size
+    expected_size = entry["bytes"]
+    if expected_size is not None and actual_size != expected_size:
+        raise EvalError(
+            f"{model['tag']}:{entry['file']}: expected {expected_size} bytes, found {actual_size}"
+        )
+    actual_sha256 = sha256_path(path)
+    expected_sha256 = entry["sha256"]
+    if expected_sha256 is not None and actual_sha256 != expected_sha256:
+        raise EvalError(
+            f"{model['tag']}:{entry['file']}: SHA-256 mismatch; "
+            f"expected {expected_sha256}, found {actual_sha256}"
+        )
+    return {
+        "expected_size_bytes": expected_size,
+        "observed_size_bytes": actual_size,
+        "expected_sha256": expected_sha256,
+        "observed_sha256": actual_sha256,
+        "verified": (expected_size is None or expected_size == actual_size)
+        and (expected_sha256 is None or expected_sha256 == actual_sha256),
+    }
 
 
 def require_equal(source, restored, label):
@@ -238,6 +321,7 @@ def require_equal(source, restored, label):
 
 def evaluate_shard(
     model, src, fname, index, work, run_baselines=True, jobs=None, calibration_tensors=None,
+    integrity=None,
 ):
     prefix = f"{model['tag'].replace('/', '_')}.{index:05d}"
     fixed_brv = work / f"{prefix}.fixed.brv"
@@ -251,7 +335,7 @@ def evaluate_shard(
 
     try:
         raw = src.stat().st_size
-        input_sha256 = sha256_path(src)
+        input_sha256 = integrity["observed_sha256"] if integrity is not None else sha256_path(src)
         job_args = () if jobs is None else ("--jobs", jobs)
         tensor_args = () if calibration_tensors is None else ("--tensors", calibration_tensors)
 
@@ -283,6 +367,7 @@ def evaluate_shard(
         row = {
             "file": fname,
             "input_sha256": input_sha256,
+            "input_integrity": integrity,
             "prior_sha256": prior_sha256,
             "raw": raw,
             "fixed": fixed_size,
@@ -329,8 +414,8 @@ def evaluate_model(
     model, work, previous=None, resumed=None, checkpoint=None, fingerprint=None,
     jobs=None, calibration_tensors=None,
 ):
-    files = model_files(model)
-    names = [name for name, _ in files]
+    file_entries = normalized_model_files(model)
+    names = [entry["file"] for entry in file_entries]
     manifest_sha256 = model_manifest_sha256(model)
     reuse = (
         previous is not None
@@ -347,16 +432,22 @@ def evaluate_model(
     else:
         completed = {}
     shards = []
-    for index, (fname, url) in enumerate(files, 1):
+    for index, entry in enumerate(file_entries, 1):
+        fname = entry["file"]
+        url = entry["url"]
         if fname in completed:
-            print(f"  [{index}/{len(files)}] {fname} (checkpoint)")
+            expected_sha256 = entry["sha256"]
+            if expected_sha256 is not None and completed[fname].get("input_sha256") != expected_sha256:
+                raise EvalError(f"{model['tag']}:{fname}: checkpoint input digest violates manifest")
+            print(f"  [{index}/{len(file_entries)}] {fname} (checkpoint)")
             shards.append(completed[fname])
             continue
-        print(f"  [{index}/{len(files)}] {fname}")
+        print(f"  [{index}/{len(file_entries)}] {fname}")
         src = fetch(model["repo"], model["revision"], fname, url)
+        integrity = validate_local_file(model, entry, src)
         sh(sys.executable, ROOT / "eval" / "tensor_stats.py", src)
         shard = evaluate_shard(
-            model, src, fname, index, work, not reuse, jobs, calibration_tensors,
+            model, src, fname, index, work, not reuse, jobs, calibration_tensors, integrity,
         )
         if fname in old_shards:
             for key in BASELINE_KEYS:
@@ -427,13 +518,20 @@ def main(argv=None):
     parser.add_argument("--jobs", type=int, default=max(1, os.cpu_count() or 1))
     parser.add_argument("--tensors", type=int, default=200,
                         help="maximum tensors used to train each input-local prior")
-    args = parser.parse_args(argv)
+    invocation_args = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(invocation_args)
     sh("zig", "build", "-Doptimize=ReleaseFast", cwd=ROOT)
     if not BREVIS.exists():
         parser.error(f"build first: cd {ROOT} && zig build -Doptimize=ReleaseFast")
     run = provenance(args.jobs, args.tensors)
+    run["command"] = [sys.executable, str(pathlib.Path(__file__).resolve()), *invocation_args]
+    run["model_manifest"] = {
+        "path": str(args.models.resolve()),
+        "sha256": sha256_path(args.models),
+    }
 
     models = json.loads(args.models.read_text())
+    validate_models(models)
     if args.tag:
         wanted = set(args.tag)
         models = [model for model in models if model["tag"] in wanted]
@@ -452,6 +550,8 @@ def main(argv=None):
             previous = {row["tag"]: row for row in previous_document["models"]}
             run["baseline_reuse"] = {"results_sha256": sha256_path(args.results)}
     fingerprint = run_fingerprint(run)
+    run["fingerprint"] = fingerprint
+    run["started_at_utc"] = dt.datetime.now(dt.timezone.utc).isoformat()
     checkpoint_path = pathlib.Path(f"{args.results}.checkpoint")
     checkpoints = json.loads(checkpoint_path.read_text()) if checkpoint_path.exists() else []
     checkpoints = {
@@ -461,7 +561,7 @@ def main(argv=None):
 
     rows = []
     for model in models:
-        print(f"\n=== {model['tag']}: {model['repo']} — {model['note']}")
+        print(f"\n=== {model['tag']}: {model['repo']} — {model.get('note', '')}")
         manifest_sha256 = model_manifest_sha256(model)
         identity = model["repo"], model["revision"], manifest_sha256
         for stale in [key for key in checkpoints if key[:3] == identity and key[3] != fingerprint]:
@@ -483,7 +583,12 @@ def main(argv=None):
             args.jobs, args.tensors,
         )
         rows.append(row)
-        write_json(args.results, {"schema": RESULT_SCHEMA, "provenance": run, "models": rows})
+        write_json(args.results, {
+            "schema": RESULT_SCHEMA,
+            "created_at_utc": run["started_at_utc"],
+            "provenance": run,
+            "models": rows,
+        })
         print(f"  model total: {row['phog']:,} bytes ({row['raw'] / row['phog']:.3f}x), bit-exact")
 
     for model in models:
