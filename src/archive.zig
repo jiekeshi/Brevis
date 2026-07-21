@@ -100,11 +100,6 @@ pub const ParsedBlock = struct {
     payload: []const u8,
 };
 
-pub const Frames = struct {
-    bytes: []const u8,
-    allow_refs: bool,
-};
-
 pub const ParsedTensor = struct {
     name: []u8,
     dtype: Dtype,
@@ -115,7 +110,7 @@ pub const ParsedTensor = struct {
 
 pub const Parsed = struct {
     tensors: []ParsedTensor,
-    frames: Frames,
+    frames: []const u8,
     safetensors_prefix: []const u8,
     arena: std.heap.ArenaAllocator,
 
@@ -135,14 +130,13 @@ pub const Loaded = struct {
     }
 };
 
-pub fn nextBlock(frames: Frames, pos: *usize) !ParsedBlock {
+pub fn nextBlock(frames: []const u8, pos: *usize) !ParsedBlock {
     var at = pos.*;
     var logical_end: ?usize = null;
     while (true) {
-        var r: Reader = .{ .b = frames.bytes, .pos = at };
+        var r: Reader = .{ .b = frames, .pos = at };
         const program_len = std.math.cast(usize, try r.u32v()) orelse return error.Truncated;
         if (program_len == 0) {
-            if (!frames.allow_refs) return error.InvalidProgram;
             const ref = std.math.cast(usize, try r.u64v()) orelse return error.Truncated;
             if (ref >= at) return error.InvalidProgram;
             if (logical_end == null) logical_end = r.pos;
@@ -198,11 +192,8 @@ const Reader = struct {
 
 pub fn parse(alloc: Allocator, bytes: []const u8) !Parsed {
     if (bytes.len < HEADER.len + 12) return error.Truncated;
-    const allow_refs = if (std.mem.eql(u8, bytes[0..HEADER.len], &HEADER))
-        true
-    else if (std.mem.eql(u8, bytes[0..LEGACY_HEADER.len], &LEGACY_HEADER))
-        false
-    else
+    if (!std.mem.eql(u8, bytes[0..HEADER.len], &HEADER) and
+        !std.mem.eql(u8, bytes[0..LEGACY_HEADER.len], &LEGACY_HEADER))
         return error.BadMagic;
 
     const footer = bytes.len - 12;
@@ -236,13 +227,13 @@ pub fn parse(alloc: Allocator, bytes: []const u8) !Parsed {
     }
     if (r.pos != footer) return error.TrailingIndexData;
 
-    const frames: Frames = .{ .bytes = bytes[HEADER.len..index_off], .allow_refs = allow_refs };
+    const frames = bytes[HEADER.len..index_off];
     var pos: usize = 0;
     for (tensors) |*tensor| {
         tensor.frame_start = pos;
         for (0..tensor.n_blocks) |_| _ = try nextBlock(frames, &pos);
     }
-    if (pos != frames.bytes.len) return error.TrailingFrameData;
+    if (pos != frames.len) return error.TrailingFrameData;
 
     return .{ .tensors = tensors, .frames = frames, .safetensors_prefix = safetensors_prefix, .arena = arena };
 }

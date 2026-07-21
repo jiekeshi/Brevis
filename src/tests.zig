@@ -983,7 +983,6 @@ test "archive: multi-tensor multi-block roundtrip" {
     defer parsed.deinit();
 
     try expectEqual(metas.len, parsed.tensors.len);
-    try std.testing.expect(parsed.frames.allow_refs);
     var bi: usize = 0;
     for (parsed.tensors, metas) |pt, meta| {
         try std.testing.expectEqualStrings(meta.name, pt.name);
@@ -1006,7 +1005,7 @@ test "archive: multi-tensor multi-block roundtrip" {
     legacy[4] = 5;
     var legacy_parsed = try archive.parse(a, legacy);
     defer legacy_parsed.deinit();
-    try std.testing.expect(!legacy_parsed.frames.allow_refs);
+    try expectEqual(parsed.tensors.len, legacy_parsed.tensors.len);
 }
 
 test "archive: independent frames decode concurrently" {
@@ -1071,7 +1070,7 @@ test "archive: back references resolve and reject cycles" {
     const first_ref: u64 = @intCast(bytes.items.len);
     try bytes.appendSlice(a, &archive.refFrame(0));
     try bytes.appendSlice(a, &archive.refFrame(first_ref));
-    const frames: archive.Frames = .{ .bytes = bytes.items, .allow_refs = true };
+    const frames = bytes.items;
 
     var pos: usize = 0;
     const original = try archive.nextBlock(frames, &pos);
@@ -1083,8 +1082,22 @@ test "archive: back references resolve and reject cycles" {
 
     const self_ref = archive.refFrame(0);
     pos = 0;
-    try std.testing.expectError(error.InvalidProgram, archive.nextBlock(.{ .bytes = &self_ref, .allow_refs = true }, &pos));
-    try std.testing.expectError(error.InvalidProgram, archive.nextBlock(.{ .bytes = &self_ref, .allow_refs = false }, &pos));
+    try std.testing.expectError(error.InvalidProgram, archive.nextBlock(&self_ref, &pos));
+
+    var legacy: std.ArrayList(u8) = .empty;
+    defer legacy.deinit(a);
+    try legacy.appendSlice(a, &archive.HEADER);
+    legacy.items[4] = 5;
+    try legacy.appendSlice(a, bytes.items);
+    const metas = [_]archive.TensorMeta{
+        .{ .name = "w", .dtype = .u8, .shape = &.{3}, .n_blocks = 3 },
+    };
+    const footer = try archive.makeFooter(a, &metas, legacy.items.len, &.{});
+    defer a.free(footer);
+    try legacy.appendSlice(a, footer);
+    var parsed = try archive.parse(a, legacy.items);
+    defer parsed.deinit();
+    try expectEqual(@as(usize, 1), parsed.tensors.len);
 }
 
 test "archive: original safetensors prefix and data order are byte-exact" {
