@@ -18,7 +18,6 @@ const OpKind = ops.OpKind;
 const NODE_HDR: usize = 7;
 /// Every hole must end in a terminal header, side record, and payload length.
 const MIN_HOLE_BYTES: u64 = NODE_HDR + 9 + 8;
-const FRAME_PREFIX_BYTES: u64 = 12;
 const ROOT_PARENT: u8 = 255;
 const MAX_ARITY: usize = 32;
 const MAX_PRODUCTIONS: usize = 32;
@@ -57,18 +56,23 @@ pub const Plan = struct {
     }
 };
 
+fn splitParams(dtype: Dtype, bits: u8) u32 {
+    if (dtype.floatFields()) |fields| {
+        if (fields.total == bits)
+            return @as(u32, fields.mant) | (@as(u32, fields.exp) << 8);
+    }
+    const start: u32 = bits / 2;
+    return start | ((@as(u32, bits) - start) << 8);
+}
+
 pub fn fixedPlan(alloc: Allocator, dtype: Dtype) !Plan {
-    const bits = dtype.bitWidth();
-    const fields = dtype.floatFields();
-    const start = if (fields) |f| f.mant else bits / 2;
-    const width = if (fields) |f| f.exp else bits - start;
     const children = try alloc.alloc(Node, 2);
     children[0] = .{ .op = .rans };
     children[1] = .{ .op = .bitpack };
     return .{
         .root = .{
             .op = .split_field,
-            .params = @as(u32, start) | (@as(u32, width) << 8),
+            .params = splitParams(dtype, dtype.bitWidth()),
             .children = children,
         },
         .expanded = 0,
@@ -296,11 +300,7 @@ fn chooseParams(op: OpKind, s: Stream, dtype: Dtype, f: Feat) ?u32 {
         .rotate_bits => if (k < 2) null else @as(u32, k / 2),
         .split_field => blk: {
             if (k < 2) break :blk null;
-            if (dtype.floatFields()) |ff| {
-                if (ff.total == k) break :blk @as(u32, ff.mant) | (@as(u32, ff.exp) << 8);
-            }
-            const start: u32 = k / 2;
-            break :blk start | ((@as(u32, k) - start) << 8);
+            break :blk splitParams(dtype, k);
         },
         .topk_codebook => 15,
         .deinterleave => if (s.count < 2) null else 2 | (1 << 16),
@@ -496,7 +496,7 @@ fn candidateCost(
         const index = if (n == 1) 0 else probe * (blocks.len - 1) / (n - 1);
         var encoded = try encode(alloc, &plan, blocks[index].asStream(full.data), dtype);
         defer encoded.deinit(alloc);
-        total += encoded.bytes + FRAME_PREFIX_BYTES;
+        total += encoded.bytes;
     }
     return total;
 }

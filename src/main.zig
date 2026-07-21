@@ -86,6 +86,9 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, cmd, "bench")) {
         if (p.len != 1) try usage(err);
         try cmdBench(io, out, p[0], opt_prior, opt_jobs, opt_plan);
+    } else if (std.mem.eql(u8, cmd, "config")) {
+        if (p.len != 0) try usage(err);
+        try cmdConfig(out);
     } else if (std.mem.eql(u8, cmd, "demo")) {
         try cmdDemo(io, out);
     } else if (std.mem.eql(u8, cmd, "make-fixture")) {
@@ -107,12 +110,44 @@ fn usage(w: *std.Io.Writer) !noreturn {
         \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
         \\  brevis verify      <in.brv> <orig.safetensors>
         \\  brevis bench       <model.safetensors> [--plan search|fixed] [--prior p.bin] [--jobs N]
+        \\  brevis config
         \\  brevis demo
         \\  brevis make-fixture <out.safetensors>
         \\
     );
     try w.flush();
     std.process.exit(2);
+}
+
+fn cmdConfig(out: *std.Io.Writer) !void {
+    try out.print(
+        \\{{
+        \\  "transform_layers": {d},
+        \\  "max_entropy_bpe": {d},
+        \\  "max_nodes": {d},
+        \\  "max_expansions": {d},
+        \\  "sample_elems": {d},
+        \\  "target_block_bytes": {d},
+        \\  "rerank_candidates": {d},
+        \\  "rerank_blocks": {d},
+        \\  "uniform_score": {d},
+        \\  "phog_weight": {d},
+        \\  "candidate_collection": "all_within_expansion_budget",
+        \\  "sample_byte_pruning": false
+        \\}}
+        \\
+    , .{
+        ops.K_TRANSFORM_LAYERS,
+        ops.MAX_ENTROPY_BPE,
+        ops.MAX_NODES,
+        ops.MAX_EXPANSIONS,
+        ops.SEARCH_SAMPLE_ELEMS,
+        types.TARGET_BLOCK_BYTES,
+        ops.PLAN_CANDIDATES,
+        ops.PLAN_PROBE_BLOCKS,
+        ops.UNIFORM_SCORE,
+        prior.PHOG_WEIGHT,
+    });
 }
 
 // ==================== shared pipeline ====================

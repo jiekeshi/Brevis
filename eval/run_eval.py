@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 import pathlib
-import re
+import platform
 import shutil
 import subprocess
 import sys
@@ -71,46 +71,18 @@ def model_manifest_sha256(model):
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
 
 
-def zig_constants(path, names):
-    source = pathlib.Path(path).read_text()
-    values = {}
-    for name in names:
-        match = re.search(rf"\bconst\s+{name}\s*:[^=]+\=\s*([^;]+);", source)
-        if match is None:
-            raise EvalError(f"missing Zig constant {name} in {path}")
-        literal = match.group(1).strip().replace("_", "")
-        terms = literal.split()
-        if len(terms) == 3:
-            left, op, right = terms
-            number = float if "." in left + right else lambda value: int(value, 0)
-            values[name] = number(left) * number(right) if op == "*" else number(left) / number(right)
-        else:
-            values[name] = int(literal, 0)
-    return values
+def binary_config():
+    return json.loads(subprocess.check_output((BREVIS, "config"), text=True))
 
 
-def search_config(calibration_tensors):
-    ops = zig_constants(ROOT / "src" / "ops.zig", (
-        "K_TRANSFORM_LAYERS", "MAX_ENTROPY_BPE", "MAX_NODES", "MAX_EXPANSIONS",
-        "MAX_REALIZATIONS", "SEARCH_SAMPLE_ELEMS", "PLAN_CANDIDATES", "PLAN_PROBE_BLOCKS",
-        "UNIFORM_SCORE",
-    ))
-    block = zig_constants(ROOT / "src" / "types.zig", ("TARGET_BLOCK_BYTES",))
-    phog = zig_constants(ROOT / "src" / "prior.zig", ("PHOG_WEIGHT",))
-    return {
-        "transform_layers": ops["K_TRANSFORM_LAYERS"],
-        "max_entropy_bpe": ops["MAX_ENTROPY_BPE"],
-        "max_nodes": ops["MAX_NODES"],
-        "max_expansions": ops["MAX_EXPANSIONS"],
-        "max_realizations": ops["MAX_REALIZATIONS"],
-        "sample_elems": ops["SEARCH_SAMPLE_ELEMS"],
-        "target_block_bytes": block["TARGET_BLOCK_BYTES"],
-        "rerank_candidates": ops["PLAN_CANDIDATES"],
-        "rerank_blocks": ops["PLAN_PROBE_BLOCKS"],
-        "uniform_score": ops["UNIFORM_SCORE"],
-        "phog_weight": phog["PHOG_WEIGHT"],
-        "calibration_tensors": calibration_tensors,
-    }
+def tool_version(tool):
+    executable = os.environ.get("OPENZL_ZLI") if tool == "zli" else None
+    executable = executable or shutil.which(tool)
+    if not executable:
+        return None
+    result = subprocess.run((executable, "--version"), text=True, capture_output=True)
+    lines = (result.stdout or result.stderr).splitlines()
+    return lines[0] if lines else None
 
 
 def git_output(*args):
@@ -118,27 +90,45 @@ def git_output(*args):
 
 
 def provenance(jobs, calibration_tensors):
+    search = binary_config()
+    search["calibration_tensors"] = calibration_tensors
     return {
         "git_commit": git_output("rev-parse", "HEAD"),
         "git_dirty": bool(git_output("status", "--porcelain")),
         "binary_sha256": sha256_path(BREVIS),
         "eval_sha256": sha256_path(__file__),
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+        },
+        "zig_version": subprocess.check_output(("zig", "version"), text=True).strip(),
         "threads": {
             "calibration": jobs,
             "compression": jobs,
             "parallel_decompression": jobs,
             "serial_decompression": 1,
         },
-        "search": search_config(calibration_tensors),
+        "search": search,
         "modes": {
-            "fixed": {"plan": "fixed", "prior": None},
+            "fixed": {"plan": "fixed", "prior": None, "fallback": "raw"},
             "uniform": {"plan": "search", "prior": None},
             "phog": {"plan": "search", "prior": "shard-local"},
         },
         "baselines": {**{
-            key: {"tool": tool, "compress_args": cargs, "decompress_args": dargs}
+            key: {
+                "tool": tool,
+                "version": tool_version(tool),
+                "compress_args": cargs,
+                "decompress_args": dargs,
+            }
             for tool, cargs, dargs, key in GENERIC_BASELINES
-        }, "openzl": {"tool": "zli", "compress_args": ["--profile", "serial"]}},
+        }, "openzl": {
+            "tool": "zli",
+            "version": tool_version("zli"),
+            "compress_args": ["--profile", "serial"],
+        }},
     }
 
 
@@ -456,12 +446,12 @@ def main(argv=None):
     previous = {}
     reuse_baselines = os.environ.get("BREVIS_REUSE_BASELINES") == "1" and args.results.exists()
     run["reuse_baselines"] = reuse_baselines
-    fingerprint = run_fingerprint(run)
     if reuse_baselines:
         previous_document = json.loads(args.results.read_text())
         if isinstance(previous_document, dict) and previous_document.get("schema") == RESULT_SCHEMA:
             previous = {row["tag"]: row for row in previous_document["models"]}
             run["baseline_reuse"] = {"results_sha256": sha256_path(args.results)}
+    fingerprint = run_fingerprint(run)
     checkpoint_path = pathlib.Path(f"{args.results}.checkpoint")
     checkpoints = json.loads(checkpoint_path.read_text()) if checkpoint_path.exists() else []
     checkpoints = {

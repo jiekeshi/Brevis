@@ -15,7 +15,7 @@ pub const N_PROD: usize = 64;
 
 const SAMPLE_MAX: usize = ops.SEARCH_SAMPLE_ELEMS;
 const HIST_SIZE: usize = 1 << 12;
-const PHOG_WEIGHT: f64 = 1.0 / 20.0;
+pub const PHOG_WEIGHT: f64 = 1.0 / 20.0;
 const MAGIC = "BRVP";
 const VERSION: u32 = 2;
 

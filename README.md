@@ -19,7 +19,7 @@ zig build -Doptimize=ReleaseFast
 # Search with the learned prior; omit --prior for uniform A*
 ./zig-out/bin/brevis compress model.safetensors model.brv --plan search --prior prior.bin
 
-# Fixed typed-DSL program baseline (no search)
+# Fixed typed-DSL template with the normal raw fallback (no search)
 ./zig-out/bin/brevis compress model.safetensors fixed.brv --plan fixed
 ./zig-out/bin/brevis decompress model.brv restored.safetensors
 ./zig-out/bin/brevis verify model.brv model.safetensors
@@ -75,7 +75,7 @@ PHOG does not change the compression objective. It only changes candidate order 
 
 Single-stream search can prune with the serialized-byte bound; tensor planning instead collects candidates in grammar order under the 256-expansion budget without sample-incumbent byte pruning, because it ultimately compares them on representative full blocks.
 
-Evaluation separates three modes: `fixed` executes a dtype-specific program expressed in the same DSL, `uniform` runs A* without a learned prior, and `phog` runs the same A* search with an input-local prior. Comparing them isolates the value of the reversible language, adaptive search, and grammar guidance.
+Evaluation separates three modes: `fixed` executes a dtype-specific DSL template with the normal raw fallback, `uniform` runs A* without a learned prior, and `phog` runs the same A* search with an input-local prior. Comparing them isolates the value of the reversible language, adaptive search, and grammar guidance.
 
 Empirical entropy is not a valid lower bound at shallow holes where transforms remain available, because a reversible transform may reduce it sharply.
 
@@ -103,23 +103,7 @@ Output order and per-tensor lengths are checked before and after writing.
 
 [`eval/run_eval.py`](eval/run_eval.py) evaluates fixed, uniform, and PHOG-guided plans together with gzip, Zstandard, xz, and OpenZL. New result files record the Git commit and dirty state, binary and evaluation-script hashes, each input hash and their ordered aggregate, the configured model manifest, per-shard prior hashes, thread counts, search settings, and the command mode behind every result field.
 
-The evaluator rebuilds the ReleaseFast binary so recorded source settings match the executable.
-
-### Recorded 8B Run
-
-The five bfloat16 shards of Qwen3-8B-Base total 16,381,516,776 bytes. Full results on a 12-core Apple M4 Pro are:
-
-| Search mode | Archive size | Compression time |
-| --- | ---: | ---: |
-| PHOG, first use | 10,922,326,421 bytes | 8.19 s calibration + 11.04 s compression |
-| PHOG, reused prior | 10,922,326,421 bytes | 11.04 s |
-| Uniform | 10,922,803,714 bytes | 24.60 s |
-
-Bit-exact decompression takes 6.49 seconds with 12 threads and 40.41 seconds with one thread.
-
-In this run, PHOG produced an archive 477,293 bytes smaller than uniform search. This single workload does not establish a stable compression or search-time improvement; the effect of grammar guidance is workload-dependent and must be evaluated against both uniform search and the fixed-program baseline.
-
-Per-shard results are in [`eval/results-large.json`](eval/results-large.json). This historical snapshot predates the provenance schema used by new runs and should not be combined with newly generated measurements without rerunning it.
+The evaluator rebuilds the ReleaseFast binary so recorded source settings match the executable. Existing result files predate this schema and must be rerun before comparison with the current planner.
 
 ## Source Layout
 

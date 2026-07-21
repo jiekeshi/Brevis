@@ -168,7 +168,10 @@ class ModelEvalTests(unittest.TestCase):
 
         patches = self.patches()
         patches = (patches[0], mock.patch.object(run_eval, "timed", side_effect=corrupt_second_shard), *patches[2:])
-        with mock.patch.object(run_eval, "BREVIS", brevis), mock.patch.object(run_eval, "CACHE", self.root / "cache"):
+        config = {"max_nodes": 12, "candidate_collection": "all_within_expansion_budget",
+                  "sample_byte_pruning": False}
+        with mock.patch.object(run_eval, "BREVIS", brevis), mock.patch.object(run_eval, "CACHE", self.root / "cache"), \
+                mock.patch.object(run_eval, "binary_config", return_value=config):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 with self.assertRaises(run_eval.EvalError):
                     run_eval.main(["--models", str(models), "--results", str(results)])
@@ -188,7 +191,8 @@ class ModelEvalTests(unittest.TestCase):
 
         patches = self.patches()
         patches = (patches[0], mock.patch.object(run_eval, "timed", side_effect=record_compress), *patches[2:])
-        with mock.patch.object(run_eval, "BREVIS", brevis), mock.patch.object(run_eval, "CACHE", self.root / "cache"):
+        with mock.patch.object(run_eval, "BREVIS", brevis), mock.patch.object(run_eval, "CACHE", self.root / "cache"), \
+                mock.patch.object(run_eval, "binary_config", return_value=config):
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 run_eval.main(["--models", str(models), "--results", str(results)])
 
@@ -199,10 +203,15 @@ class ModelEvalTests(unittest.TestCase):
         provenance = document["provenance"]
         self.assertEqual({"fixed", "uniform", "phog"}, set(provenance["modes"]))
         self.assertEqual("fixed", provenance["modes"]["fixed"]["plan"])
+        self.assertEqual("raw", provenance["modes"]["fixed"]["fallback"])
         self.assertEqual("search", provenance["modes"]["phog"]["plan"])
         self.assertEqual("shard-local", provenance["modes"]["phog"]["prior"])
         self.assertEqual(64, len(provenance["binary_sha256"]))
+        self.assertIn("machine", provenance["platform"])
+        self.assertTrue(provenance["zig_version"])
+        self.assertIn("version", provenance["baselines"]["gzip"])
         self.assertIn("max_nodes", provenance["search"])
+        self.assertEqual("all_within_expansion_budget", provenance["search"]["candidate_collection"])
         self.assertEqual(list(self.sources), [shard["file"] for shard in document["models"][0]["shards"]])
         self.assertEqual([unselected], json.loads(checkpoint.read_text()))
 
