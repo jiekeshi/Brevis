@@ -62,7 +62,6 @@ const Hole = struct {
     depth: u8,
     slot: u8,
     parent_op: u8,
-    context: ?prior.Context,
     score_lb: u32,
     /// Bits this hole is guaranteed to cost. Non-zero only once transforms are
     /// no longer legal here: above that layer a reversible transform can drive
@@ -234,7 +233,6 @@ fn legalProductions(hole_bpe: u8, depth: u8, dtype: Dtype, is_root: bool, out: *
 
 fn completionScoreLowerBound(
     pr: *const prior.Prior,
-    ctx: prior.Context,
     bpe: u8,
     depth: u8,
     dtype: Dtype,
@@ -242,11 +240,7 @@ fn completionScoreLowerBound(
 ) u32 {
     var storage: [MAX_PRODUCTIONS]OpKind = undefined;
     const productions = legalProductions(bpe, depth, dtype, is_root, &storage);
-    var scores: [MAX_PRODUCTIONS]u32 = undefined;
-    pr.scoreSet(ctx, productions, scores[0..productions.len]);
-    var lower = scores[0];
-    for (scores[1..productions.len]) |score| lower = @min(lower, score);
-    return lower;
+    return pr.scoreLowerBound(productions.len);
 }
 
 const Feat = struct { mode: u32, max_bits: u8 };
@@ -551,14 +545,12 @@ fn run(
     defer path.deinit(alloc);
 
     const root_bits = try holeBits(alloc, in, 0);
-    const root_ctx = if (learned) prior.Context.fromStream(in, dtype, 0, 0, ROOT_PARENT) else prior.Context{};
-    const root_score_lb = completionScoreLowerBound(pr, root_ctx, in.bits_per_elem, 0, dtype, true);
+    const root_score_lb = completionScoreLowerBound(pr, in.bits_per_elem, 0, dtype, true);
     try q.push(alloc, .{
         .root = .{ .hole = .{
             .depth = 0,
             .slot = 0,
             .parent_op = ROOT_PARENT,
-            .context = if (learned) root_ctx else null,
             .score_lb = root_score_lb,
             .lb_bits = root_bits,
         } },
@@ -620,7 +612,7 @@ fn run(
 
         const feat = featOf(hist);
         const ctx = if (learned)
-            hole.context orelse prior.Context.fromStream(hs, dtype, hole.slot, hole.depth, hole.parent_op)
+            prior.Context.fromStream(hs, dtype, hole.slot, hole.depth, hole.parent_op)
         else
             prior.Context{};
 
@@ -640,7 +632,6 @@ fn run(
 
             var kid_bits: [MAX_ARITY]u64 = undefined;
             var kid_scores: [MAX_ARITY]u32 = undefined;
-            var kid_contexts: [MAX_ARITY]?prior.Context = undefined;
             var add: usize = undefined;
 
             if (prod.isTerminal()) {
@@ -655,7 +646,6 @@ fn run(
                 add = NODE_HDR;
                 kid_bits[0] = try holeBits(alloc, hs, hole.depth + 1);
                 kid_scores[0] = 0;
-                kid_contexts[0] = null;
             } else {
                 var outs: std.ArrayList(Stream) = .empty;
                 defer {
@@ -668,14 +658,8 @@ fn run(
                 add = NODE_HDR + sideBody(side);
                 for (outs.items, 0..) |s, i| {
                     kid_bits[i] = try holeBits(alloc, s, hole.depth + 1);
-                    const child_ctx = if (learned)
-                        prior.Context.fromStream(s, dtype, @intCast(i), hole.depth + 1, @intFromEnum(prod))
-                    else
-                        prior.Context{};
-                    kid_contexts[i] = if (learned) child_ctx else null;
                     kid_scores[i] = completionScoreLowerBound(
                         pr,
-                        child_ctx,
                         s.bits_per_elem,
                         hole.depth + 1,
                         dtype,
@@ -700,7 +684,6 @@ fn run(
                 .depth = hole.depth + 1,
                 .slot = @intCast(i),
                 .parent_op = @intFromEnum(prod),
-                .context = kid_contexts[i],
                 .score_lb = kid_scores[i],
                 .lb_bits = kid_bits[i],
             } };
@@ -731,6 +714,5 @@ test "uniform root completion score uses cheapest legal production" {
     for (0..stream.count) |i| stream.setU32(i, @intCast(i));
     var untrained: prior.Prior = .empty;
     defer untrained.deinit(alloc);
-    const ctx = prior.Context.fromStream(stream, .i8, 0, 0, ROOT_PARENT);
-    try std.testing.expectEqual(@as(u32, 4186), completionScoreLowerBound(&untrained, ctx, 8, 0, .i8, true));
+    try std.testing.expectEqual(@as(u32, 4186), completionScoreLowerBound(&untrained, 8, 0, .i8, true));
 }

@@ -124,6 +124,13 @@ pub const Prior = struct {
         return true;
     }
 
+    pub fn scoreLowerBound(self: Prior, production_count: usize) u32 {
+        std.debug.assert(production_count > 0);
+        const n: f64 = @floatFromInt(production_count);
+        const probability = if (self.isEmpty()) 1.0 / n else PHOG_WEIGHT + (1.0 - PHOG_WEIGHT) / n;
+        return @intFromFloat(@round(-std.math.log2(probability) * 1024.0));
+    }
+
     fn findRow(self: Prior, ctx: Context) ?*const [N_PROD]u32 {
         for (0..3) |level| {
             if (self.levels[level].getPtr(ctx.hash(@intCast(level)))) |scores| return scores;
@@ -282,3 +289,21 @@ const Reader = struct {
         return std.mem.readInt(u64, (try self.take(8))[0..8], .little);
     }
 };
+
+test "context-free score floor bounds learned production scores" {
+    const alloc = std.testing.allocator;
+    var counts = Counts.init(alloc);
+    defer counts.deinit(alloc);
+    const ctx: Context = .{};
+    try counts.add(alloc, ctx, .raw, 1000);
+    var learned = try counts.toPrior(alloc);
+    defer learned.deinit(alloc);
+
+    const productions = [_]ops.OpKind{ .raw, .bitpack, .huffman, .rans };
+    var scores: [productions.len]u32 = undefined;
+    learned.scoreSet(ctx, &productions, &scores);
+    var actual = scores[0];
+    for (scores[1..]) |score| actual = @min(actual, score);
+    try std.testing.expect(learned.scoreLowerBound(productions.len) <= actual);
+    try std.testing.expectEqual(@as(u32, 2048), Prior.empty.scoreLowerBound(productions.len));
+}
