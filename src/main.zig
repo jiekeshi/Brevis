@@ -1041,6 +1041,21 @@ fn renderProgram(alloc: Allocator, out: *std.ArrayList(u8), node: program.Node) 
     try out.append(alloc, ')');
 }
 
+fn writeProgramTree(json: *std.json.Stringify, node: program.Node) !void {
+    try json.beginObject();
+    try json.objectField("op");
+    try json.write(@tagName(node.op));
+    try json.objectField("params_u32");
+    try json.write(node.params);
+    try json.objectField("terminal");
+    try json.write(node.op.isTerminal());
+    try json.objectField("children");
+    try json.beginArray();
+    for (node.children) |child| try writeProgramTree(json, child);
+    try json.endArray();
+    try json.endObject();
+}
+
 const DtypeStat = struct {
     blocks: usize = 0,
     raw: u64 = 0,
@@ -1141,6 +1156,7 @@ fn reportJson(
     alloc: Allocator,
     out: *std.Io.Writer,
     in_path: []const u8,
+    input_bytes: []const u8,
     input_size_bytes: usize,
     input_sha256: []const u8,
     tensors: []const safetensors.Tensor,
@@ -1168,7 +1184,9 @@ fn reportJson(
     };
     try json.beginObject();
     try json.objectField("schema");
-    try json.write(2);
+    try json.write(3);
+    try json.objectField("kind");
+    try json.write("brevis.bench-report");
     try json.objectField("input");
     try json.write(in_path);
     try json.objectField("input_size_bytes");
@@ -1229,10 +1247,34 @@ fn reportJson(
         total_raw += block.byteLen();
         if (maybe) |result| total_encoded += result.bytes;
     }
+    const block_frame_bytes = total_encoded + @as(u64, @intCast(blocks.len)) * 12;
+    const index_offset = @as(u64, archive.HEADER.len) + block_frame_bytes;
+    const metas = try tensorMetas(a, tensors, blocks);
+    const safetensors_header_len: usize = @intCast(std.mem.readInt(u64, input_bytes[0..8], .little));
+    const safetensors_prefix_bytes = 8 + safetensors_header_len;
+    const footer = try archive.makeFooter(a, metas, index_offset, input_bytes[0..safetensors_prefix_bytes]);
     try json.objectField("raw_bytes");
     try json.write(total_raw);
+    try json.objectField("tensor_data_bytes");
+    try json.write(total_raw);
+    try json.objectField("safetensors_prefix_bytes");
+    try json.write(safetensors_prefix_bytes);
     try json.objectField("encoded_bytes_without_frame_headers");
     try json.write(total_encoded);
+    try json.objectField("block_frame_bytes_excluding_container_header_footer");
+    try json.write(block_frame_bytes);
+    try json.objectField("container_header_bytes");
+    try json.write(archive.HEADER.len);
+    try json.objectField("container_footer_bytes");
+    try json.write(footer.len);
+    try json.objectField("projected_archive_bytes");
+    try json.write(index_offset + footer.len);
+    try json.objectField("size_accounting");
+    try json.write("raw_bytes and tensor_data_bytes exclude the safetensors prefix, while input_size_bytes includes it; packed terminal payloads include an 8-byte length per terminal; each block frame adds a 4-byte bytecode length and 8-byte packed-payload length; projected_archive_bytes adds the exact .brv container header and footer for this diagnostic replay, but an actual .brv file remains the effectiveness measurement");
+    try json.objectField("raw_block_classification");
+    try json.write("planned_raw means the selected tensor plan has a raw root; fallback_raw means a non-raw tensor plan produced a raw-root block because it did not beat raw or could not be applied; raw terminals below a transform root are not classified as raw-root blocks");
+    try json.objectField("program_tree_semantics");
+    try json.write("tensor program_tree is the selected planning template and its parameters come from planning; block program_tree is the realized archive program after per-block parameter refitting");
 
     try json.objectField("tensors");
     try json.beginArray();
@@ -1240,11 +1282,19 @@ fn reportJson(
     for (tensors, 0..) |tensor, tensor_index| {
         const first_block = block_index;
         var encoded: u64 = 0;
-        var fallback_blocks: usize = 0;
+        var framed: u64 = 0;
+        var raw_root_blocks: usize = 0;
+        var planned_raw_root_blocks: usize = 0;
+        var fallback_raw_root_blocks: usize = 0;
+        const plan_is_raw = if (plans[tensor_index]) |plan| plan.root.op == .raw else false;
         while (block_index < blocks.len and blocks[block_index].tensor_idx == tensor_index) : (block_index += 1) {
             if (results[block_index]) |result| {
                 encoded += result.bytes;
-                fallback_blocks += @intFromBool(result.node.op == .raw);
+                framed += result.bytes + 12;
+                if (result.node.op == .raw) {
+                    raw_root_blocks += 1;
+                    if (plan_is_raw) planned_raw_root_blocks += 1 else fallback_raw_root_blocks += 1;
+                }
             }
         }
 
@@ -1261,14 +1311,30 @@ fn reportJson(
         try json.write(tensor.view.numel());
         try json.objectField("raw_bytes");
         try json.write(tensor.view.data.len);
+        const input_start = @intFromPtr(input_bytes.ptr);
+        const input_end = input_start + input_bytes.len;
+        const tensor_start = @intFromPtr(tensor.view.data.ptr);
+        if (tensor_start < input_start or tensor_start > input_end or
+            tensor.view.data.len > input_end - tensor_start) return error.TensorOutsideInput;
+        const file_data_start = tensor_start - input_start;
+        try json.objectField("file_data_start_byte");
+        try json.write(file_data_start);
+        try json.objectField("file_data_end_byte_exclusive");
+        try json.write(file_data_start + tensor.view.data.len);
         try json.objectField("encoded_bytes_without_frame_headers");
         try json.write(encoded);
+        try json.objectField("block_frame_bytes_excluding_container_header_footer");
+        try json.write(framed);
         try json.objectField("block_start");
         try json.write(first_block);
         try json.objectField("block_count");
         try json.write(block_index - first_block);
-        try json.objectField("raw_fallback_blocks");
-        try json.write(fallback_blocks);
+        try json.objectField("raw_root_blocks");
+        try json.write(raw_root_blocks);
+        try json.objectField("planned_raw_root_blocks");
+        try json.write(planned_raw_root_blocks);
+        try json.objectField("fallback_raw_root_blocks");
+        try json.write(fallback_raw_root_blocks);
         if (plans[tensor_index]) |plan| {
             buf.clearRetainingCapacity();
             try renderProgram(a, &buf, plan.root);
@@ -1284,6 +1350,10 @@ fn reportJson(
             if (mode == .search) try json.write(plan.selected_sample_rank) else try json.write(null);
             try json.objectField("program");
             try json.write(buf.items);
+            try json.objectField("root_operator");
+            try json.write(@tagName(plan.root.op));
+            try json.objectField("program_tree");
+            try writeProgramTree(&json, plan.root);
             try json.objectField("program_nodes");
             try json.write(programNodes(plan.root));
             try json.objectField("program_depth");
@@ -1306,6 +1376,20 @@ fn reportJson(
             try json.objectField("selected_sample_rank_zero_based");
             try json.write(null);
             try json.objectField("program");
+            try json.write(null);
+            try json.objectField("root_operator");
+            try json.write(null);
+            try json.objectField("program_tree");
+            try json.write(null);
+            try json.objectField("program_nodes");
+            try json.write(null);
+            try json.objectField("program_depth");
+            try json.write(null);
+            try json.objectField("program_node_depth");
+            try json.write(null);
+            try json.objectField("program_transform_depth");
+            try json.write(null);
+            try json.objectField("terminal_count");
             try json.write(null);
         }
         try json.endObject();
@@ -1331,8 +1415,28 @@ fn reportJson(
         try json.write(block.byteLen());
         try json.objectField("encoded_bytes_without_frame_headers");
         try json.write(result.bytes);
+        try json.objectField("program_bytecode_bytes");
+        try json.write(result.bytes - result.payload.len);
+        try json.objectField("packed_terminal_payload_bytes");
+        try json.write(result.payload.len);
+        try json.objectField("frame_header_bytes");
+        try json.write(result.bytes - result.payload.len + 12);
+        try json.objectField("framed_bytes");
+        try json.write(result.bytes + 12);
+        const block_plan_is_raw = if (plans[block.tensor_idx]) |plan| plan.root.op == .raw else false;
+        try json.objectField("raw_classification");
+        if (result.node.op != .raw)
+            try json.write(null)
+        else if (block_plan_is_raw)
+            try json.write("planned_raw")
+        else
+            try json.write("fallback_raw");
         try json.objectField("program");
         try json.write(buf.items);
+        try json.objectField("root_operator");
+        try json.write(@tagName(result.node.op));
+        try json.objectField("program_tree");
+        try writeProgramTree(&json, result.node);
         try json.objectField("program_nodes");
         try json.write(programNodes(result.node));
         try json.objectField("program_depth");
@@ -1420,6 +1524,7 @@ fn cmdBench(
             alloc,
             out,
             in_path,
+            loaded.bytes,
             loaded.bytes.len,
             if (input_digest) |*digest| digest[0..] else unreachable,
             loaded.tensors,
