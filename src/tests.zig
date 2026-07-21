@@ -199,6 +199,47 @@ test "codec: huffman and rans roundtrip" {
     }
 }
 
+test "codec: huffman flat table preserves u32 symbols" {
+    const a = std.testing.allocator;
+    var in = try Stream.init(a, 64, 32);
+    defer in.deinit(a);
+    for (0..in.count) |i| in.setU32(i, if (i & 1 == 0) 0x1234_5678 else 0xFEDC_BA98);
+
+    var table = try codec.huffmanBuild(a, in);
+    defer table.deinit(a);
+    try expect(table.entries[table.entries.len - 1].len <= 12);
+    const payload = try codec.huffmanEncode(a, in, table);
+    defer a.free(payload);
+    var back = try codec.huffmanDecode(a, payload, table, in.count, in.bits_per_elem);
+    defer back.deinit(a);
+    try expectStreamsEqual(in, back);
+}
+
+test "codec: huffman long codes use canonical fallback" {
+    const a = std.testing.allocator;
+    const freq = [_]usize{ 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987 };
+    var total: usize = 0;
+    for (freq) |n| total += n;
+    var in = try Stream.init(a, total, 16);
+    defer in.deinit(a);
+    var at: usize = 0;
+    for (freq, 0..) |n, sym| {
+        for (0..n) |_| {
+            in.setU32(at, @intCast(sym * 4093));
+            at += 1;
+        }
+    }
+
+    var table = try codec.huffmanBuild(a, in);
+    defer table.deinit(a);
+    try expect(table.entries[table.entries.len - 1].len > 12);
+    const payload = try codec.huffmanEncode(a, in, table);
+    defer a.free(payload);
+    var back = try codec.huffmanDecode(a, payload, table, in.count, in.bits_per_elem);
+    defer back.deinit(a);
+    try expectStreamsEqual(in, back);
+}
+
 // ==================== operator inverses ====================
 
 const ONE_TO_ONE = [_]OpKind{
@@ -540,6 +581,23 @@ test "prior: scores normalize over legal productions" {
 }
 
 // ==================== search ====================
+
+test "search: huffman remains a legal terminal" {
+    const a = std.testing.allocator;
+    var in = try Stream.init(a, 1024, 8);
+    defer in.deinit(a);
+    for (0..in.count) |i| in.setU32(i, if (i & 1 == 0) 0 else 255);
+
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
+    var result = try search.synthesize(a, in, .u8, &untrained, .{
+        .max_nodes = 1,
+        .max_depth = 0,
+        .sample_elems = 0,
+    });
+    defer result.deinit(a);
+    try expectEqual(OpKind.huffman, result.node.op);
+}
 
 /// Synthetic blocks with the structure real weights have.
 fn makeBlock(a: Allocator, rng: std.Random, dt: Dtype, n: usize, kind: u8) !Stream {

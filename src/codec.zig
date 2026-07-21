@@ -79,16 +79,18 @@ pub const BitReader = struct {
         return b;
     }
 
-    /// Next `n` bits MSB-first without advancing, zero-padded past the end.
-    /// Five bytes cover any bit offset plus a 32-bit read.
-    pub fn peek(self: BitReader, n: u5) u32 {
-        var acc: u64 = 0;
-        for (0..5) |k| {
-            const i = (self.bit_pos >> 3) + k;
-            acc = (acc << 8) | (if (i < self.bytes.len) self.bytes[i] else 0);
+    pub fn peek12(self: BitReader) u12 {
+        const i = self.bit_pos >> 3;
+        var acc: u32 = 0;
+        if (i + 2 < self.bytes.len) {
+            acc = (@as(u32, self.bytes[i]) << 16) |
+                (@as(u32, self.bytes[i + 1]) << 8) |
+                self.bytes[i + 2];
+        } else {
+            for (0..3) |k| acc = (acc << 8) | (if (i + k < self.bytes.len) self.bytes[i + k] else 0);
         }
-        const off: u6 = @intCast(self.bit_pos & 7);
-        return @truncate((acc >> @intCast(40 - off - @as(u6, n))) & ((@as(u64, 1) << n) - 1));
+        const off: u4 = @intCast(self.bit_pos & 7);
+        return @truncate(acc >> @intCast(12 - off));
     }
 
     pub fn skip(self: *BitReader, n: usize) void {
@@ -470,40 +472,43 @@ pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable,
 
     var br = BitReader.init(payload);
 
-    // Codes this short fit a flat lookup: one indexed read per symbol instead of
-    // one per bit. Deeper tables fall back to walking the canonical ranges.
-    if (max_len <= LUT_BITS) {
-        var storage: [1 << LUT_BITS]u32 = undefined;
-        const lut = storage[0 .. @as(usize, 1) << @intCast(max_len)];
-        var c: u64 = 0;
-        var prev_len: u8 = table.entries[0].len;
-        for (table.entries) |e| {
-            if (e.len > prev_len) {
-                c <<= @intCast(e.len - prev_len);
-                prev_len = e.len;
-            }
-            const shift: u5 = @intCast(max_len - e.len);
-            const base: usize = @intCast(c << shift);
-            @memset(lut[base .. base + (@as(usize, 1) << shift)], (e.sym << 8) | e.len);
-            c += 1;
+    var lut_sym: [1 << LUT_BITS]u32 = undefined;
+    var lut_len: [1 << LUT_BITS]u8 = @splat(0);
+    var next_code: u64 = 0;
+    var prev_len: u8 = table.entries[0].len;
+    for (table.entries) |e| {
+        if (e.len > prev_len) {
+            next_code <<= @intCast(e.len - prev_len);
+            prev_len = e.len;
         }
-        for (0..count) |i| {
-            const hit = lut[br.peek(@intCast(max_len))];
-            s.setU32(i, hit >> 8);
-            br.skip(hit & 0xFF);
+        if (e.len <= LUT_BITS) {
+            const shift: u5 = @intCast(LUT_BITS - e.len);
+            const base: usize = @intCast(next_code << shift);
+            const end = base + (@as(usize, 1) << shift);
+            @memset(lut_sym[base..end], e.sym);
+            @memset(lut_len[base..end], e.len);
         }
-        return s;
+        next_code += 1;
     }
 
     for (0..count) |i| {
-        var c: u64 = 0;
-        var len: u8 = 0;
+        const prefix = br.peek12();
+        const short_len = lut_len[prefix];
+        if (short_len != 0) {
+            s.setU32(i, lut_sym[prefix]);
+            br.skip(short_len);
+            continue;
+        }
+        if (max_len <= LUT_BITS) return error.CorruptHuffmanStream;
+        var fallback_code: u64 = prefix;
+        var len: u8 = LUT_BITS;
+        br.skip(LUT_BITS);
         while (len < max_len) {
-            c = (c << 1) | br.readBit();
+            fallback_code = (fallback_code << 1) | br.readBit();
             len += 1;
             const n = counts[len];
-            if (n != 0 and c >= first_code[len] and c - first_code[len] < n) {
-                s.setU32(i, table.entries[first_idx[len] + @as(u32, @intCast(c - first_code[len]))].sym);
+            if (n != 0 and fallback_code >= first_code[len] and fallback_code - first_code[len] < n) {
+                s.setU32(i, table.entries[first_idx[len] + @as(u32, @intCast(fallback_code - first_code[len]))].sym);
                 break;
             }
         } else return error.CorruptHuffmanStream;

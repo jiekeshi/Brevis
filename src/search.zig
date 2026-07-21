@@ -201,11 +201,10 @@ fn sideBody(side: ops.SideInfo) usize {
 fn legalProductions(hole_bpe: u8, depth: u8, dtype: Dtype, is_root: bool, out: *std.ArrayList(OpKind)) void {
     out.appendAssumeCapacity(.raw);
     out.appendAssumeCapacity(.bitpack);
-    // rANS only: it reaches the entropy where Huffman pays an integer-bit
-    // penalty, and although its table costs more per symbol, that is decided on
-    // the sample where the table is over-weighted -- so offering both makes the
-    // search pick the weaker coder. Measured uniformly better on bf16 and i8.
-    if (hole_bpe <= ops.MAX_ENTROPY_BPE) out.appendAssumeCapacity(.rans);
+    if (hole_bpe <= ops.MAX_ENTROPY_BPE) {
+        out.appendAssumeCapacity(.huffman);
+        out.appendAssumeCapacity(.rans);
+    }
     if (depth >= ops.K_TRANSFORM_LAYERS) return;
 
     const elementwise = [_]OpKind{

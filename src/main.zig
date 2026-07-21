@@ -836,16 +836,19 @@ const WritePipe = struct {
     written: u64 = 0,
     err: ?anyerror = null,
 
-    fn drain(self: *WritePipe) void {
-        for (self.batch) |maybe| {
+    fn write(self: *WritePipe, batch: []?Stream) !void {
+        for (batch) |maybe| {
             const stream = maybe.?;
             const data = stream.data[0 .. stream.count * stream.elemBytes()];
-            self.writer.writeAll(data) catch |e| {
-                self.err = e;
-                return;
-            };
+            try self.writer.writeAll(data);
             self.written += data.len;
         }
+    }
+
+    fn drain(self: *WritePipe) void {
+        self.write(self.batch) catch |e| {
+            self.err = e;
+        };
     }
 
     fn join(self: *WritePipe) void {
@@ -927,7 +930,13 @@ fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path:
         const blocks = try alloc.alloc(archive.ParsedBlock, n);
         defer alloc.free(blocks);
         for (blocks) |*block| block.* = try archive.nextBlock(loaded.parsed.frames, &frame_pos);
-        try pipe.submit(try decodeBlocks(alloc, blocks, n_threads, &decode_pool));
+        const streams = try decodeBlocks(alloc, blocks, n_threads, &decode_pool);
+        if (n_threads == 1) {
+            defer freeStreams(alloc, streams);
+            try pipe.write(streams);
+        } else {
+            try pipe.submit(streams);
+        }
         remaining -= n;
     }
     try pipe.finish();
