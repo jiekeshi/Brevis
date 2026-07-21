@@ -148,11 +148,11 @@ XZ_SINGLE = ThreadPolicy(
     cli_args=("-T1",),
 )
 ZSTD_SINGLE = ThreadPolicy(
-    compression="single-thread mode requested explicitly",
-    decompression="single-threaded decoder",
+    compression="single-thread mode and synchronous I/O requested explicitly",
+    decompression="serial decoder with asynchronous I/O disabled explicitly",
     requested_compression_threads=1,
     requested_decompression_threads=1,
-    cli_args=("--single-thread",),
+    cli_args=("--single-thread", "--no-asyncio"),
 )
 
 
@@ -191,12 +191,17 @@ def _build_registry() -> tuple[BaselineSpec, ...]:
             profile="copy",
             executable="cp",
             version_args=("--version",),
-            compress_args=("--reflink=never", "--", "{input}", "{output}"),
-            decompress_args=("--reflink=never", "--", "{input}", "{output}"),
+            compress_args=(
+                "--reflink=never", "--sparse=never", "--", "{input}", "{output}",
+            ),
+            decompress_args=(
+                "--reflink=never", "--sparse=never", "--", "{input}", "{output}",
+            ),
             thread_policy=RAW_COPY,
             notes=(
-                "Uncompressed, buffered-I/O logical-copy reference; --reflink=never "
-                "prevents a copy-on-write clone. No codec is applied."
+                "Uncompressed regular-file logical-copy reference; --reflink=never "
+                "prevents a copy-on-write clone and --sparse=never prevents sparse "
+                "output. No codec is applied."
             ),
         )
     ]
@@ -247,7 +252,11 @@ def _build_registry() -> tuple[BaselineSpec, ...]:
 
     for profile, level, note in (
         ("speed", ("-1",), "Speed-oriented Zstandard level 1."),
-        ("default", ("-3",), "Default-oriented profile: explicit Zstandard default level 3."),
+        (
+            "default", ("-3",),
+            "Default-oriented profile: Zstandard's default compression level 3 "
+            "under the serial, synchronous-I/O policy.",
+        ),
         (
             "ratio", ("-19",),
             "Ratio-oriented level 19, bounded to regular levels; --ultra levels 20--22 are outside this profile.",
@@ -258,10 +267,20 @@ def _build_registry() -> tuple[BaselineSpec, ...]:
             profile=profile,
             executable="zstd",
             version_args=("--version",),
-            compress_args=("-q", "-f", "--single-thread", *level, "{input}", "-o", "{output}"),
-            decompress_args=("-d", "-q", "-f", "{input}", "-o", "{output}"),
+            compress_args=(
+                "-q", "-f", "--single-thread", "--no-asyncio", *level,
+                "{input}", "-o", "{output}",
+            ),
+            decompress_args=(
+                "-d", "-q", "-f", "--no-asyncio", "--no-sparse",
+                "{input}", "-o", "{output}",
+            ),
             thread_policy=ZSTD_SINGLE,
-            notes=note,
+            notes=(
+                note + " Compression disables asynchronous I/O in addition to "
+                "requesting single-thread mode; decoding disables asynchronous I/O "
+                "and sparse output."
+            ),
         ))
 
     for profile, level, note in (
@@ -1542,11 +1561,13 @@ def benchmark_file(
                     "best-effort buffered I/O: source hashing and independent copy staging can "
                     "warm the page cache, but the harness neither flushes the cache nor guarantees "
                     "page residency; warmups precede measurements; every archive is hashed and "
-                    "independently copied before decoding; raw/copy uses --reflink=never"
+                    "independently copied before decoding; raw/copy uses --reflink=never and "
+                    "--sparse=never"
                 ),
                 "io_policy": (
-                    "regular on-disk files; no explicit fsync or drop_caches; xz and LZ4 "
-                    "decoders use --no-sparse"
+                    "regular on-disk files; no explicit fsync or drop_caches; xz, Zstandard, "
+                    "and LZ4 decoders use --no-sparse; Zstandard compression and decoding "
+                    "use --no-asyncio"
                 ),
                 "timing_scope": (
                     "after stdout/stderr log open, immediately before process spawn, through process reap"

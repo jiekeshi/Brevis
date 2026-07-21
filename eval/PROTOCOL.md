@@ -340,6 +340,16 @@ round-trip verification. Measured archive sizes and hashes must agree across
 repetitions. This serial registry is not a substitute for the separate
 matched-worker scaling track.
 
+The raw-copy reference explicitly disables both copy-on-write reflinks and
+sparse output. Xz, Zstandard, and LZ4 decoding also disables sparse output so
+that zero runs do not reduce the bytes written by only a subset of methods.
+Zstandard compression requests single-thread mode and disables asynchronous I/O;
+decoding also disables asynchronous I/O. Thus, `zstd/default` means the default
+compression level 3 under this serial I/O policy, not an otherwise unconstrained
+CLI invocation. Bzip2's default `-9` and ratio-oriented `--best` rows are exact
+aliases. Retain both preregistered labels, but do not count them as independent
+configurations in an aggregate or interpret their equality as replication.
+
 `brevis_benchmarking.py` implements repeated Brevis runs with independent
 calibration, a canonical measured prior, paired method orders, process-level
 RSS, complete archives, and post-timing byte verification. It executes every

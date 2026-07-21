@@ -34,8 +34,8 @@ class RegistryTests(unittest.TestCase):
     def test_all_19_registry_argv_are_fully_pinned(self):
         expected = {
             "raw/copy": (
-                ("--reflink=never", "--", "{input}", "{output}"),
-                ("--reflink=never", "--", "{input}", "{output}"),
+                ("--reflink=never", "--sparse=never", "--", "{input}", "{output}"),
+                ("--reflink=never", "--sparse=never", "--", "{input}", "{output}"),
             ),
             "gzip/speed": (
                 ("-n", "-k", "-f", "-1", "{input}"),
@@ -74,16 +74,34 @@ class RegistryTests(unittest.TestCase):
                 ("-d", "-k", "-f", "--no-sparse", "{input}"),
             ),
             "zstd/speed": (
-                ("-q", "-f", "--single-thread", "-1", "{input}", "-o", "{output}"),
-                ("-d", "-q", "-f", "{input}", "-o", "{output}"),
+                (
+                    "-q", "-f", "--single-thread", "--no-asyncio", "-1",
+                    "{input}", "-o", "{output}",
+                ),
+                (
+                    "-d", "-q", "-f", "--no-asyncio", "--no-sparse",
+                    "{input}", "-o", "{output}",
+                ),
             ),
             "zstd/default": (
-                ("-q", "-f", "--single-thread", "-3", "{input}", "-o", "{output}"),
-                ("-d", "-q", "-f", "{input}", "-o", "{output}"),
+                (
+                    "-q", "-f", "--single-thread", "--no-asyncio", "-3",
+                    "{input}", "-o", "{output}",
+                ),
+                (
+                    "-d", "-q", "-f", "--no-asyncio", "--no-sparse",
+                    "{input}", "-o", "{output}",
+                ),
             ),
             "zstd/ratio": (
-                ("-q", "-f", "--single-thread", "-19", "{input}", "-o", "{output}"),
-                ("-d", "-q", "-f", "{input}", "-o", "{output}"),
+                (
+                    "-q", "-f", "--single-thread", "--no-asyncio", "-19",
+                    "{input}", "-o", "{output}",
+                ),
+                (
+                    "-d", "-q", "-f", "--no-asyncio", "--no-sparse",
+                    "{input}", "-o", "{output}",
+                ),
             ),
             "lz4/speed": (
                 ("-q", "-f", "--fast=5", "{input}", "{output}"),
@@ -115,6 +133,35 @@ class RegistryTests(unittest.TestCase):
             for spec in benchmarking.BASELINE_SPECS
         }
         self.assertEqual(expected, actual)
+
+    def test_registry_documents_equivalent_and_serialized_profiles(self):
+        raw = benchmarking.SPEC_BY_ID["raw/copy"]
+        for arguments in (raw.compress_args, raw.decompress_args):
+            self.assertIn("--reflink=never", arguments)
+            self.assertIn("--sparse=never", arguments)
+        self.assertIn("regular-file", raw.notes)
+
+        bzip_default = benchmarking.SPEC_BY_ID["bzip2/default"]
+        bzip_ratio = benchmarking.SPEC_BY_ID["bzip2/ratio"]
+        self.assertIn("defaults to its ratio-oriented", bzip_default.notes)
+        self.assertIn("equivalent to -9", bzip_ratio.notes)
+
+        zstd_default = benchmarking.SPEC_BY_ID["zstd/default"]
+        self.assertIn("default compression level 3", zstd_default.notes)
+        self.assertIn("serial, synchronous-I/O policy", zstd_default.notes)
+        for spec in (
+            benchmarking.SPEC_BY_ID["zstd/speed"],
+            zstd_default,
+            benchmarking.SPEC_BY_ID["zstd/ratio"],
+        ):
+            self.assertIn("--single-thread", spec.compress_args)
+            self.assertIn("--no-asyncio", spec.compress_args)
+            self.assertIn("--no-asyncio", spec.decompress_args)
+            self.assertIn("--no-sparse", spec.decompress_args)
+            self.assertEqual(
+                ("--single-thread", "--no-asyncio"),
+                spec.thread_policy.cli_args,
+            )
 
     def test_select_specs_rejects_unknown_and_empty_selections(self):
         with self.assertRaisesRegex(ValueError, "unknown baseline"):
@@ -183,6 +230,10 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(result["integrity"]["manifest_binding"]["verified"])
         self.assertIn("immediately before process spawn", result["configuration"]["timing_scope"])
         self.assertIn("forward/reverse", result["configuration"]["scheduling_policy"])
+        self.assertIn("--sparse=never", result["configuration"]["cache_policy"])
+        self.assertIn("Zstandard", result["configuration"]["io_policy"])
+        self.assertIn("--no-sparse", result["configuration"]["io_policy"])
+        self.assertIn("--no-asyncio", result["configuration"]["io_policy"])
         self.assertEqual(3, len(result["configuration"]["execution_schedule"]))
         self.assertIn("commit", result["provenance"]["git"])
         self.assertIn("dirty", result["provenance"]["git"])
@@ -257,6 +308,7 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertEqual(19, len(result["methods"]))
         available = 0
+        methods_by_id = {method["id"]: method for method in result["methods"]}
         for method in result["methods"]:
             with self.subTest(method=method["id"]):
                 if not method["available"]:
@@ -275,6 +327,17 @@ class BenchmarkTests(unittest.TestCase):
                     self.assertEqual(0, run["compression"]["exit_code"])
                     self.assertEqual(0, run["decompression"]["exit_code"])
         self.assertGreaterEqual(available, 1)  # raw/copy is expected on supported hosts.
+        bzip_default = methods_by_id["bzip2/default"]
+        bzip_ratio = methods_by_id["bzip2/ratio"]
+        if bzip_default["available"] and bzip_ratio["available"]:
+            self.assertEqual(
+                bzip_default["measured_archive_consistency"]["reference_size_bytes"],
+                bzip_ratio["measured_archive_consistency"]["reference_size_bytes"],
+            )
+            self.assertEqual(
+                bzip_default["measured_archive_consistency"]["reference_sha256"],
+                bzip_ratio["measured_archive_consistency"]["reference_sha256"],
+            )
 
     def test_default_measured_schedule_is_seeded_and_forward_reverse_balanced(self):
         specs = tuple(
