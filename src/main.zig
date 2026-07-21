@@ -528,8 +528,6 @@ fn cmdCompress(
     defer alloc.free(metas);
     const frame_off = try alloc.alloc(u64, blocks.len);
     defer alloc.free(frame_off);
-    const frame_size = try alloc.alloc(u64, blocks.len);
-    defer alloc.free(frame_size);
 
     var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
     defer atomic.deinit(io);
@@ -543,7 +541,6 @@ fn cmdCompress(
     defer encode_pool.deinit();
 
     var file_off: u64 = archive.HEADER.len;
-    var program_bytes: u64 = 0;
     var n_dup: usize = 0;
     const batch_size = @max(@as(usize, 1), n_threads) * 16;
     var first: usize = 0;
@@ -558,8 +555,6 @@ fn cmdCompress(
                 const frame = archive.refFrame(frame_off[src]);
                 try writer.interface.writeAll(&frame);
                 file_off += frame.len;
-                frame_size[bi] = frame_size[src];
-                program_bytes += frame_size[bi];
                 n_dup += 1;
                 continue;
             }
@@ -568,9 +563,7 @@ fn cmdCompress(
             defer alloc.free(frame_header);
             try writer.interface.writeAll(frame_header);
             try writer.interface.writeAll(result.payload);
-            frame_size[bi] = frame_header.len + result.payload.len;
-            program_bytes += frame_size[bi];
-            file_off += frame_size[bi];
+            file_off += frame_header.len + result.payload.len;
         }
         first = last;
     }
@@ -581,14 +574,12 @@ fn cmdCompress(
     try writer.interface.writeAll(tail);
     try writer.interface.flush();
     const written = file_off + tail.len;
-    const without_refs = archive.HEADER.len + program_bytes + tail.len;
     try atomic.replace(io);
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
 
     const raw = rawBytes(loaded.tensors);
     try out.print("synthesized and wrote in {d}ms ({d} of {d} blocks deduplicated)\n", .{ ms, n_dup, blocks.len });
     try out.print("wrote {s}: {d} -> {d} bytes ({d:.3}x)\n", .{ out_path, raw, written, ratio(raw, written) });
-    try out.print("program frames before references: {d} bytes; dedup saved {d}\n", .{ without_refs, without_refs - written });
 }
 
 // ==================== decompress / verify ====================

@@ -64,37 +64,35 @@ pub const BitWriter = struct {
 
 pub const BitReader = struct {
     bytes: []const u8,
-    bit_pos: usize = 0,
+    byte_pos: usize = 0,
+    bits: u64 = 0,
+    nbits: u8 = 0,
 
     pub fn init(bytes: []const u8) BitReader {
         return .{ .bytes = bytes };
     }
 
-    /// Read one bit MSB-first.
-    pub fn readBit(self: *BitReader) u1 {
-        const byte_i = self.bit_pos >> 3;
-        const bit_i: u3 = @intCast(7 - (self.bit_pos & 7));
-        const b: u1 = @intCast((self.bytes[byte_i] >> bit_i) & 1);
-        self.bit_pos += 1;
-        return b;
-    }
-
-    pub fn peek12(self: BitReader) u12 {
-        const i = self.bit_pos >> 3;
-        var acc: u32 = 0;
-        if (i + 2 < self.bytes.len) {
-            acc = (@as(u32, self.bytes[i]) << 16) |
-                (@as(u32, self.bytes[i + 1]) << 8) |
-                self.bytes[i + 2];
-        } else {
-            for (0..3) |k| acc = (acc << 8) | (if (i + k < self.bytes.len) self.bytes[i + k] else 0);
+    inline fn fill(self: *BitReader) void {
+        while (self.nbits <= 56 and self.byte_pos < self.bytes.len) {
+            self.bits |= @as(u64, self.bytes[self.byte_pos]) << @intCast(56 - self.nbits);
+            self.nbits += 8;
+            self.byte_pos += 1;
         }
-        const off: u4 = @intCast(self.bit_pos & 7);
-        return @truncate(acc >> @intCast(12 - off));
     }
 
-    pub fn skip(self: *BitReader, n: usize) void {
-        self.bit_pos += n;
+    pub inline fn readBits(self: *BitReader, n: u8) ?u64 {
+        std.debug.assert(n > 0 and n <= 32);
+        self.fill();
+        if (self.nbits < n) return null;
+        const value = self.bits >> @intCast(64 - n);
+        self.bits <<= @intCast(n);
+        self.nbits -= n;
+        return value;
+    }
+
+    pub inline fn peek12(self: *BitReader) u12 {
+        self.fill();
+        return @truncate(self.bits >> 52);
     }
 };
 
@@ -441,34 +439,45 @@ pub fn huffmanEncode(alloc: Allocator, stream: Stream, table: HuffmanTable) ![]u
 }
 
 pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable, count: usize, bits_per_elem: u8) !Stream {
+    if (bits_per_elem == 0 or bits_per_elem > 32) return error.CorruptHuffmanStream;
     const elem_bytes: usize = switch (types.roundUpToPow2(bits_per_elem)) {
         8 => 1,
         16 => 2,
         32 => 4,
         else => unreachable,
     };
-    const buf = try alloc.alloc(u8, count * elem_bytes);
-    var s: Stream = .{ .data = buf, .count = count, .bits_per_elem = bits_per_elem };
+    if (count != 0 and table.entries.len == 0) return error.CorruptHuffmanStream;
 
-    if (count == 0) return s;
-
-    // Entries are already in canonical order, so the codes of length L occupy a
-    // contiguous run starting at `first_code[L]`, and the n-th of them is the
-    // n-th entry from `first_idx[L]`. Decoding is then array indexing per bit
-    // rather than a lookup structure.
-    const max_len = table.entries[table.entries.len - 1].len;
     var counts = [_]u32{0} ** 33;
+    var max_len: u8 = 0;
+    for (table.entries, 0..) |e, i| {
+        if (e.len == 0 or e.len > 32) return error.CorruptHuffmanStream;
+        if (i != 0) {
+            const prev = table.entries[i - 1];
+            if (e.len < prev.len or (e.len == prev.len and e.sym <= prev.sym))
+                return error.CorruptHuffmanStream;
+        }
+        counts[e.len] += 1;
+        max_len = e.len;
+    }
+
     var first_code = [_]u64{0} ** 33;
     var first_idx = [_]u32{0} ** 33;
-    for (table.entries) |e| counts[e.len] += 1;
     var code: u64 = 0;
     var idx: u32 = 0;
     for (1..@as(usize, max_len) + 1) |len| {
+        if (code + counts[len] > @as(u64, 1) << @intCast(len))
+            return error.CorruptHuffmanStream;
         first_code[len] = code;
         first_idx[len] = idx;
         idx += counts[len];
         code = (code + counts[len]) << 1;
     }
+
+    const buf = try alloc.alloc(u8, count * elem_bytes);
+    var s: Stream = .{ .data = buf, .count = count, .bits_per_elem = bits_per_elem };
+    errdefer s.deinit(alloc);
+    if (count == 0) return s;
 
     var br = BitReader.init(payload);
 
@@ -495,16 +504,16 @@ pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable,
         const prefix = br.peek12();
         const short_len = lut_len[prefix];
         if (short_len != 0) {
+            if (br.readBits(short_len) == null) return error.CorruptHuffmanStream;
             s.setU32(i, lut_sym[prefix]);
-            br.skip(short_len);
             continue;
         }
         if (max_len <= LUT_BITS) return error.CorruptHuffmanStream;
-        var fallback_code: u64 = prefix;
+        var fallback_code = br.readBits(LUT_BITS) orelse return error.CorruptHuffmanStream;
         var len: u8 = LUT_BITS;
-        br.skip(LUT_BITS);
         while (len < max_len) {
-            fallback_code = (fallback_code << 1) | br.readBit();
+            fallback_code = (fallback_code << 1) |
+                (br.readBits(1) orelse return error.CorruptHuffmanStream);
             len += 1;
             const n = counts[len];
             if (n != 0 and fallback_code >= first_code[len] and fallback_code - first_code[len] < n) {
@@ -549,10 +558,7 @@ pub fn bitpackDecode(alloc: Allocator, payload: []const u8, width: u8, count: us
 
     var br = BitReader.init(payload);
     for (0..count) |i| {
-        var v: u32 = 0;
-        var b: u8 = 0;
-        while (b < width) : (b += 1) v = (v << 1) | br.readBit();
-        s.setU32(i, v);
+        s.setU32(i, @intCast(br.readBits(width).?));
     }
     return s;
 }

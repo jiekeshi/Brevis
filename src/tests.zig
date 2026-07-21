@@ -217,6 +217,10 @@ test "codec: huffman flat table preserves u32 symbols" {
     var back = try codec.huffmanDecode(a, payload, table, in.count, in.bits_per_elem);
     defer back.deinit(a);
     try expectStreamsEqual(in, back);
+    try std.testing.expectError(
+        error.CorruptHuffmanStream,
+        codec.huffmanDecode(a, payload[0 .. payload.len - 1], table, in.count, in.bits_per_elem),
+    );
 }
 
 test "codec: huffman long codes use canonical fallback" {
@@ -242,6 +246,44 @@ test "codec: huffman long codes use canonical fallback" {
     var back = try codec.huffmanDecode(a, payload, table, in.count, in.bits_per_elem);
     defer back.deinit(a);
     try expectStreamsEqual(in, back);
+    try std.testing.expectError(
+        error.CorruptHuffmanStream,
+        codec.huffmanDecode(a, payload[0 .. payload.len - 1], table, in.count, in.bits_per_elem),
+    );
+}
+
+test "codec: huffman rejects malformed tables and truncated payloads" {
+    const a = std.testing.allocator;
+
+    const empty: codec.HuffmanTable = .{ .entries = &.{} };
+    try std.testing.expectError(error.CorruptHuffmanStream, codec.huffmanDecode(a, &.{}, empty, 1, 8));
+
+    var zero_len_entries = [_]codec.HuffmanTable.Entry{.{ .sym = 0, .len = 0 }};
+    const zero_len: codec.HuffmanTable = .{ .entries = &zero_len_entries };
+    try std.testing.expectError(error.CorruptHuffmanStream, codec.huffmanDecode(a, &.{0}, zero_len, 1, 8));
+
+    var long_entries = [_]codec.HuffmanTable.Entry{.{ .sym = 0, .len = 33 }};
+    const too_long: codec.HuffmanTable = .{ .entries = &long_entries };
+    try std.testing.expectError(error.CorruptHuffmanStream, codec.huffmanDecode(a, &.{0}, too_long, 1, 8));
+
+    var unsorted_entries = [_]codec.HuffmanTable.Entry{
+        .{ .sym = 1, .len = 2 },
+        .{ .sym = 0, .len = 1 },
+    };
+    const unsorted: codec.HuffmanTable = .{ .entries = &unsorted_entries };
+    try std.testing.expectError(error.CorruptHuffmanStream, codec.huffmanDecode(a, &.{0}, unsorted, 1, 8));
+
+    var oversubscribed_entries = [_]codec.HuffmanTable.Entry{
+        .{ .sym = 0, .len = 1 },
+        .{ .sym = 1, .len = 1 },
+        .{ .sym = 2, .len = 1 },
+    };
+    const oversubscribed: codec.HuffmanTable = .{ .entries = &oversubscribed_entries };
+    try std.testing.expectError(error.CorruptHuffmanStream, codec.huffmanDecode(a, &.{0}, oversubscribed, 1, 8));
+
+    var one_bit_entries = [_]codec.HuffmanTable.Entry{.{ .sym = 7, .len = 1 }};
+    const one_bit: codec.HuffmanTable = .{ .entries = &one_bit_entries };
+    try std.testing.expectError(error.CorruptHuffmanStream, codec.huffmanDecode(a, &.{0}, one_bit, 9, 8));
 }
 
 // ==================== operator inverses ====================

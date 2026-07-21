@@ -1,3 +1,4 @@
+import json
 import pathlib
 import tempfile
 import unittest
@@ -107,6 +108,70 @@ class ModelEvalTests(unittest.TestCase):
                 run_eval.evaluate_model(self.model, self.work)
 
         self.assertFalse([path for path in self.work.rglob("*") if path.is_file()])
+
+    def test_main_resumes_completed_shards_from_checkpoint(self):
+        models = self.root / "models.json"
+        results = self.root / "results.json"
+        brevis = self.root / "brevis"
+        models.write_text(json.dumps([self.model]))
+        brevis.touch()
+        calls = 0
+
+        def corrupt_second_shard(*cmd):
+            nonlocal calls
+            elapsed = self.command(*cmd)
+            if str(cmd[1]) == "decompress":
+                calls += 1
+                if calls == 3:
+                    pathlib.Path(cmd[3]).write_bytes(b"corrupt")
+            return elapsed
+
+        patches = self.patches()
+        patches = (patches[0], mock.patch.object(run_eval, "timed", side_effect=corrupt_second_shard), *patches[2:])
+        with mock.patch.object(run_eval, "BREVIS", brevis), mock.patch.object(run_eval, "CACHE", self.root / "cache"):
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                with self.assertRaises(run_eval.EvalError):
+                    run_eval.main(["--models", str(models), "--results", str(results)])
+
+        checkpoint = pathlib.Path(f"{results}.checkpoint")
+        saved = json.loads(checkpoint.read_text())
+        self.assertEqual([next(iter(self.sources))], [shard["file"] for shard in saved[0]["shards"]])
+
+        compressed = []
+
+        def record_compress(*cmd):
+            if str(cmd[1]) == "compress":
+                compressed.append(pathlib.Path(cmd[2]).name)
+            return self.command(*cmd)
+
+        patches = self.patches()
+        patches = (patches[0], mock.patch.object(run_eval, "timed", side_effect=record_compress), *patches[2:])
+        with mock.patch.object(run_eval, "BREVIS", brevis), mock.patch.object(run_eval, "CACHE", self.root / "cache"):
+            with patches[0], patches[1], patches[2], patches[3], patches[4]:
+                run_eval.main(["--models", str(models), "--results", str(results)])
+
+        second = list(self.sources)[1]
+        self.assertEqual([second, second], compressed)
+        self.assertEqual(list(self.sources), [shard["file"] for shard in json.loads(results.read_text())[0]["shards"]])
+        self.assertFalse(checkpoint.exists())
+
+    def test_checkpoint_from_another_revision_is_ignored(self):
+        compressed = []
+
+        def record_compress(*cmd):
+            if str(cmd[1]) == "compress":
+                compressed.append(pathlib.Path(cmd[2]).name)
+            return self.command(*cmd)
+
+        first = next(iter(self.sources))
+        resumed = {"repo": self.model["repo"], "revision": "b" * 40, "shards": [{"file": first}]}
+        patches = self.patches()
+        patches = (patches[0], mock.patch.object(run_eval, "timed", side_effect=record_compress), *patches[2:])
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            run_eval.evaluate_model(self.model, self.work, resumed=resumed)
+
+        names = list(self.sources)
+        self.assertEqual([names[0], names[0], names[1], names[1]], compressed)
 
 
 if __name__ == "__main__":

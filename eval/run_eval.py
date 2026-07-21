@@ -31,6 +31,13 @@ def sh(*cmd, **kw):
     return subprocess.run([str(c) for c in cmd], check=True, **kw)
 
 
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = pathlib.Path(f"{path}.tmp")
+    tmp.write_text(json.dumps(value, indent=2) + "\n")
+    os.replace(tmp, path)
+
+
 def fetch(repo, revision, fname, url=None):
     dst = CACHE / repo.replace("/", "__") / revision / fname
     if dst.exists():
@@ -202,16 +209,26 @@ def all_field(shards, field):
     return all(values) if all(value is not None for value in values) else None
 
 
-def evaluate_model(model, work, previous=None):
+def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None):
     files = model_files(model)
     names = [name for name, _ in files]
     reuse = previous is not None and previous.get("revision") == model["revision"] and previous.get("files") == names
+    if resumed is not None and (resumed.get("repo"), resumed.get("revision")) == (model["repo"], model["revision"]):
+        completed = {shard["file"]: shard for shard in resumed["shards"]}
+    else:
+        completed = {}
     shards = []
     for index, (fname, url) in enumerate(files, 1):
+        if fname in completed:
+            print(f"  [{index}/{len(files)}] {fname} (checkpoint)")
+            shards.append(completed[fname])
+            continue
         print(f"  [{index}/{len(files)}] {fname}")
         src = fetch(model["repo"], model["revision"], fname, url)
         sh(sys.executable, ROOT / "eval" / "tensor_stats.py", src)
         shards.append(evaluate_shard(model, src, fname, index, work, not reuse))
+        if checkpoint is not None:
+            checkpoint(shards)
 
     row = {
         "tag": model["tag"],
@@ -283,16 +300,25 @@ def main(argv=None):
     previous = {}
     if os.environ.get("BREVIS_REUSE_BASELINES") == "1" and args.results.exists():
         previous = {row["tag"]: row for row in json.loads(args.results.read_text())}
+    checkpoint_path = pathlib.Path(f"{args.results}.checkpoint")
+    checkpoints = json.loads(checkpoint_path.read_text()) if checkpoint_path.exists() else []
+    checkpoints = {(row["repo"], row["revision"]): row for row in checkpoints}
 
     rows = []
     for model in models:
         print(f"\n=== {model['tag']}: {model['repo']} — {model['note']}")
-        row = evaluate_model(model, work, previous.get(model["tag"]))
+        key = model["repo"], model["revision"]
+
+        def save_checkpoint(shards):
+            checkpoints[key] = {"repo": model["repo"], "revision": model["revision"], "shards": shards}
+            write_json(checkpoint_path, list(checkpoints.values()))
+
+        row = evaluate_model(model, work, previous.get(model["tag"]), checkpoints.get(key), save_checkpoint)
         rows.append(row)
-        args.results.parent.mkdir(parents=True, exist_ok=True)
-        args.results.write_text(json.dumps(rows, indent=2) + "\n")
+        write_json(args.results, rows)
         print(f"  model total: {row['brevis']:,} bytes ({row['raw'] / row['brevis']:.3f}x), bit-exact")
 
+    checkpoint_path.unlink(missing_ok=True)
     print_summary(rows)
     print(f"\nwrote {args.results}")
 
