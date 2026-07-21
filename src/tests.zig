@@ -33,6 +33,13 @@ const HAVE_TABLE_CLONE = @hasDecl(codec.HuffmanTable, "clone") and @hasDecl(code
 
 // ==================== helpers ====================
 
+fn appendRefFrame(a: Allocator, out: *std.ArrayList(u8), ref: u64) !void {
+    var frame: [12]u8 = undefined;
+    std.mem.writeInt(u32, frame[0..4], 0, .little);
+    std.mem.writeInt(u64, frame[4..12], ref, .little);
+    try out.appendSlice(a, &frame);
+}
+
 fn randStream(a: Allocator, rng: std.Random, count: usize, bpe: u8, skew: bool) !Stream {
     var s = try Stream.init(a, count, bpe);
     const m = s.mask();
@@ -196,6 +203,7 @@ test "codec: huffman and rans roundtrip" {
             var rb = try codec.ransDecode(a, rp, rt, in.count, bpe);
             defer rb.deinit(a);
             try expectStreamsEqual(in, rb);
+            try std.testing.expectError(error.CorruptRansStream, codec.ransDecode(a, rp[0..4], rt, in.count, bpe));
             // rANS is priced by a strict lower bound, so it must never exceed
             // the realized payload.
             try expect(codec.ransLowerBytes(rt, hist) <= rp.len);
@@ -1207,8 +1215,8 @@ test "archive: back references resolve and reject cycles" {
     defer bytes.deinit(a);
     try bytes.appendSlice(a, header);
     const first_ref: u64 = @intCast(bytes.items.len);
-    try bytes.appendSlice(a, &archive.refFrame(0));
-    try bytes.appendSlice(a, &archive.refFrame(first_ref));
+    try appendRefFrame(a, &bytes, 0);
+    try appendRefFrame(a, &bytes, first_ref);
     const frames = bytes.items;
 
     var pos: usize = 0;
@@ -1219,9 +1227,11 @@ test "archive: back references resolve and reject cycles" {
     try std.testing.expectEqualSlices(u8, original.bytecode, chained.bytecode);
     try expectEqual(bytes.items.len, pos);
 
-    const self_ref = archive.refFrame(0);
+    var self_ref: std.ArrayList(u8) = .empty;
+    defer self_ref.deinit(a);
+    try appendRefFrame(a, &self_ref, 0);
     pos = 0;
-    try std.testing.expectError(error.InvalidProgram, archive.nextBlock(&self_ref, &pos));
+    try std.testing.expectError(error.InvalidProgram, archive.nextBlock(self_ref.items, &pos));
 
     var legacy: std.ArrayList(u8) = .empty;
     defer legacy.deinit(a);

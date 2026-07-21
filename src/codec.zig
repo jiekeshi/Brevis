@@ -750,6 +750,7 @@ pub fn ransEncode(alloc: Allocator, stream: Stream, table: RansTable) ![]u8 {
 }
 
 pub fn ransDecode(alloc: Allocator, payload: []const u8, table: RansTable, count: usize, bits_per_elem: u8) !Stream {
+    if (count != 0 and payload.len < 4) return error.CorruptRansStream;
     // Build cum->sym lookup locally so the table stays read-only.
     const cum2sym = try alloc.alloc(u16, RANS_PROB_SCALE);
     defer alloc.free(cum2sym);
@@ -767,9 +768,8 @@ pub fn ransDecode(alloc: Allocator, payload: []const u8, table: RansTable, count
     };
     const buf = try alloc.alloc(u8, count * elem_bytes);
     var s: Stream = .{ .data = buf, .count = count, .bits_per_elem = bits_per_elem };
+    errdefer s.deinit(alloc);
     if (count == 0) return s;
-
-    if (payload.len < 4) return error.CorruptRansStream;
 
     var pos: usize = 0;
     var state: u32 = std.mem.readInt(u32, payload[pos..][0..4], .big);

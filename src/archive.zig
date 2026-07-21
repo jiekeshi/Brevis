@@ -1,4 +1,4 @@
-//! Streamable .brv container with optional block back-references.
+//! Streamable .brv container. The reader also accepts legacy back-references.
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -14,15 +14,6 @@ const FOOTER_MAGIC: [4]u8 = .{ 'B', 'R', 'V', 'F' };
 
 pub const BlockJob = struct { node: *Node, payload: []const u8 };
 pub const TensorMeta = struct { name: []const u8, dtype: Dtype, shape: []const u64, n_blocks: u32 };
-
-/// A frame with no bytecode is a back-reference: this block's content already
-/// appears at `ref`, so only the pointer is stored.
-pub fn refFrame(ref: u64) [12]u8 {
-    var b: [12]u8 = undefined;
-    std.mem.writeInt(u32, b[0..4], 0, .little);
-    std.mem.writeInt(u64, b[4..12], ref, .little);
-    return b;
-}
 
 pub fn frameHeader(alloc: Allocator, node: Node, payload_len: usize) ![]u8 {
     const bytecode = try program.serialize(alloc, node);

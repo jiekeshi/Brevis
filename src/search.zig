@@ -14,10 +14,10 @@ const Dtype = types.Dtype;
 const Node = program.Node;
 const OpKind = ops.OpKind;
 
-/// Smallest serialized size any node can have.
-const MIN_NODE_BYTES: u64 = 5;
 /// Exact serialized header size: op | params | side tag | n_children.
 const NODE_HDR: usize = 7;
+/// Every hole must end in a terminal header, side record, and payload length.
+const MIN_HOLE_BYTES: u64 = NODE_HDR + 9 + 8;
 const ROOT_PARENT: u8 = 255;
 const MAX_ARITY: usize = 32;
 const MAX_PRODUCTIONS: usize = 32;
@@ -144,7 +144,7 @@ fn holeBits(alloc: Allocator, s: Stream, depth: u8) !u64 {
 }
 
 fn lowerBound(lb_sum: u64, n_holes: usize) u64 {
-    return lb_sum + @as(u64, n_holes) * MIN_NODE_BYTES * 8;
+    return lb_sum + @as(u64, n_holes) * MIN_HOLE_BYTES * 8;
 }
 
 fn boundBytes(g_bytes: usize, lb_sum: u64, n_holes: usize) usize {
@@ -715,4 +715,8 @@ test "uniform root completion score uses cheapest legal production" {
     var untrained: prior.Prior = .empty;
     defer untrained.deinit(alloc);
     try std.testing.expectEqual(@as(u32, 4186), completionScoreLowerBound(&untrained, 8, 0, .i8, true));
+}
+
+test "hole lower bound includes a terminal frame" {
+    try std.testing.expectEqual(@as(usize, 24), boundBytes(0, 0, 1));
 }

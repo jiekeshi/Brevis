@@ -18,6 +18,6 @@
     "repo": "RedHatAI/SmolLM-135M-Instruct-quantized.w8a8",
     "revision": "0407d4a4dcc9601d11cf028866ee2272c5233557",
     "file": "model.safetensors",
-    "note": "clean INT8 weights + BF16 scales/embeddings — mixed-dtype path; tied embedding is stored twice, so it also exercises dedup"
+    "note": "clean INT8 weights + BF16 scales/embeddings — mixed-dtype path"
   }
 ]

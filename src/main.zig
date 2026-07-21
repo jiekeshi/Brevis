@@ -175,14 +175,12 @@ const EncodeJob = struct {
     blocks: []const Block,
     results: []?search.Result,
     plans: []const ?search.Plan,
-    dups: []const ?u32,
     alloc: Allocator,
 
     fn run(self: *EncodeJob) void {
         while (true) {
             const i = self.next.fetchAdd(1, .acq_rel);
             if (i >= self.blocks.len) return;
-            if (self.dups.len > 0 and self.dups[i] != null) continue;
             const b = self.blocks[i];
             const s = b.asStream(self.tensors[b.tensor_idx].view.data);
             const plan = &self.plans[b.tensor_idx].?;
@@ -333,7 +331,6 @@ fn encodeBlocks(
     plans: []const ?search.Plan,
     n_threads: usize,
     pool: ?*EncodePool,
-    dups: []const ?u32,
 ) ![]?search.Result {
     const results = try alloc.alloc(?search.Result, blocks.len);
     errdefer freeResults(alloc, results);
@@ -345,7 +342,6 @@ fn encodeBlocks(
         .blocks = blocks,
         .results = results,
         .plans = plans,
-        .dups = dups,
         .alloc = alloc,
     };
     if (blocks.len > 0) {
@@ -366,57 +362,7 @@ fn synthesizeBlocks(
 ) ![]?search.Result {
     const plans = try synthesizePlans(alloc, tensors, pr, n_threads);
     defer freePlans(alloc, plans);
-    return encodeBlocks(alloc, tensors, blocks, plans, n_threads, null, &.{});
-}
-
-fn blockBytes(tensors: []const safetensors.Tensor, b: Block) []const u8 {
-    return b.asStream(tensors[b.tensor_idx].view.data).data;
-}
-
-const HashJob = struct {
-    next: std.atomic.Value(usize),
-    tensors: []const safetensors.Tensor,
-    blocks: []const Block,
-    hashes: []u64,
-
-    fn run(self: *HashJob) void {
-        while (true) {
-            const i = self.next.fetchAdd(1, .acq_rel);
-            if (i >= self.blocks.len) return;
-            self.hashes[i] = std.hash.XxHash3.hash(0, blockBytes(self.tensors, self.blocks[i]));
-        }
-    }
-};
-
-/// Maps each block to the earlier block holding identical bytes, or null. Hashes
-/// only nominate candidates; equality is confirmed against the source so a
-/// collision can never corrupt the archive.
-fn findDuplicates(
-    alloc: Allocator,
-    tensors: []const safetensors.Tensor,
-    blocks: []const Block,
-    n_threads: usize,
-) ![]?u32 {
-    const hashes = try alloc.alloc(u64, blocks.len);
-    defer alloc.free(hashes);
-    var job: HashJob = .{ .next = .init(0), .tensors = tensors, .blocks = blocks, .hashes = hashes };
-    if (blocks.len > 0) try runWorkers(alloc, @max(1, @min(n_threads, blocks.len)), &job, HashJob.run);
-
-    const dups = try alloc.alloc(?u32, blocks.len);
-    errdefer alloc.free(dups);
-    var first: std.AutoHashMapUnmanaged(u64, u32) = .empty;
-    defer first.deinit(alloc);
-    for (blocks, dups, 0..) |b, *dup, i| {
-        dup.* = null;
-        const gop = try first.getOrPut(alloc, hashes[i]);
-        if (!gop.found_existing) {
-            gop.value_ptr.* = @intCast(i);
-            continue;
-        }
-        const src = gop.value_ptr.*;
-        if (std.mem.eql(u8, blockBytes(tensors, blocks[src]), blockBytes(tensors, b))) dup.* = src;
-    }
-    return dups;
+    return encodeBlocks(alloc, tensors, blocks, plans, n_threads, null);
 }
 
 fn freeResults(alloc: Allocator, results: []?search.Result) void {
@@ -520,14 +466,10 @@ fn cmdCompress(
     try out.flush();
 
     const t0 = std.Io.Timestamp.now(io, .awake);
-    const dups = try findDuplicates(alloc, loaded.tensors, blocks, n_threads);
-    defer alloc.free(dups);
     const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads);
     defer freePlans(alloc, plans);
     const metas = try tensorMetas(alloc, loaded.tensors, blocks);
     defer alloc.free(metas);
-    const frame_off = try alloc.alloc(u64, blocks.len);
-    defer alloc.free(frame_off);
 
     var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
     defer atomic.deinit(io);
@@ -541,23 +483,14 @@ fn cmdCompress(
     defer encode_pool.deinit();
 
     var file_off: u64 = archive.HEADER.len;
-    var n_dup: usize = 0;
     const batch_size = @max(@as(usize, 1), n_threads) * 16;
     var first: usize = 0;
     while (first < blocks.len) {
         const last = @min(first + batch_size, blocks.len);
         const batch = blocks[first..last];
-        const results = try encodeBlocks(alloc, loaded.tensors, batch, plans, n_threads, &encode_pool, dups[first..last]);
+        const results = try encodeBlocks(alloc, loaded.tensors, batch, plans, n_threads, &encode_pool);
         defer freeResults(alloc, results);
-        for (results, first..) |maybe_result, bi| {
-            frame_off[bi] = file_off - archive.HEADER.len;
-            if (dups[bi]) |src| {
-                const frame = archive.refFrame(frame_off[src]);
-                try writer.interface.writeAll(&frame);
-                file_off += frame.len;
-                n_dup += 1;
-                continue;
-            }
+        for (results) |maybe_result| {
             const result = maybe_result.?;
             const frame_header = try archive.frameHeader(alloc, result.node, result.payload.len);
             defer alloc.free(frame_header);
@@ -578,7 +511,7 @@ fn cmdCompress(
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
 
     const raw = rawBytes(loaded.tensors);
-    try out.print("synthesized and wrote in {d}ms ({d} of {d} blocks deduplicated)\n", .{ ms, n_dup, blocks.len });
+    try out.print("synthesized and wrote in {d}ms\n", .{ms});
     try out.print("wrote {s}: {d} -> {d} bytes ({d:.3}x)\n", .{ out_path, raw, written, ratio(raw, written) });
 }
 
