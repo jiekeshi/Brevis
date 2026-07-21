@@ -28,6 +28,10 @@ class EvalError(RuntimeError):
     pass
 
 
+def baseline_fields(key):
+    return key, f"t_{key}", f"t_{key}_dec", f"{key}_exact"
+
+
 def sh(*cmd, **kw):
     return subprocess.run([str(c) for c in cmd], check=True, **kw)
 
@@ -247,7 +251,7 @@ def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None, fi
         shard = evaluate_shard(model, src, fname, index, work, not reuse)
         if fname in old_shards:
             for key in BASELINE_KEYS:
-                for field in (key, f"t_{key}", f"t_{key}_dec", f"{key}_exact"):
+                for field in baseline_fields(key):
                     shard[field] = old_shards[fname].get(field)
         shards.append(shard)
         if checkpoint is not None:
@@ -272,7 +276,7 @@ def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None, fi
         "shards": shards,
     }
     for key in BASELINE_KEYS:
-        fields = (key, f"t_{key}", f"t_{key}_dec", f"{key}_exact")
+        fields = baseline_fields(key)
         if reuse:
             for field in fields:
                 row[field] = previous.get(field)
