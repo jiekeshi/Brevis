@@ -8,6 +8,7 @@ const ops = @import("ops.zig");
 const program = @import("program.zig");
 const prior = @import("prior.zig");
 const search = @import("search.zig");
+const calibrate = @import("calibrate.zig");
 const archive = @import("archive.zig");
 const safetensors = @import("safetensors.zig");
 
@@ -23,7 +24,7 @@ const expectEqual = std.testing.expectEqual;
 // `codec.HuffmanTable.clone`/`RansTable.clone`, which codec.zig never defines.
 // Everything they do define is exercised directly by the tests below.
 test "module references" {
-    inline for (.{ types, codec, prior, search, archive, safetensors }) |m| {
+    inline for (.{ types, codec, prior, search, calibrate, archive, safetensors }) |m| {
         std.testing.refAllDecls(m);
     }
 }
@@ -580,6 +581,42 @@ test "prior: scores normalize over legal productions" {
     try std.testing.expectApproxEqAbs(@as(f64, 1), total, 0.001);
 }
 
+test "search: empty and explicit uniform priors are equivalent" {
+    const a = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0xE0A1);
+    var in = try makeBlock(a, prng.random(), .i8, 512, 0);
+    defer in.deinit(a);
+
+    const ctx = prior.Context.fromStream(in, .i8, 0, 0, 255);
+    var counts = prior.Counts.init(a);
+    defer counts.deinit(a);
+    for (std.enums.values(OpKind)) |op| try counts.add(a, ctx, op, 3);
+    var explicit = try counts.toPrior(a);
+    defer explicit.deinit(a);
+    var empty: prior.Prior = .empty;
+    defer empty.deinit(a);
+
+    const opts: search.Options = .{
+        .max_nodes = 3,
+        .max_depth = 1,
+        .max_expansions = 20_000,
+        .max_realizations = 20_000,
+        .sample_elems = 0,
+    };
+    var a_result = try search.synthesize(a, in, .i8, &empty, opts);
+    defer a_result.deinit(a);
+    var b_result = try search.synthesize(a, in, .i8, &explicit, opts);
+    defer b_result.deinit(a);
+
+    try expectEqual(a_result.bytes, b_result.bytes);
+    try expectEqual(a_result.expanded, b_result.expanded);
+    const a_program = try program.serialize(a, a_result.node);
+    defer a.free(a_program);
+    const b_program = try program.serialize(a, b_result.node);
+    defer a.free(b_program);
+    try std.testing.expectEqualSlices(u8, a_program, b_program);
+}
+
 // ==================== search ====================
 
 test "search: huffman remains a legal terminal" {
@@ -698,12 +735,15 @@ test "search: synthesizeAll returns sorted candidates that all decode" {
     }
 
     try expect(all.len > 1);
+    var raw_count: usize = 0;
     for (all, 0..) |r, i| {
         if (i > 0) try expect(all[i - 1].bytes <= r.bytes);
+        if (r.node.op == .raw and r.node.children.len == 0) raw_count += 1;
         var back = try program.decode(a, r.node);
         defer back.deinit(a);
         try expectStreamsEqual(in, back);
     }
+    try expectEqual(@as(usize, 1), raw_count);
 }
 
 test "search: sampled synthesis is bit-exact on the full stream" {
@@ -735,6 +775,52 @@ test "search: sampled synthesis is bit-exact on the full stream" {
     var other_decoded = try program.decode(a, other_result.node);
     defer other_decoded.deinit(a);
     try expectStreamsEqual(other, other_decoded);
+}
+
+test "search: representative sampling covers arbitrary sizes" {
+    const a = std.testing.allocator;
+    var in = try Stream.init(a, 20, 8);
+    defer in.deinit(a);
+    for (0..in.count) |i| in.setU32(i, @intCast(i + 1));
+
+    var sampled = try search.planningSample(a, in, 5);
+    defer sampled.deinit(a);
+    try expectEqual(@as(usize, 5), sampled.count);
+    try expectEqual(@as(u32, 1), sampled.getU32(0));
+    try expectEqual(@as(u32, 20), sampled.getU32(4));
+    for (0..sampled.count) |i| try expect(sampled.getU32(i) != 0);
+
+    var uniform: prior.Prior = .empty;
+    defer uniform.deinit(a);
+    var planned = try search.synthesizePlan(a, in, .u8, &uniform, .{
+        .sample_elems = 5,
+        .max_nodes = 3,
+        .max_depth = 1,
+        .max_expansions = 20_000,
+        .max_realizations = 20_000,
+    });
+    defer planned.deinit(a);
+    var direct = try search.synthesizePlan(a, sampled, .u8, &uniform, .{
+        .sample_elems = 0,
+        .max_nodes = 3,
+        .max_depth = 1,
+        .max_expansions = 20_000,
+        .max_realizations = 20_000,
+    });
+    defer direct.deinit(a);
+    const planned_bytes = try program.serialize(a, planned.root);
+    defer a.free(planned_bytes);
+    const direct_bytes = try program.serialize(a, direct.root);
+    defer a.free(direct_bytes);
+    try std.testing.expectEqualSlices(u8, planned_bytes, direct_bytes);
+
+    var full = try search.planningSample(a, in, 21);
+    defer full.deinit(a);
+    try expectStreamsEqual(in, full);
+
+    var empty = try search.planningSample(a, in, 0);
+    defer empty.deinit(a);
+    try expectEqual(@as(usize, 0), empty.count);
 }
 
 test "search: planning memory is bounded by the sample" {

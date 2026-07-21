@@ -62,6 +62,8 @@ const Hole = struct {
     depth: u8,
     slot: u8,
     parent_op: u8,
+    context: ?prior.Context,
+    score_lb: u32,
     /// Bits this hole is guaranteed to cost. Non-zero only once transforms are
     /// no longer legal here: above that layer a reversible transform can drive
     /// the empirical entropy arbitrarily low, so the only honest bound is 0.
@@ -108,6 +110,7 @@ const Partial = struct {
     f: u64,
     g_bytes: usize,
     lb_sum: u64,
+    score_lb_sum: u64,
     n_nodes: usize,
     n_holes: usize,
 
@@ -198,28 +201,52 @@ fn sideBody(side: ops.SideInfo) usize {
 
 // ==================== productions ====================
 
-fn legalProductions(hole_bpe: u8, depth: u8, dtype: Dtype, is_root: bool, out: *std.ArrayList(OpKind)) void {
-    out.appendAssumeCapacity(.raw);
-    out.appendAssumeCapacity(.bitpack);
+fn addProduction(out: *[MAX_PRODUCTIONS]OpKind, len: *usize, op: OpKind) void {
+    out[len.*] = op;
+    len.* += 1;
+}
+
+fn legalProductions(hole_bpe: u8, depth: u8, dtype: Dtype, is_root: bool, out: *[MAX_PRODUCTIONS]OpKind) []const OpKind {
+    var len: usize = 0;
+    addProduction(out, &len, .raw);
+    addProduction(out, &len, .bitpack);
     if (hole_bpe <= ops.MAX_ENTROPY_BPE) {
-        out.appendAssumeCapacity(.huffman);
-        out.appendAssumeCapacity(.rans);
+        addProduction(out, &len, .huffman);
+        addProduction(out, &len, .rans);
     }
-    if (depth >= ops.K_TRANSFORM_LAYERS) return;
+    if (depth >= ops.K_TRANSFORM_LAYERS) return out[0..len];
 
     const elementwise = [_]OpKind{
         .xor_const, .add_const_mod, .xor_prev,    .diff_mod, .zigzag,
         .gray,      .rotate_bits,   .bit_reverse, .rle,      .deinterleave,
     };
-    for (elementwise) |op| out.appendAssumeCapacity(op);
+    for (elementwise) |op| addProduction(out, &len, op);
 
     if (hole_bpe > 1) {
-        out.appendAssumeCapacity(.split_field);
-        out.appendAssumeCapacity(.topk_codebook);
-        out.appendAssumeCapacity(.bit_plane);
+        addProduction(out, &len, .split_field);
+        addProduction(out, &len, .topk_codebook);
+        addProduction(out, &len, .bit_plane);
     }
-    if (hole_bpe > 8) out.appendAssumeCapacity(.byte_plane);
-    if (is_root and dtype.isFloat()) out.appendAssumeCapacity(.split_float);
+    if (hole_bpe > 8) addProduction(out, &len, .byte_plane);
+    if (is_root and dtype.isFloat()) addProduction(out, &len, .split_float);
+    return out[0..len];
+}
+
+fn completionScoreLowerBound(
+    pr: *const prior.Prior,
+    ctx: prior.Context,
+    bpe: u8,
+    depth: u8,
+    dtype: Dtype,
+    is_root: bool,
+) u32 {
+    var storage: [MAX_PRODUCTIONS]OpKind = undefined;
+    const productions = legalProductions(bpe, depth, dtype, is_root, &storage);
+    var scores: [MAX_PRODUCTIONS]u32 = undefined;
+    pr.scoreSet(ctx, productions, scores[0..productions.len]);
+    var lower = scores[0];
+    for (scores[1..productions.len]) |score| lower = @min(lower, score);
+    return lower;
 }
 
 const Feat = struct { mode: u32, max_bits: u8 };
@@ -431,7 +458,7 @@ pub fn synthesizePlan(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const pri
     var sample: ?Stream = null;
     defer if (sample) |*stream| stream.deinit(alloc);
     if (opts.sample_elems > 0 and in.count > opts.sample_elems)
-        sample = try sampleStream(alloc, in, opts.sample_elems);
+        sample = try planningSample(alloc, in, opts.sample_elems);
 
     var picked = try run(alloc, sample orelse in, dtype, pr, opts, null);
     dropRuntime(alloc, &picked.node);
@@ -450,24 +477,26 @@ pub fn synthesize(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const prior.P
 /// Contiguous windows spread over the block. Contiguity matters: strided
 /// sampling would break neighbour relations and make xor_prev/diff_mod look
 /// useless when they are in fact the right answer.
-fn sampleStream(alloc: Allocator, in: Stream, want: usize) !Stream {
-    const n_win: usize = 4;
-    const per = @max(want / n_win, 1);
+pub fn planningSample(alloc: Allocator, in: Stream, want: usize) !Stream {
     const total = @min(want, in.count);
+    if (total == in.count) return in.dupe(alloc);
     var out = try Stream.init(alloc, total, in.bits_per_elem);
     errdefer out.deinit(alloc);
+    if (total == 0) return out;
 
-    const stride = if (n_win > 1) (in.count - per) / (n_win - 1) else 0;
-    var w: usize = 0;
-    var o: usize = 0;
-    while (w < n_win and o < total) : (w += 1) {
-        const base = @min(w * stride, in.count - per);
-        var i: usize = 0;
-        while (i < per and o < total) : (i += 1) {
-            out.setU32(o, in.getU32(base + i));
-            o += 1;
+    const n_windows = @min(@as(usize, 4), total);
+    const skipped = in.count - total;
+    var written: usize = 0;
+    for (0..n_windows) |window| {
+        const len = total / n_windows + @intFromBool(window < total % n_windows);
+        const gap = if (n_windows == 1) skipped / 2 else window * skipped / (n_windows - 1);
+        const start = written + gap;
+        for (0..len) |i| {
+            out.setU32(written, in.getU32(start + i));
+            written += 1;
         }
     }
+    std.debug.assert(written == total);
     return out;
 }
 
@@ -504,11 +533,7 @@ fn run(
     opts: Options,
     all: ?*std.ArrayList(Result),
 ) !Result {
-    // Flat per-hole completion charge. It must not come from the prior: the
-    // normalisation in `scoreSet` makes the likeliest production free, so a
-    // prior-derived floor collapses to zero exactly where the prior is
-    // confident, and the frontier fills with half-built trees again.
-    const min_score: u32 = 8192;
+    const learned = !pr.isEmpty();
     const raw_sk: PNode = .{ .filled = .{ .op = .raw, .params = 0, .kids = &.{} } };
     var incumbent = try encodeReal(alloc, raw_sk, in);
     errdefer incumbent.deinit(alloc);
@@ -522,25 +547,26 @@ fn run(
         q.deinit(alloc);
     }
 
-    var prods: std.ArrayList(OpKind) = .empty;
-    defer prods.deinit(alloc);
-    try prods.ensureTotalCapacity(alloc, MAX_PRODUCTIONS);
-
     var path: std.ArrayList(u8) = .empty;
     defer path.deinit(alloc);
 
     const root_bits = try holeBits(alloc, in, 0);
+    const root_ctx = if (learned) prior.Context.fromStream(in, dtype, 0, 0, ROOT_PARENT) else prior.Context{};
+    const root_score_lb = completionScoreLowerBound(pr, root_ctx, in.bits_per_elem, 0, dtype, true);
     try q.push(alloc, .{
         .root = .{ .hole = .{
             .depth = 0,
             .slot = 0,
             .parent_op = ROOT_PARENT,
+            .context = if (learned) root_ctx else null,
+            .score_lb = root_score_lb,
             .lb_bits = root_bits,
         } },
         .p = 0,
-        .f = min_score,
+        .f = root_score_lb,
         .g_bytes = 0,
         .lb_sum = root_bits,
+        .score_lb_sum = root_score_lb,
         .n_nodes = 0,
         .n_holes = 1,
     });
@@ -593,14 +619,18 @@ fn run(
         defer hist.deinit(alloc);
 
         const feat = featOf(hist);
-        const ctx = prior.Context.fromStream(hs, dtype, hole.slot, hole.depth, hole.parent_op);
+        const ctx = if (learned)
+            hole.context orelse prior.Context.fromStream(hs, dtype, hole.slot, hole.depth, hole.parent_op)
+        else
+            prior.Context{};
 
-        prods.clearRetainingCapacity();
-        legalProductions(hs.bits_per_elem, hole.depth, dtype, hole.depth == 0, &prods);
+        var prod_storage: [MAX_PRODUCTIONS]OpKind = undefined;
+        const prods = legalProductions(hs.bits_per_elem, hole.depth, dtype, hole.depth == 0, &prod_storage);
         var scores: [MAX_PRODUCTIONS]u32 = undefined;
-        pr.scoreSet(ctx, prods.items, scores[0..prods.items.len]);
+        pr.scoreSet(ctx, prods, scores[0..prods.len]);
 
-        for (prods.items, scores[0..prods.items.len]) |prod, score| {
+        for (prods, scores[0..prods.len]) |prod, score| {
+            if (part.n_nodes == 0 and prod == .raw) continue;
             if (hs.count == 0 and prod != .raw) continue;
             const params = chooseParams(prod, hs, dtype, feat) orelse continue;
             const a = ops.arity(prod, hs.bits_per_elem);
@@ -609,6 +639,8 @@ fn run(
             if (a > 0 and hole.depth + 1 > opts.max_depth) continue;
 
             var kid_bits: [MAX_ARITY]u64 = undefined;
+            var kid_scores: [MAX_ARITY]u32 = undefined;
+            var kid_contexts: [MAX_ARITY]?prior.Context = undefined;
             var add: usize = undefined;
 
             if (prod.isTerminal()) {
@@ -622,6 +654,8 @@ fn run(
                 // Histogram is permuted, entropy identical: no forward needed.
                 add = NODE_HDR;
                 kid_bits[0] = try holeBits(alloc, hs, hole.depth + 1);
+                kid_scores[0] = 0;
+                kid_contexts[0] = null;
             } else {
                 var outs: std.ArrayList(Stream) = .empty;
                 defer {
@@ -632,13 +666,30 @@ fn run(
                 defer side.deinit(alloc);
                 try ops.forward(alloc, prod, params, hs, &outs, &side);
                 add = NODE_HDR + sideBody(side);
-                for (outs.items, 0..) |s, i| kid_bits[i] = try holeBits(alloc, s, hole.depth + 1);
+                for (outs.items, 0..) |s, i| {
+                    kid_bits[i] = try holeBits(alloc, s, hole.depth + 1);
+                    const child_ctx = if (learned)
+                        prior.Context.fromStream(s, dtype, @intCast(i), hole.depth + 1, @intFromEnum(prod))
+                    else
+                        prior.Context{};
+                    kid_contexts[i] = if (learned) child_ctx else null;
+                    kid_scores[i] = completionScoreLowerBound(
+                        pr,
+                        child_ctx,
+                        s.bits_per_elem,
+                        hole.depth + 1,
+                        dtype,
+                        false,
+                    );
+                }
             }
 
             const g = part.g_bytes + add;
             const n_holes = part.n_holes - 1 + a;
             var lb_sum = part.lb_sum - hole.lb_bits;
             for (kid_bits[0..a]) |b| lb_sum += b;
+            var score_lb_sum = part.score_lb_sum - hole.score_lb;
+            for (kid_scores[0..a]) |child_score| score_lb_sum += child_score;
 
             if (!opts.enumerate_all and boundBytes(g, lb_sum, n_holes) >= incumbent.bytes) continue;
 
@@ -649,6 +700,8 @@ fn run(
                 .depth = hole.depth + 1,
                 .slot = @intCast(i),
                 .parent_op = @intFromEnum(prod),
+                .context = kid_contexts[i],
+                .score_lb = kid_scores[i],
                 .lb_bits = kid_bits[i],
             } };
             nodePtr(&root, path.items).* = .{ .filled = .{ .op = prod, .params = params, .kids = kids } };
@@ -657,9 +710,10 @@ fn run(
             try q.push(alloc, .{
                 .root = root,
                 .p = p,
-                .f = p + @as(u64, n_holes) * min_score,
+                .f = p + score_lb_sum,
                 .g_bytes = g,
                 .lb_sum = lb_sum,
+                .score_lb_sum = score_lb_sum,
                 .n_nodes = part.n_nodes + 1,
                 .n_holes = n_holes,
             });
@@ -668,4 +722,15 @@ fn run(
 
     incumbent.expanded = expanded;
     return incumbent;
+}
+
+test "uniform root completion score uses cheapest legal production" {
+    const alloc = std.testing.allocator;
+    var stream = try Stream.init(alloc, 16, 8);
+    defer stream.deinit(alloc);
+    for (0..stream.count) |i| stream.setU32(i, @intCast(i));
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(alloc);
+    const ctx = prior.Context.fromStream(stream, .i8, 0, 0, ROOT_PARENT);
+    try std.testing.expectEqual(@as(u32, 4186), completionScoreLowerBound(&untrained, ctx, 8, 0, .i8, true));
 }

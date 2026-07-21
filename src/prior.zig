@@ -13,9 +13,11 @@ const Dtype = types.Dtype;
 
 pub const N_PROD: usize = 64;
 
-const SAMPLE_MAX: usize = 64 * 1024;
+const SAMPLE_MAX: usize = ops.SEARCH_SAMPLE_ELEMS;
+const HIST_SIZE: usize = 1 << 12;
+const PHOG_WEIGHT: f64 = 1.0 / 20.0;
 const MAGIC = "BRVP";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 pub const Context = struct {
     slot: u8 = 0,
@@ -40,28 +42,19 @@ pub const Context = struct {
         const n = @min(s.count, SAMPLE_MAX);
         const m = s.mask();
 
-        // Folded to 16 bits: at most SAMPLE_MAX distinct symbols are observable
-        // anyway, and the buckets are coarse.
-        var hist: [1 << 16]u32 = undefined;
-        @memset(&hist, 0);
-
+        var values: [HIST_SIZE]u16 = @splat(0);
+        var deltas: [HIST_SIZE]u16 = @splat(0);
         var zeros: usize = 0;
+        var prev = s.getU32(0) & m;
         for (0..n) |i| {
             const v = s.getU32(i) & m;
             if (v == 0) zeros += 1;
-            hist[fold(v)] += 1;
-        }
-        const h0 = entropy(&hist, n);
-
-        @memset(&hist, 0);
-        var prev = s.getU32(0) & m;
-        hist[fold(prev)] += 1;
-        for (1..n) |i| {
-            const v = s.getU32(i) & m;
-            hist[fold((v -% prev) & m)] += 1;
+            values[fold(v)] += 1;
+            deltas[fold(if (i == 0) v else (v -% prev) & m)] += 1;
             prev = v;
         }
-        const h_delta = entropy(&hist, n);
+        const h0 = entropy(&values, n);
+        const h_delta = entropy(&deltas, n);
 
         const bpe: f64 = @floatFromInt(s.bits_per_elem);
         const zero_frac = @as(f64, @floatFromInt(zeros)) / @as(f64, @floatFromInt(n));
@@ -95,7 +88,7 @@ pub const Context = struct {
 };
 
 fn fold(v: u32) usize {
-    return (v ^ (v >> 16)) & 0xFFFF;
+    return (v ^ (v >> 12) ^ (v >> 24)) & (HIST_SIZE - 1);
 }
 
 fn bpeBucket(bpe: u8) u8 {
@@ -105,7 +98,7 @@ fn bpeBucket(bpe: u8) u8 {
     return 3;
 }
 
-fn entropy(hist: []const u32, n: usize) f64 {
+fn entropy(hist: []const u16, n: usize) f64 {
     const total: f64 = @floatFromInt(n);
     var h: f64 = 0;
     for (hist) |c| {
@@ -119,38 +112,44 @@ fn entropy(hist: []const u32, n: usize) f64 {
 pub const Prior = struct {
     levels: [3]std.AutoHashMapUnmanaged(u64, [N_PROD]u32),
 
-    /// No observations. `score` then reports every production as equally
-    /// likely, which is the correct posterior for an unseen context -- it is
-    /// not a stand-in for a trained prior.
+    /// No observations; `scoreSet` then returns a uniform conditional prior.
     pub const empty: Prior = .{ .levels = .{ .empty, .empty, .empty } };
 
     pub fn deinit(self: *Prior, alloc: Allocator) void {
         for (&self.levels) |*m| m.deinit(alloc);
     }
 
-    pub fn score(self: Prior, ctx: Context, op: ops.OpKind) u32 {
-        const idx: usize = @intFromEnum(op);
-        std.debug.assert(idx < N_PROD);
-        for (0..3) |lv| {
-            if (self.levels[lv].get(ctx.hash(@intCast(lv)))) |row| return row[idx];
+    pub fn isEmpty(self: Prior) bool {
+        for (self.levels) |level| if (level.count() != 0) return false;
+        return true;
+    }
+
+    fn findRow(self: Prior, ctx: Context) ?*const [N_PROD]u32 {
+        for (0..3) |level| {
+            if (self.levels[level].getPtr(ctx.hash(@intCast(level)))) |scores| return scores;
         }
-        return ops.UNIFORM_SCORE;
+        return null;
     }
 
     pub fn scoreSet(self: Prior, ctx: Context, productions: []const ops.OpKind, out: []u32) void {
         std.debug.assert(productions.len == out.len and productions.len > 0);
+        const learned_row = self.findRow(ctx);
         var floor: u32 = std.math.maxInt(u32);
-        for (productions) |op| floor = @min(floor, self.score(ctx, op));
+        for (productions, out) |op, *stored| {
+            stored.* = if (learned_row) |row_scores| row_scores[@intFromEnum(op)] else ops.UNIFORM_SCORE;
+            floor = @min(floor, stored.*);
+        }
 
         var sum: f64 = 0;
-        for (productions) |op| {
-            const delta: f64 = @floatFromInt(self.score(ctx, op) - floor);
+        for (out) |stored| {
+            const delta: f64 = @floatFromInt(stored - floor);
             sum += std.math.exp2(-delta / 1024.0);
         }
-        const log_sum = std.math.log2(sum) * 1024.0;
-        for (productions, out) |op, *dst| {
-            const delta: f64 = @floatFromInt(self.score(ctx, op) - floor);
-            dst.* = @intFromFloat(@round(delta + log_sum));
+        for (out) |*dst| {
+            const delta: f64 = @floatFromInt(dst.* - floor);
+            const learned = std.math.exp2(-delta / 1024.0) / sum;
+            const probability = PHOG_WEIGHT * learned + (1.0 - PHOG_WEIGHT) / @as(f64, @floatFromInt(productions.len));
+            dst.* = @intFromFloat(@round(-std.math.log2(probability) * 1024.0));
         }
     }
 

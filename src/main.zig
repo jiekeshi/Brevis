@@ -5,6 +5,7 @@ const types = @import("types.zig");
 const ops = @import("ops.zig");
 const program = @import("program.zig");
 const prior = @import("prior.zig");
+const calibrate = @import("calibrate.zig");
 const search = @import("search.zig");
 const archive = @import("archive.zig");
 const safetensors = @import("safetensors.zig");
@@ -16,10 +17,6 @@ const Block = types.Block;
 const Stream = types.Stream;
 
 const N_DTYPE: usize = @typeInfo(Dtype).@"enum".fields.len;
-const ROOT_PARENT: u8 = 255;
-/// Calibration candidate enumeration is superlinear in block length; a prefix this
-/// long already saturates the context statistics.
-const CALIB_ELEMS: usize = 16 * 1024;
 
 pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
@@ -48,7 +45,7 @@ pub fn main(init: std.process.Init) !void {
     defer pos.deinit(alloc);
     var opt_prior: ?[]const u8 = null;
     var opt_jobs: ?usize = null;
-    var opt_blocks: usize = ops.CALIBRATE_BLOCKS;
+    var opt_tensors: usize = calibrate.DEFAULT_TENSORS;
 
     const rest = argv.items[2..];
     var i: usize = 0;
@@ -65,15 +62,15 @@ pub fn main(init: std.process.Init) !void {
             opt_prior = v;
         } else if (std.mem.eql(u8, a, "--jobs")) {
             opt_jobs = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, a, "--blocks")) {
-            opt_blocks = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--tensors")) {
+            opt_tensors = try std.fmt.parseInt(usize, v, 10);
         } else try usage(err);
     }
     const p = pos.items;
 
     if (std.mem.eql(u8, cmd, "calibrate")) {
         if (p.len != 2) try usage(err);
-        try cmdCalibrate(io, out, p[0], p[1], opt_blocks);
+        try cmdCalibrate(io, out, p[0], p[1], opt_tensors);
     } else if (std.mem.eql(u8, cmd, "compress")) {
         if (p.len != 2) try usage(err);
         try cmdCompress(io, out, p[0], p[1], opt_prior, opt_jobs);
@@ -105,7 +102,7 @@ fn usage(w: *std.Io.Writer) !noreturn {
     try w.writeAll(
         \\brevis — bit-exact lossless tensor compression via program synthesis
         \\
-        \\  brevis calibrate   <model.safetensors> <prior.bin> [--blocks N]
+        \\  brevis calibrate   <model.safetensors> <prior.bin> [--tensors N]
         \\  brevis compress    <model.safetensors> <out.brv> [--prior p.bin] [--jobs N]
         \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
         \\  brevis verify      <in.brv> <orig.safetensors>
@@ -492,137 +489,6 @@ fn threadCount(opt: ?usize) usize {
     return opt orelse (std.Thread.getCpuCount() catch 8);
 }
 
-// ==================== calibrate ====================
-
-fn stratifiedSample(alloc: Allocator, blocks: []const Block, n: usize, seed: u64) ![]Block {
-    if (blocks.len <= n) return alloc.dupe(Block, blocks);
-
-    var strata: std.AutoHashMapUnmanaged(u16, std.ArrayList(u32)) = .empty;
-    defer {
-        var vit = strata.valueIterator();
-        while (vit.next()) |l| l.deinit(alloc);
-        strata.deinit(alloc);
-    }
-    for (blocks, 0..) |b, i| {
-        const lg: u16 = @intCast(std.math.log2_int(usize, @max(b.elem_count, 1)));
-        const key = (@as(u16, @intFromEnum(b.dtype)) << 8) | lg;
-        const gop = try strata.getOrPut(alloc, key);
-        if (!gop.found_existing) gop.value_ptr.* = .empty;
-        try gop.value_ptr.append(alloc, @intCast(i));
-    }
-
-    var keys: std.ArrayList(u16) = .empty;
-    defer keys.deinit(alloc);
-    var kit = strata.keyIterator();
-    while (kit.next()) |k| try keys.append(alloc, k.*);
-    std.mem.sort(u16, keys.items, {}, std.sort.asc(u16));
-
-    var prng: std.Random.DefaultPrng = .init(seed);
-    const rnd = prng.random();
-    for (keys.items) |k| rnd.shuffle(u32, strata.getPtr(k).?.items);
-
-    var out: std.ArrayList(Block) = .empty;
-    errdefer out.deinit(alloc);
-    var cursor: usize = 0;
-    while (out.items.len < n) {
-        var progressed = false;
-        for (keys.items) |k| {
-            const l = strata.getPtr(k).?;
-            if (cursor >= l.items.len) continue;
-            try out.append(alloc, blocks[l.items[cursor]]);
-            progressed = true;
-            if (out.items.len == n) break;
-        }
-        if (!progressed) break;
-        cursor += 1;
-    }
-    return out.toOwnedSlice(alloc);
-}
-
-fn accumulate(
-    alloc: Allocator,
-    counts: *prior.Counts,
-    node: program.Node,
-    in: Stream,
-    dtype: Dtype,
-    slot: u8,
-    depth: u8,
-    parent_op: u8,
-    w: f64,
-) anyerror!void {
-    const ctx = prior.Context.fromStream(in, dtype, slot, depth, parent_op);
-    try counts.add(alloc, ctx, node.op, w);
-    if (node.op.isTerminal()) return;
-
-    var outs: std.ArrayList(Stream) = .empty;
-    defer {
-        for (outs.items) |*s| s.deinit(alloc);
-        outs.deinit(alloc);
-    }
-    var side: ops.SideInfo = .none;
-    defer side.deinit(alloc);
-    try ops.forward(alloc, node.op, node.params, in, &outs, &side);
-
-    for (node.children, outs.items, 0..) |c, s, k|
-        try accumulate(alloc, counts, c, s, dtype, @intCast(k), depth + 1, @intFromEnum(node.op), w);
-}
-
-const CalibJob = struct {
-    next: std.atomic.Value(usize),
-    fails: std.atomic.Value(usize),
-    tensors: []const safetensors.Tensor,
-    picked: []const Block,
-    counts: []prior.Counts,
-    alloc: Allocator,
-
-    fn run(self: *CalibJob, slot: usize) void {
-        while (true) {
-            const i = self.next.fetchAdd(1, .acq_rel);
-            if (i >= self.picked.len) return;
-            self.one(slot, self.picked[i]) catch |e| {
-                std.debug.print("calibrate block {d}: {t}\n", .{ i, e });
-                _ = self.fails.fetchAdd(1, .acq_rel);
-            };
-        }
-    }
-
-    fn one(self: *CalibJob, slot: usize, b: Block) !void {
-        const alloc = self.alloc;
-        var s = b.asStream(self.tensors[b.tensor_idx].view.data);
-        s.count = @min(s.count, CALIB_ELEMS);
-        s.data = s.data[0 .. s.count * s.elemBytes()];
-
-        const cands = try search.synthesizeAll(alloc, s, b.dtype, .{
-            .enumerate_all = true,
-            .max_nodes = 4,
-            .max_depth = 2,
-        });
-        defer {
-            for (cands) |*c| c.deinit(alloc);
-            alloc.free(cands);
-        }
-        if (cands.len == 0) return;
-
-        const best: f64 = @floatFromInt(cands[0].bytes);
-        for (cands) |c| {
-            const w = @exp(-(@as(f64, @floatFromInt(c.bytes)) - best) / ops.TAU);
-            if (w < 0.01) break;
-            try accumulate(alloc, &self.counts[slot], c.node, s, b.dtype, 0, 0, ROOT_PARENT, w);
-        }
-    }
-};
-
-fn mergeCounts(alloc: Allocator, dst: *prior.Counts, src: prior.Counts) !void {
-    for (0..3) |lv| {
-        var it = src.levels[lv].iterator();
-        while (it.next()) |e| {
-            const gop = try dst.levels[lv].getOrPut(alloc, e.key_ptr.*);
-            if (!gop.found_existing) gop.value_ptr.* = @splat(0);
-            for (gop.value_ptr, e.value_ptr.*) |*d, v| d.* += v;
-        }
-    }
-}
-
 fn cmdCalibrate(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: []const u8, n_sample: usize) !void {
     const alloc = std.heap.smp_allocator;
 
@@ -630,53 +496,21 @@ fn cmdCalibrate(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path
     defer loaded.deinitMmap(alloc, io);
     try checkTensors(loaded.tensors);
 
-    const blocks = try planAll(alloc, loaded.tensors);
-    defer alloc.free(blocks);
-
-    const picked = try stratifiedSample(alloc, blocks, n_sample, 0x5EED_B10C);
-    defer alloc.free(picked);
-
-    const n_threads = @max(@as(usize, 1), @min(threadCount(null), picked.len));
-    try out.print("calibrate: {d} tensors, {d} blocks, sampling {d} on {d} threads\n", .{
-        loaded.tensors.len, blocks.len, picked.len, n_threads,
+    const n_threads = threadCount(null);
+    try out.print("calibrate: {d} tensors, sampling up to {d} on {d} threads\n", .{
+        loaded.tensors.len, n_sample, n_threads,
     });
     try out.flush();
 
-    const per_thread = try alloc.alloc(prior.Counts, n_threads);
-    defer {
-        for (per_thread) |*c| c.deinit(alloc);
-        alloc.free(per_thread);
-    }
-    for (per_thread) |*c| c.* = prior.Counts.init(alloc);
-
-    var job: CalibJob = .{
-        .next = .init(0),
-        .fails = .init(0),
-        .tensors = loaded.tensors,
-        .picked = picked,
-        .counts = per_thread,
-        .alloc = alloc,
-    };
-
     const t0 = std.Io.Timestamp.now(io, .awake);
-    const threads = try alloc.alloc(std.Thread, n_threads);
-    defer alloc.free(threads);
-    for (threads, 0..) |*t, slot| t.* = try std.Thread.spawn(.{}, CalibJob.run, .{ &job, slot });
-    for (threads) |t| t.join();
+    var trained = try calibrate.train(alloc, loaded.tensors, .{ .max_tensors = n_sample, .threads = n_threads });
+    defer trained.prior.deinit(alloc);
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
-
-    if (job.fails.load(.acquire) > 0) return error.CalibrationFailed;
-
-    var counts = prior.Counts.init(alloc);
-    defer counts.deinit(alloc);
-    for (per_thread) |c| try mergeCounts(alloc, &counts, c);
-
-    var pr = try counts.toPrior(alloc);
-    defer pr.deinit(alloc);
-    try pr.save(alloc, prior_path);
-
-    try out.print("calibrated in {d}ms; contexts L0={d} L1={d} L2={d} -> {s}\n", .{
-        ms, pr.levels[0].count(), pr.levels[1].count(), pr.levels[2].count(), prior_path,
+    try trained.prior.save(alloc, prior_path);
+    try out.print("calibrated {d} tensors in {d}ms; contexts L0={d} L1={d} L2={d} -> {s}\n", .{
+        trained.sampled,                 ms,
+        trained.prior.levels[0].count(), trained.prior.levels[1].count(),
+        trained.prior.levels[2].count(), prior_path,
     });
 }
 
