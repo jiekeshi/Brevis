@@ -26,6 +26,7 @@ import os
 import pathlib
 import platform
 import random
+import re
 import shutil
 import struct
 import subprocess
@@ -54,6 +55,32 @@ DEFAULT_CANONICAL_REPORT_FRACTION_PER_CONFIGURATION = 0.25
 DEFAULT_COMPACT_REPORT_BYTES_PER_ITERATION = 128 << 10
 DEFAULT_CHECKPOINT_FIXED_BYTES = 64 << 20
 CORE_CONFIGURATION_IDS = ("raw-terminal", "fixed", "uniform", "phog")
+FROZEN_MAX_REALIZATIONS = 32
+FROZEN_MAX_REALIZATIONS_SCOPE = "single_stream_search_only"
+FROZEN_TENSOR_SEARCH_USES_MAX_REALIZATIONS = False
+FROZEN_TARGET_BLOCK_BYTES = 256 << 10
+SEARCH_ARGUMENT_OPTIONS = {
+    "--max-expansions": "max_expansions",
+    "--max-nodes": "max_nodes",
+    "--max-depth": "max_depth",
+    "--sample-elems": "sample_elems",
+    "--rerank-candidates": "rerank_candidates",
+    "--rerank-blocks": "rerank_blocks",
+}
+EXPECTED_EFFECTIVE_CONFIG_KEYS = (
+    "max_expansions",
+    "max_nodes",
+    "max_depth",
+    "sample_elems",
+    "rerank_candidates",
+    "rerank_blocks",
+    "enabled_ops",
+    "rerank_enabled",
+    "max_realizations",
+    "max_realizations_scope",
+    "tensor_search_uses_max_realizations",
+    "target_block_bytes",
+)
 PROGRAM_SEQUENCE_SPEC_ID = "brevis.program-bytecode-sequence.v1"
 BENCH_DETAIL_FINGERPRINT_SPEC_ID = "brevis.bench-detail-semantics.v1"
 BENCH_DETAIL_FIELDS = ("tensors", "blocks")
@@ -69,6 +96,42 @@ class BenchmarkError(RuntimeError):
     """Invalid benchmark setup or an invariant violation."""
 
 
+def _parse_search_arguments(search_args: Sequence[str]) -> tuple[dict[str, int], tuple[str, ...]]:
+    """Parse the deliberately small search CLI surface without accepting ambiguity."""
+
+    if len(search_args) % 2:
+        raise ValueError("search_args must contain option/value pairs")
+    settings: dict[str, int] = {}
+    disabled: list[str] = []
+    for index in range(0, len(search_args), 2):
+        option, value = search_args[index:index + 2]
+        if option == "--disable-op":
+            if value == "raw":
+                raise ValueError("raw is mandatory and cannot be disabled")
+            if re.fullmatch(r"[a-z][a-z0-9_]*", value) is None:
+                raise ValueError(f"invalid --disable-op value {value!r}")
+            if value in disabled:
+                raise ValueError(f"duplicate --disable-op value {value!r}")
+            disabled.append(value)
+            continue
+        key = SEARCH_ARGUMENT_OPTIONS.get(option)
+        if key is None:
+            raise ValueError(f"unsupported or harness-owned search option {option!r}")
+        if key in settings:
+            raise ValueError(f"duplicate search option {option!r}")
+        if not value.isdecimal() or str(int(value)) != value:
+            raise ValueError(f"search option {option!r} requires a canonical decimal integer")
+        parsed = int(value)
+        if key in {"max_expansions", "max_nodes", "sample_elems"} and parsed < 1:
+            raise ValueError(f"search option {option!r} must be positive")
+        settings[key] = parsed
+    return settings, tuple(disabled)
+
+
+def _expected_effective_dict(spec: "BrevisSpec") -> dict[str, Any]:
+    return dict(spec.expected_effective_config)
+
+
 @dataclasses.dataclass(frozen=True)
 class BrevisSpec:
     """One fully specified Brevis configuration."""
@@ -78,8 +141,18 @@ class BrevisSpec:
     prior_policy: str
     search_args: tuple[str, ...] = ()
     notes: str = ""
+    require_raw_only: bool = False
+    expected_effective_config: tuple[tuple[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.identifier, str)
+            or not re.fullmatch(r"[a-z0-9](?:[a-z0-9_-]{0,126}[a-z0-9])?", self.identifier)
+        ):
+            raise ValueError(
+                "Brevis configuration identifiers must be 1--128 lowercase "
+                "filename-safe ASCII letters, digits, underscores, or hyphens"
+            )
         if self.plan not in ("fixed", "search"):
             raise ValueError(f"invalid plan for {self.identifier}: {self.plan}")
         if self.prior_policy not in ("none", "canonical"):
@@ -92,6 +165,85 @@ class BrevisSpec:
             )
         if self.plan == "fixed" and self.prior_policy != "none":
             raise ValueError("fixed mode cannot consume a prior")
+        if not isinstance(self.search_args, tuple) or not all(
+            isinstance(argument, str) and argument for argument in self.search_args
+        ):
+            raise ValueError("search_args must be a tuple of nonempty strings")
+        parsed_settings, disabled_ops = _parse_search_arguments(self.search_args)
+        if not isinstance(self.notes, str):
+            raise ValueError("notes must be a string")
+        if not isinstance(self.require_raw_only, bool):
+            raise ValueError("require_raw_only must be a boolean")
+        if self.require_raw_only and (
+            self.plan != "search" or self.prior_policy != "none"
+        ):
+            raise ValueError(
+                "a required raw-only grammar must use unguided search"
+            )
+        if not isinstance(self.expected_effective_config, tuple) or not all(
+            isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str)
+            for item in self.expected_effective_config
+        ):
+            raise ValueError("expected_effective_config must be a tuple of key/value pairs")
+        expected = _expected_effective_dict(self)
+        if len(expected) != len(self.expected_effective_config):
+            raise ValueError("expected_effective_config keys must be unique")
+        if expected:
+            if tuple(expected) != EXPECTED_EFFECTIVE_CONFIG_KEYS:
+                raise ValueError(
+                    "expected_effective_config must contain every frozen key in canonical order"
+                )
+            for key in (
+                "max_expansions", "max_nodes", "max_depth", "sample_elems",
+                "rerank_candidates", "rerank_blocks", "max_realizations",
+                "target_block_bytes",
+            ):
+                value = expected[key]
+                minimum = (
+                    1 if key in {
+                        "max_expansions", "max_nodes", "sample_elems",
+                        "max_realizations", "target_block_bytes",
+                    } else 0
+                )
+                if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                    raise ValueError(
+                        f"expected effective {key} must be an integer >= {minimum}"
+                    )
+            enabled_ops = expected["enabled_ops"]
+            if (
+                not isinstance(enabled_ops, tuple)
+                or not enabled_ops
+                or not all(isinstance(operator, str) and operator for operator in enabled_ops)
+                or len(enabled_ops) != len(set(enabled_ops))
+                or "raw" not in enabled_ops
+            ):
+                raise ValueError("expected effective enabled_ops must be a unique tuple including raw")
+            if not isinstance(expected["rerank_enabled"], bool):
+                raise ValueError("expected effective rerank_enabled must be boolean")
+            if expected["max_realizations"] != FROZEN_MAX_REALIZATIONS:
+                raise ValueError("expected effective max_realizations disagrees with the frozen value")
+            if expected["max_realizations_scope"] != FROZEN_MAX_REALIZATIONS_SCOPE:
+                raise ValueError("expected effective max_realizations_scope is unsupported")
+            if (
+                expected["tensor_search_uses_max_realizations"]
+                is not FROZEN_TENSOR_SEARCH_USES_MAX_REALIZATIONS
+            ):
+                raise ValueError("expected tensor-search max_realizations semantics are unsupported")
+            if expected["target_block_bytes"] != FROZEN_TARGET_BLOCK_BYTES:
+                raise ValueError("expected target block size disagrees with the frozen value")
+            for key, value in parsed_settings.items():
+                if expected[key] != value:
+                    raise ValueError(
+                        f"expected effective {key} disagrees with its requested CLI value"
+                    )
+            if expected["rerank_enabled"] is not (
+                expected["rerank_candidates"] > 0 and expected["rerank_blocks"] > 0
+            ):
+                raise ValueError("expected rerank_enabled disagrees with rerank settings")
+            if any(operator in expected["enabled_ops"] for operator in disabled_ops):
+                raise ValueError("a disabled operator remains in expected enabled_ops")
+            if self.require_raw_only and expected["enabled_ops"] != ("raw",):
+                raise ValueError("raw-only contract requires expected enabled_ops=('raw',)")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +252,11 @@ class BrevisSpec:
             "prior_policy": self.prior_policy,
             "search_args": list(self.search_args),
             "notes": self.notes,
+            "require_raw_only": self.require_raw_only,
+            "expected_effective_config": {
+                key: list(value) if isinstance(value, tuple) else value
+                for key, value in self.expected_effective_config
+            },
         }
 
 
@@ -128,6 +285,7 @@ def core_specs(enabled_operators: Sequence[str]) -> tuple[BrevisSpec, ...]:
             "none",
             _disable_args(non_raw),
             "Brevis archive constrained to raw terminal frames; includes archive overhead.",
+            True,
         ),
         BrevisSpec(
             "fixed",
@@ -170,6 +328,37 @@ def select_specs(
     if len({spec.identifier for spec in selected}) != len(selected):
         raise ValueError("selected Brevis configurations must be unique")
     return tuple(selected)
+
+
+def _validate_explicit_specs(specs: Sequence[BrevisSpec]) -> tuple[BrevisSpec, ...]:
+    """Validate an API-supplied configuration sequence before running processes."""
+
+    selected = tuple(specs)
+    if not selected:
+        raise ValueError("explicit Brevis specs must be nonempty")
+    if not all(isinstance(spec, BrevisSpec) for spec in selected):
+        raise TypeError("explicit specs must contain only BrevisSpec values")
+    identifiers = [spec.identifier for spec in selected]
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("explicit Brevis configuration identifiers must be unique")
+    for spec in selected:
+        if not spec.expected_effective_config:
+            raise ValueError(
+                "explicit Brevis specs must bind a complete expected_effective_config"
+            )
+        if spec.identifier == "raw-terminal" and not spec.require_raw_only:
+            raise ValueError(
+                "the reserved raw-terminal identifier requires an explicit raw-only contract"
+            )
+    canonical_search_args = {
+        spec.search_args for spec in selected if spec.prior_policy == "canonical"
+    }
+    if len(canonical_search_args) > 1:
+        raise BenchmarkError(
+            "canonical-prior configurations in one benchmark must have exactly "
+            "identical search_args; refusing to share a mismatched prior"
+        )
+    return selected
 
 
 def _process_ok(process: Mapping[str, Any]) -> bool:
@@ -549,6 +738,26 @@ def _run_config(
     if not isinstance(payload, dict):
         return process, None, "configuration JSON must be an object"
     return process, payload, None
+
+
+def _validate_effective_configuration(
+    spec: BrevisSpec, effective: Mapping[str, Any],
+) -> None:
+    """Compare a config probe with independently frozen, hash-bound expectations."""
+
+    expected = _expected_effective_dict(spec)
+    if not expected:
+        return
+    for key in EXPECTED_EFFECTIVE_CONFIG_KEYS:
+        observed = effective.get(key)
+        expected_value = expected[key]
+        if key == "enabled_ops" and isinstance(observed, list):
+            observed = tuple(observed)
+        if type(observed) is not type(expected_value) or observed != expected_value:
+            raise BenchmarkError(
+                f"effective configuration {key} drifted from the frozen expectation: "
+                f"expected {expected_value!r}, observed {observed!r}"
+            )
 
 
 def _binary_record(path: pathlib.Path) -> dict[str, Any]:
@@ -1166,6 +1375,18 @@ def _validate_bench_report(
         raise BenchmarkError("bench report disagrees about whether search options were applied")
     if report.get("search") != dict(expected_search_configuration):
         raise BenchmarkError("bench report search configuration does not match the probe")
+    expected_effective = _expected_effective_dict(spec)
+    if (
+        expected_effective
+        and "target_block_bytes" in report
+        and (
+            type(report.get("target_block_bytes"))
+            is not type(expected_effective["target_block_bytes"])
+            or report.get("target_block_bytes")
+            != expected_effective["target_block_bytes"]
+        )
+    ):
+        raise BenchmarkError("bench report target_block_bytes drifted from the frozen expectation")
     prior = report.get("prior")
     if not isinstance(prior, Mapping):
         raise BenchmarkError("bench report has no prior object")
@@ -1186,10 +1407,12 @@ def _validate_bench_report(
             raise BenchmarkError("bench report prior path does not match the canonical prior")
     elif prior.get("path") is not None or prior.get("sha256") is not None:
         raise BenchmarkError("unguided bench report unexpectedly records a prior")
-    if spec.identifier == "raw-terminal":
+    if spec.require_raw_only:
         search = report.get("search")
         if not isinstance(search, Mapping) or search.get("enabled_ops") != ["raw"]:
-            raise BenchmarkError("raw-terminal bench report did not apply a raw-only grammar")
+            raise BenchmarkError(
+                "configuration requiring a raw-only grammar did not apply exactly raw"
+            )
 
 
 def _nonnegative_report_int(value: Any, label: str) -> int:
@@ -1852,6 +2075,7 @@ def benchmark_file(
     warmups: int = DEFAULT_WARMUPS,
     repetitions: int = DEFAULT_REPETITIONS,
     configuration_ids: Iterable[str] | None = None,
+    specs: Sequence[BrevisSpec] | None = None,
     jobs: int = 1,
     calibration_tensors: int = DEFAULT_CALIBRATION_TENSORS,
     work_dir: os.PathLike[str] | str | None = None,
@@ -1868,6 +2092,7 @@ def benchmark_file(
     require_declared_integrity: bool = True,
     require_clean_git: bool = True,
     build_binary: bool = True,
+    additional_formal_ineligibility_reasons: Sequence[str] = (),
     disk_reserve_fraction: float = DEFAULT_DISK_RESERVE_FRACTION,
     temp_multiplier: float = DEFAULT_TEMP_MULTIPLIER,
     temp_fixed_bytes: int = DEFAULT_TEMP_FIXED_BYTES,
@@ -1895,6 +2120,21 @@ def benchmark_file(
         raise ValueError("temp_multiplier must be finite and positive")
     if isinstance(temp_fixed_bytes, bool) or not isinstance(temp_fixed_bytes, int) or temp_fixed_bytes < 0:
         raise ValueError("temp_fixed_bytes must be a non-negative integer")
+    extra_ineligibility = tuple(additional_formal_ineligibility_reasons)
+    if (
+        len(extra_ineligibility) != len(set(extra_ineligibility))
+        or not all(
+            isinstance(reason, str)
+            and re.fullmatch(r"[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?", reason)
+            for reason in extra_ineligibility
+        )
+    ):
+        raise ValueError(
+            "additional formal ineligibility reasons must be unique filename-safe identifiers"
+        )
+    if specs is not None and configuration_ids is not None:
+        raise ValueError("configuration_ids and explicit specs are mutually exclusive")
+    explicit_specs = _validate_explicit_specs(specs) if specs is not None else None
 
     source_path = pathlib.Path(source).resolve(strict=True)
     if not source_path.is_file():
@@ -1954,11 +2194,16 @@ def benchmark_file(
         parent = checkpoint.parent.resolve() if checkpoint is not None else pathlib.Path(tempfile.gettempdir())
     parent.mkdir(parents=True, exist_ok=True)
 
-    requested_ids = tuple(configuration_ids) if configuration_ids is not None else CORE_CONFIGURATION_IDS
+    requested_ids = (
+        tuple(spec.identifier for spec in explicit_specs)
+        if explicit_specs is not None
+        else tuple(configuration_ids) if configuration_ids is not None
+        else CORE_CONFIGURATION_IDS
+    )
     if not requested_ids or len(set(requested_ids)) != len(requested_ids):
         raise ValueError("configuration_ids must be nonempty and unique")
     unknown = set(requested_ids) - set(CORE_CONFIGURATION_IDS)
-    if unknown:
+    if explicit_specs is None and unknown:
         raise ValueError(f"unknown Brevis configuration(s): {', '.join(sorted(unknown))}")
     total_pipeline_iterations = (warmups + repetitions) * len(requested_ids)
     disk_gate = _disk_gate(
@@ -1980,6 +2225,7 @@ def benchmark_file(
         formal_ineligibility_reasons.append("clean_git_gate_disabled")
     if not build_binary:
         formal_ineligibility_reasons.append("releasefast_build_not_performed_by_harness")
+    formal_ineligibility_reasons.extend(extra_ineligibility)
     run_classification = {
         "run_class": "formal" if not formal_ineligibility_reasons else "pilot",
         "formal_eligible": not formal_ineligibility_reasons,
@@ -2030,16 +2276,25 @@ def benchmark_file(
         },
         "binary": _binary_record(requested_binary),
     }
+    canonical_specs = tuple(
+        spec for spec in explicit_specs or () if spec.prior_policy == "canonical"
+    )
+    calibration_required = (
+        bool(canonical_specs) if explicit_specs is not None else "phog" in requested_ids
+    )
+    calibration_search_args = (
+        canonical_specs[0].search_args if canonical_specs else ()
+    )
     calibration: dict[str, Any] = {
-        "required": "phog" in requested_ids,
-        "status_code": "pending" if "phog" in requested_ids else "not_required",
-        "success": None if "phog" in requested_ids else True,
+        "required": calibration_required,
+        "status_code": "pending" if calibration_required else "not_required",
+        "success": None if calibration_required else True,
         "failure_count": 0,
         "failure": None,
         "configuration": {
             "max_tensors": calibration_tensors,
             "requested_jobs": jobs,
-            "search_args": [],
+            "search_args": list(calibration_search_args),
         },
         "warmups": [],
         "runs": [],
@@ -2091,6 +2346,13 @@ def benchmark_file(
             "disk_gate": disk_gate,
             "configuration": {
                 "requested_configuration_ids": list(requested_ids),
+                "configuration_source": (
+                    "explicit_brevis_specs" if explicit_specs is not None else "core_registry"
+                ),
+                "requested_specs": (
+                    [spec.to_dict() for spec in explicit_specs]
+                    if explicit_specs is not None else None
+                ),
                 "warmups": warmups,
                 "repetitions": repetitions,
                 "jobs": jobs,
@@ -2252,7 +2514,7 @@ def benchmark_file(
             if probe_failure is not None:
                 global_failure = probe_failure
 
-        specs: tuple[BrevisSpec, ...] = ()
+        selected_specs: tuple[BrevisSpec, ...] = ()
         if global_failure is None:
             assert default_config is not None
             enabled_ops = default_config.get("enabled_ops")
@@ -2260,11 +2522,13 @@ def benchmark_file(
                 isinstance(operator, str) for operator in enabled_ops
             ):
                 global_failure = "brevis config has no string-valued enabled_ops array"
+            elif explicit_specs is not None:
+                selected_specs = explicit_specs
             else:
-                specs = select_specs(core_specs(enabled_ops), requested_ids)
+                selected_specs = select_specs(core_specs(enabled_ops), requested_ids)
 
         configuration_by_id: dict[str, dict[str, Any]] = {}
-        for spec in specs:
+        for spec in selected_specs:
             probe, effective, failure = _run_config(
                 requested_binary,
                 spec.search_args,
@@ -2272,9 +2536,19 @@ def benchmark_file(
                 f"config-{_safe_label(spec.identifier)}",
                 timeout_seconds,
             )
-            if failure is None and spec.identifier == "raw-terminal":
+            if failure is None:
+                try:
+                    if not isinstance(effective, Mapping):
+                        raise BenchmarkError("configuration probe returned no effective object")
+                    _validate_effective_configuration(spec, effective)
+                except BenchmarkError as exc:
+                    failure = str(exc)
+            if failure is None and spec.require_raw_only:
                 if effective is None or effective.get("enabled_ops") != ["raw"]:
-                    failure = "raw-terminal configuration probe did not leave exactly raw enabled"
+                    failure = (
+                        "configuration requires a raw-only grammar, but its probe did not "
+                        "leave exactly raw enabled"
+                    )
             record = {
                 "id": spec.identifier,
                 "spec": spec.to_dict(),
@@ -2290,6 +2564,50 @@ def benchmark_file(
             configurations.append(record)
             configuration_by_id[spec.identifier] = record
 
+        configuration_probe_failures = [
+            record for record in configurations if record["failure"] is not None
+        ]
+        if configuration_probe_failures:
+            global_failure = (
+                "configuration probe failures before calibration/measurement: "
+                + ", ".join(record["id"] for record in configuration_probe_failures)
+            )
+
+        selected_canonical_specs = tuple(
+            spec for spec in selected_specs if spec.prior_policy == "canonical"
+        )
+        canonical_arg_sets = {
+            spec.search_args for spec in selected_canonical_specs
+        }
+        if len(canonical_arg_sets) > 1:
+            global_failure = (
+                "canonical-prior configurations resolved to different search_args; "
+                "refusing to share one calibration prior"
+            )
+        calibration_effective_config: Mapping[str, Any] = default_config or {}
+        if selected_canonical_specs:
+            canonical_search_args = selected_canonical_specs[0].search_args
+            calibration["configuration"]["search_args"] = list(canonical_search_args)
+            canonical_effective = [
+                configuration_by_id[spec.identifier].get(
+                    "effective_search_configuration"
+                )
+                for spec in selected_canonical_specs
+            ]
+            available_effective = [
+                value for value in canonical_effective if isinstance(value, Mapping)
+            ]
+            if available_effective:
+                calibration_effective_config = available_effective[0]
+                if any(
+                    dict(value) != dict(calibration_effective_config)
+                    for value in available_effective[1:]
+                ):
+                    global_failure = (
+                        "identical canonical search_args produced inconsistent effective "
+                        "configuration probes; refusing to share one calibration prior"
+                    )
+
         if global_failure is not None:
             clean_artifact_root()
             document = build_document(status="complete", success=False)
@@ -2297,8 +2615,10 @@ def benchmark_file(
             return document
 
         assert default_config is not None
-        warmup_orders = _rotated_warmup_orders(specs, warmups)
-        measured_orders = common._balanced_measured_orders(specs, repetitions, schedule_seed)
+        warmup_orders = _rotated_warmup_orders(selected_specs, warmups)
+        measured_orders = common._balanced_measured_orders(
+            selected_specs, repetitions, schedule_seed,
+        )
         scheduled_tasks: dict[str, list[tuple[dict[str, Any], BrevisSpec]]] = {
             "archive_pipeline": [],
             "bench_diagnostic": [],
@@ -2370,8 +2690,8 @@ def benchmark_file(
                         index=index,
                         jobs=jobs,
                         calibration_tensors=calibration_tensors,
-                        search_args=(),
-                        expected_search_configuration=default_config,
+                        search_args=tuple(calibration["configuration"]["search_args"]),
+                        expected_search_configuration=calibration_effective_config,
                         timeout_seconds=timeout_seconds,
                         keep_artifacts=keep_artifacts,
                     )

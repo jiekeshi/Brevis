@@ -46,10 +46,24 @@ def config():
         "sample_elems": int(option("--sample-elems", 4096)),
         "rerank_candidates": int(option("--rerank-candidates", 8)),
         "rerank_blocks": int(option("--rerank-blocks", 4)),
+        "max_realizations": 32,
+        "max_realizations_scope": "single_stream_search_only",
+        "tensor_search_uses_max_realizations": False,
+        "target_block_bytes": 262144,
     }
+    values["rerank_enabled"] = (
+        values["rerank_candidates"] > 0 and values["rerank_blocks"] > 0
+    )
     values["enabled_ops"] = [operator for operator in OPS if operator not in disabled()]
     values["disabled_ops"] = [operator for operator in OPS if operator in disabled()]
     values["enabled_ops_mask"] = 1
+    if os.environ.get("FAKE_BREVIS_CONFIG_MAX_DEPTH_DELTA") and sys.argv[1] == "config":
+        values["max_depth"] += int(os.environ["FAKE_BREVIS_CONFIG_MAX_DEPTH_DELTA"])
+        values["transform_layers"] = values["max_depth"]
+    if os.environ.get("FAKE_BREVIS_CONFIG_TARGET_BLOCK_DELTA") and sys.argv[1] == "config":
+        values["target_block_bytes"] += int(
+            os.environ["FAKE_BREVIS_CONFIG_TARGET_BLOCK_DELTA"]
+        )
     return values
 
 
@@ -69,7 +83,7 @@ elif command == "calibrate":
     prior = pathlib.Path(sys.argv[3])
     prior_suffix = prior.parent.name.encode() if os.environ.get("FAKE_BREVIS_PRIOR_BY_PATH") else b""
     prior.write_bytes(b"prior:" + hashlib.sha256(source.read_bytes()).digest() + prior_suffix)
-    print(json.dumps({
+    report = {
         "schema": 1,
         "kind": "brevis.calibration-report",
         "input": {
@@ -98,7 +112,8 @@ elif command == "calibrate":
             "sampled_tensors": 2,
             "training_wall_ms": 3,
         },
-    }))
+    }
+    print(json.dumps(report))
 elif command == "bench":
     source = pathlib.Path(sys.argv[2])
     source_size = source.stat().st_size
@@ -117,7 +132,7 @@ elif command == "bench":
     sequence.update(struct.pack("<Q", 1))
     sequence.update(struct.pack("<I", len(bytecode)))
     sequence.update(bytes.fromhex(bytecode_sha256))
-    print(json.dumps({
+    report = {
         "schema": schema,
         "kind": "brevis.bench-report",
         "input": str(source),
@@ -138,6 +153,9 @@ elif command == "bench":
         "requested_threads": int(option("--jobs", 1)),
         "planning_workers_used": 1,
         "encoding_workers_used": 1,
+        "target_block_bytes": (
+            262144 + int(os.environ.get("FAKE_BREVIS_BENCH_TARGET_BLOCK_DELTA", "0"))
+        ),
         "search_options_applied": plan == "search",
         "search": bench_search,
         "planning_wall_ms": 2,
@@ -220,7 +238,10 @@ elif command == "bench":
                 else 0
             ),
         },
-    }))
+    }
+    if os.environ.get("FAKE_BREVIS_OMIT_BENCH_TARGET_BLOCK"):
+        report.pop("target_block_bytes")
+    print(json.dumps(report))
 elif command == "compress":
     source = pathlib.Path(sys.argv[2])
     archive = pathlib.Path(sys.argv[3])
@@ -247,6 +268,8 @@ elif command == "decompress":
 else:
     raise SystemExit(9)
 '''
+
+FAKE_OPS = ("raw", "bitpack", "huffman", "rans", "xor_prev", "diff_mod")
 
 
 class BrevisSystemBenchmarkTests(unittest.TestCase):
@@ -305,6 +328,31 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
         arguments.update(overrides)
         return arguments
 
+    def expected_effective_config(self, search_args=()):
+        requested, disabled = system._parse_search_arguments(tuple(search_args))
+        values = {
+            "max_expansions": 256,
+            "max_nodes": 12,
+            "max_depth": 2,
+            "sample_elems": 4096,
+            "rerank_candidates": 8,
+            "rerank_blocks": 4,
+        }
+        values.update(requested)
+        values.update({
+            "enabled_ops": tuple(op for op in FAKE_OPS if op not in disabled),
+            "rerank_enabled": (
+                values["rerank_candidates"] > 0 and values["rerank_blocks"] > 0
+            ),
+            "max_realizations": system.FROZEN_MAX_REALIZATIONS,
+            "max_realizations_scope": system.FROZEN_MAX_REALIZATIONS_SCOPE,
+            "tensor_search_uses_max_realizations": (
+                system.FROZEN_TENSOR_SEARCH_USES_MAX_REALIZATIONS
+            ),
+            "target_block_bytes": system.FROZEN_TARGET_BLOCK_BYTES,
+        })
+        return tuple((key, values[key]) for key in system.EXPECTED_EFFECTIVE_CONFIG_KEYS)
+
     def test_registry_materializes_auditable_raw_and_rejects_inert_fixed_options(self):
         specs = system.core_specs(["raw", "bitpack", "huffman", "xor_prev"])
         raw, fixed, uniform, phog = specs
@@ -320,6 +368,193 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
         self.assertEqual("canonical", phog.prior_policy)
         with self.assertRaisesRegex(ValueError, "ignores search"):
             system.BrevisSpec("bad-fixed", "fixed", "none", ("--max-depth", "1"))
+        with self.assertRaisesRegex(ValueError, "filename-safe"):
+            system.BrevisSpec("../unsafe", "search", "none")
+        with self.assertRaisesRegex(ValueError, "tuple"):
+            system.BrevisSpec("bad-args", "search", "none", ["--max-depth", "1"])
+
+    def test_explicit_specs_are_recorded_and_canonical_calibration_uses_exact_args(self):
+        search_args = (
+            "--max-depth", "1", "--max-expansions", "32",
+            "--rerank-candidates", "0", "--rerank-blocks", "0",
+        )
+        spec = system.BrevisSpec(
+            "custom-phog", "search", "canonical", search_args,
+            "Fixture custom PHOG search.",
+            expected_effective_config=self.expected_effective_config(search_args),
+        )
+        result = system.benchmark_file(
+            self.source,
+            **self.arguments(specs=(spec,), repetitions=1),
+        )
+        self.assertTrue(result["success"], result["failure"])
+        self.assertEqual("explicit_brevis_specs", result["configuration"]
+                         ["configuration_source"])
+        self.assertEqual(spec.to_dict(), result["configuration"]["requested_specs"][0])
+        self.assertEqual(list(search_args), result["calibration"]["configuration"]
+                         ["search_args"])
+        calibration_command = result["calibration"]["runs"][0]["command"]
+        self.assertEqual(list(search_args), calibration_command[-len(search_args):])
+        effective = result["configurations"][0]["effective_search_configuration"]
+        self.assertEqual(effective, result["calibration"]["runs"][0]["report"]
+                         ["configuration"]["search"])
+
+    def test_search_arguments_reject_duplicates_ambiguity_and_harness_owned_options(self):
+        for search_args, message in (
+            (("--max-depth", "1", "--max-depth", "2"), "duplicate search option"),
+            (("--disable-op", "huffman", "--disable-op", "huffman"), "duplicate --disable-op"),
+            (("--max-realizations", "8"), "unsupported or harness-owned"),
+            (("--target-block-bytes", "1024"), "unsupported or harness-owned"),
+            (("--max-depth", "01"), "canonical decimal"),
+            (("--disable-op", "--max-depth"), "invalid --disable-op"),
+            (("--max-depth",), "option/value pairs"),
+        ):
+            with self.subTest(search_args=search_args):
+                with self.assertRaisesRegex(ValueError, message):
+                    system.BrevisSpec("invalid-search", "search", "none", search_args)
+
+    def test_explicit_specs_without_effective_config_binding_are_rejected_preflight(self):
+        unbound = system.BrevisSpec("unbound", "search", "none")
+        with mock.patch.object(system.common, "_run_process") as run_process:
+            with self.assertRaisesRegex(ValueError, "complete expected_effective_config"):
+                system.benchmark_file(
+                    self.source,
+                    **self.arguments(specs=(unbound,), repetitions=1),
+                )
+        run_process.assert_not_called()
+
+    def test_every_frozen_effective_setting_is_compared_strictly(self):
+        search_args = (
+            "--max-expansions", "32", "--max-nodes", "7", "--max-depth", "1",
+            "--sample-elems", "128", "--rerank-candidates", "0",
+            "--rerank-blocks", "4", "--disable-op", "huffman",
+        )
+        expected_pairs = self.expected_effective_config(search_args)
+        spec = system.BrevisSpec(
+            "strict-probe", "search", "none", search_args,
+            expected_effective_config=expected_pairs,
+        )
+        effective = dict(expected_pairs)
+        effective["enabled_ops"] = list(effective["enabled_ops"])
+        system._validate_effective_configuration(spec, effective)
+        for key in system.EXPECTED_EFFECTIVE_CONFIG_KEYS:
+            changed = dict(effective)
+            value = changed[key]
+            if isinstance(value, bool):
+                changed[key] = not value
+            elif isinstance(value, int):
+                changed[key] = value + 1
+            elif isinstance(value, list):
+                changed[key] = [*value, "unexpected"]
+            else:
+                changed[key] = f"{value}-drift"
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(system.BenchmarkError, key):
+                    system._validate_effective_configuration(spec, changed)
+
+        bool_as_integer = dict(effective)
+        bool_as_integer["max_depth"] = True
+        with self.assertRaisesRegex(system.BenchmarkError, "max_depth"):
+            system._validate_effective_configuration(spec, bool_as_integer)
+
+    def test_probe_drift_aborts_globally_before_calibration_or_measurement(self):
+        search_args = (
+            "--max-expansions", "32", "--max-nodes", "7", "--max-depth", "1",
+            "--sample-elems", "128", "--rerank-candidates", "0",
+            "--rerank-blocks", "4",
+        )
+        uniform = system.BrevisSpec(
+            "uniform-strict", "search", "none", search_args,
+            expected_effective_config=self.expected_effective_config(search_args),
+        )
+        phog = system.BrevisSpec(
+            "phog-strict", "search", "canonical", search_args,
+            expected_effective_config=self.expected_effective_config(search_args),
+        )
+        for environment, key in (
+            ({"FAKE_BREVIS_CONFIG_MAX_DEPTH_DELTA": "1"}, "max_depth"),
+            ({"FAKE_BREVIS_CONFIG_TARGET_BLOCK_DELTA": "1"}, "target_block_bytes"),
+        ):
+            with self.subTest(key=key), mock.patch.dict(os.environ, environment):
+                result = system.benchmark_file(
+                    self.source,
+                    **self.arguments(specs=(uniform, phog), warmups=1, repetitions=1),
+                )
+            self.assertFalse(result["success"])
+            self.assertIn("configuration probe failures before", result["failure"])
+            self.assertEqual([], result["calibration"]["runs"])
+            self.assertEqual([], result["calibration"]["warmups"])
+            self.assertEqual([], result["configuration"]["execution_schedule"])
+            for configuration in result["configurations"]:
+                self.assertIn(key, configuration["failure"])
+                self.assertEqual([], configuration["warmups"])
+                self.assertEqual([], configuration["runs"])
+
+    def test_bench_target_block_is_checked_when_present_and_optional_when_absent(self):
+        search_args = (
+            "--max-expansions", "32", "--max-nodes", "7", "--max-depth", "1",
+            "--sample-elems", "128", "--rerank-candidates", "0",
+            "--rerank-blocks", "4",
+        )
+        spec = system.BrevisSpec(
+            "uniform-strict", "search", "none", search_args,
+            expected_effective_config=self.expected_effective_config(search_args),
+        )
+        with mock.patch.dict(os.environ, {"FAKE_BREVIS_BENCH_TARGET_BLOCK_DELTA": "1"}):
+            drifted = system.benchmark_file(
+                self.source, **self.arguments(specs=(spec,), repetitions=1),
+            )
+        self.assertFalse(drifted["success"])
+        self.assertIn(
+            "target_block_bytes", drifted["configurations"][0]["runs"][0]["failure"],
+        )
+
+        with mock.patch.dict(os.environ, {"FAKE_BREVIS_OMIT_BENCH_TARGET_BLOCK": "1"}):
+            absent = system.benchmark_file(
+                self.source, **self.arguments(specs=(spec,), repetitions=1),
+            )
+        self.assertTrue(absent["success"], absent["failure"])
+
+    def test_mismatched_canonical_specs_fail_before_sharing_a_prior(self):
+        first = system.BrevisSpec(
+            "phog-depth-one", "search", "canonical", ("--max-depth", "1"),
+            expected_effective_config=self.expected_effective_config(("--max-depth", "1")),
+        )
+        second = system.BrevisSpec(
+            "phog-depth-two", "search", "canonical", ("--max-depth", "2"),
+            expected_effective_config=self.expected_effective_config(("--max-depth", "2")),
+        )
+        with self.assertRaisesRegex(system.BenchmarkError, "identical search_args"):
+            system.benchmark_file(
+                self.source,
+                **self.arguments(specs=(first, second), repetitions=1),
+            )
+
+    def test_raw_only_contract_is_explicit_and_not_identifier_based(self):
+        misleading_name = system.BrevisSpec(
+            "raw-terminal", "search", "none",
+            expected_effective_config=self.expected_effective_config(),
+        )
+        with self.assertRaisesRegex(ValueError, "raw-only contract"):
+            system.benchmark_file(
+                self.source,
+                **self.arguments(specs=(misleading_name,), repetitions=1),
+            )
+
+        expected_raw = tuple(
+            (key, ("raw",) if key == "enabled_ops" else value)
+            for key, value in self.expected_effective_config()
+        )
+        required = system.BrevisSpec(
+            "raw-proof", "search", "none", require_raw_only=True,
+            expected_effective_config=expected_raw,
+        )
+        rejected = system.benchmark_file(
+            self.source,
+            **self.arguments(specs=(required,), repetitions=1),
+        )
+        self.assertFalse(rejected["success"])
+        self.assertIn("enabled_ops", rejected["configurations"][0]["failure"])
 
     def test_program_sequence_digest_has_fixed_vectors(self):
         blocks = [b"abc", b"de"]
@@ -485,6 +720,31 @@ class BrevisSystemBenchmarkTests(unittest.TestCase):
         self.assertTrue(result["cleanup"]["artifact_root"]["success"])
         self.assertIsNotNone(result["disk_gate"]["checkpoint"])
         self.assertFalse([path for path in (self.root / "work").glob("brevis-system-*")])
+
+    def test_external_gate_reason_is_validated_and_downgrades_classification(self):
+        reason = "campaign_stage_gate_not_proven"
+        result = system.benchmark_file(
+            self.source,
+            **self.arguments(
+                configuration_ids=("fixed",), repetitions=1,
+                additional_formal_ineligibility_reasons=(reason,),
+            ),
+        )
+        self.assertTrue(result["success"], result["failure"])
+        self.assertFalse(result["run_classification"]["formal_eligible"])
+        self.assertIn(
+            reason, result["run_classification"]["formal_ineligibility_reasons"],
+        )
+        for invalid in ((reason, reason), ("not safe",)):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "additional formal"):
+                    system.benchmark_file(
+                        self.source,
+                        **self.arguments(
+                            configuration_ids=("fixed",), repetitions=1,
+                            additional_formal_ineligibility_reasons=invalid,
+                        ),
+                    )
 
     def test_first_measured_report_is_canonical_when_warmups_are_disabled(self):
         result = system.benchmark_file(
