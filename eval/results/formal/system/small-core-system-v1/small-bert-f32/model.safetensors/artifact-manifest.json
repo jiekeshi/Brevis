@@ -1,0 +1,84 @@
+{
+  "schema": {
+    "id": "brevis.formal-result-artifacts",
+    "version": 1
+  },
+  "status": "complete_validated",
+  "created_at_utc": "2026-07-21",
+  "campaign_id": "small-core-system-v1",
+  "model_tag": "small-bert-f32",
+  "shard": "model.safetensors",
+  "source": {
+    "bytes": 440449768,
+    "sha256": "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3"
+  },
+  "implementation": {
+    "git_commit": "5aa37351d582e7aa2034a85844083358069097c2",
+    "binary_sha256": "162d15ff1f7de123ec4f6640a3191c62f1006e7e4f169ed44b26529442483d37",
+    "harness_sha256": "41026af5f767f3b1300298a6a427fc8897f969037ee584d920afb1c250f84f48"
+  },
+  "artifacts": {
+    "result.json": {
+      "bytes": 19352447,
+      "sha256": "6d2290254f457782b137d16f1feaa228c65faa87c7413963c4ca63ff541933bf",
+      "content": "immutable raw brevis.system-benchmark schema-2 checkpoint"
+    },
+    "summary.json": {
+      "bytes": 148130,
+      "sha256": "4a48ab462931e1cda08b54acc73af4cf7ef4b1928ea616e1ae8f69e9ad993eb4",
+      "generator_sha256": "7a49e08bb146c8aa416b8321521d1c87b95dc2dc4325e655270bb9028416b04d"
+    },
+    "dsl/manifest.json": {
+      "bytes": 1491,
+      "sha256": "612094bd142ec8459ad41e83f2cbde24f43e7a7c1006453ee8a43a3148971170"
+    },
+    "dsl/reports.jsonl": {
+      "bytes": 17387,
+      "sha256": "4512bd749fa097448cd9f03252b53dd66412f493ce005d20b3eec386121835f5"
+    },
+    "dsl/errors.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "dsl/tensors.jsonl.zst": {
+      "bytes": 52666,
+      "sha256": "9150b50709a84d8402eba4df405f8e8c30d9c83a8596722f2adcbc135a391c10",
+      "uncompressed_bytes": 2408431,
+      "uncompressed_sha256": "2fcca588fb177b15ceedc3094bbdfb411e4b14a6cddbd1b9a1f01f67466aba8c"
+    },
+    "dsl/blocks.jsonl.zst": {
+      "bytes": 383227,
+      "sha256": "92d9b40a65535a698af7b27a61b20c2acfb55a55dad9cf25f5dd1472bfb216e8",
+      "uncompressed_bytes": 13421803,
+      "uncompressed_sha256": "4c0484b25b03a273fcbfa4b5fb9f23d012ffceaad993a61eacb36fa9c107ebce"
+    },
+    "dsl/nodes.jsonl.zst": {
+      "bytes": 383467,
+      "sha256": "9efc125beb6666cd1f0c28eb83f1bd3fb94fb49433b8f0ac822e0572e4375d24",
+      "uncompressed_bytes": 44048487,
+      "uncompressed_sha256": "0d6565eaf784167a9fc7d7bc631c2a654909fa0d83c07513233be4ff7dda5e3c"
+    }
+  },
+  "dsl_generator": {
+    "sha256": "0303f1b15ee040e13f02e2120b29a4c493713eb516c6940c0dd6544afc8e1b31",
+    "accepted_semantic_reports": 4,
+    "tensor_records": 824,
+    "block_records": 7540,
+    "node_records": 23992,
+    "excluded_records": 0
+  },
+  "compressed_jsonl": {
+    "codec": "zstd",
+    "cli_version": "1.5.7",
+    "arguments": ["-19", "-T1", "--no-progress"],
+    "verification": "zstd -t followed by streamed SHA-256 of decompressed bytes"
+  },
+  "evidence_use": {
+    "effectiveness": "eligible",
+    "bit_exactness": "eligible",
+    "generated_dsl": "eligible",
+    "timing": "provisional_pending_exclusive_campaign_confirmation",
+    "cross_method_speed_claim": "not_yet_eligible"
+  },
+  "execution_context_note": "No concurrent model benchmark was run; lightweight orchestration, unit tests, and a LaTeX compile occurred in the same container."
+}
