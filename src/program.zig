@@ -74,7 +74,7 @@ pub const Node = struct {
 
 // ==================== execute ====================
 
-pub const ExecuteError = Allocator.Error || error{ SymbolNotInTable, AlphabetTooLarge };
+pub const ExecuteError = Allocator.Error || error{ SymbolNotInTable, AlphabetTooLarge, HuffmanCodeTooLong };
 
 pub fn execute(alloc: Allocator, node: *Node, in: Stream) ExecuteError!void {
     node.side.deinit(alloc);

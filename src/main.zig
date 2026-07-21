@@ -16,6 +16,7 @@ const Block = types.Block;
 const Stream = types.Stream;
 
 const N_DTYPE: usize = @typeInfo(Dtype).@"enum".fields.len;
+const PlanMode = enum { search, fixed };
 
 pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
@@ -45,6 +46,7 @@ pub fn main(init: std.process.Init) !void {
     var opt_prior: ?[]const u8 = null;
     var opt_jobs: ?usize = null;
     var opt_tensors: usize = calibrate.DEFAULT_TENSORS;
+    var opt_plan: PlanMode = .search;
 
     const rest = argv.items[2..];
     var i: usize = 0;
@@ -63,16 +65,18 @@ pub fn main(init: std.process.Init) !void {
             opt_jobs = try std.fmt.parseInt(usize, v, 10);
         } else if (std.mem.eql(u8, a, "--tensors")) {
             opt_tensors = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--plan")) {
+            if (std.mem.eql(u8, v, "search")) opt_plan = .search else if (std.mem.eql(u8, v, "fixed")) opt_plan = .fixed else try usage(err);
         } else try usage(err);
     }
     const p = pos.items;
 
     if (std.mem.eql(u8, cmd, "calibrate")) {
         if (p.len != 2) try usage(err);
-        try cmdCalibrate(io, out, p[0], p[1], opt_tensors);
+        try cmdCalibrate(io, out, p[0], p[1], opt_tensors, opt_jobs);
     } else if (std.mem.eql(u8, cmd, "compress")) {
         if (p.len != 2) try usage(err);
-        try cmdCompress(io, out, p[0], p[1], opt_prior, opt_jobs);
+        try cmdCompress(io, out, p[0], p[1], opt_prior, opt_jobs, opt_plan);
     } else if (std.mem.eql(u8, cmd, "decompress")) {
         if (p.len != 2) try usage(err);
         try cmdDecompress(io, out, p[0], p[1], opt_jobs);
@@ -81,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
         try cmdVerify(alloc, io, out, p[0], p[1]);
     } else if (std.mem.eql(u8, cmd, "bench")) {
         if (p.len != 1) try usage(err);
-        try cmdBench(io, out, p[0], opt_prior, opt_jobs);
+        try cmdBench(io, out, p[0], opt_prior, opt_jobs, opt_plan);
     } else if (std.mem.eql(u8, cmd, "demo")) {
         try cmdDemo(io, out);
     } else if (std.mem.eql(u8, cmd, "make-fixture")) {
@@ -98,11 +102,11 @@ fn usage(w: *std.Io.Writer) !noreturn {
     try w.writeAll(
         \\brevis — bit-exact lossless tensor compression via program synthesis
         \\
-        \\  brevis calibrate   <model.safetensors> <prior.bin> [--tensors N]
-        \\  brevis compress    <model.safetensors> <out.brv> [--prior p.bin] [--jobs N]
+        \\  brevis calibrate   <model.safetensors> <prior.bin> [--tensors N] [--jobs N]
+        \\  brevis compress    <model.safetensors> <out.brv> [--plan search|fixed] [--prior p.bin] [--jobs N]
         \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
         \\  brevis verify      <in.brv> <orig.safetensors>
-        \\  brevis bench       <model.safetensors> [--prior p.bin] [--jobs N]
+        \\  brevis bench       <model.safetensors> [--plan search|fixed] [--prior p.bin] [--jobs N]
         \\  brevis demo
         \\  brevis make-fixture <out.safetensors>
         \\
@@ -145,6 +149,7 @@ const PlanJob = struct {
     tensor_indices: []const usize,
     plans: []?search.Plan,
     pr: *const prior.Prior,
+    mode: PlanMode,
     alloc: Allocator,
 
     fn run(self: *PlanJob) void {
@@ -159,7 +164,11 @@ const PlanJob = struct {
                 .bits_per_elem = view.dtype.bitWidth(),
                 .owns_data = false,
             };
-            self.plans[tensor_idx] = search.synthesizePlan(self.alloc, stream, view.dtype, self.pr, .{}) catch |err| {
+            const inner: usize = if (view.shape.len == 0) 1 else @intCast(view.shape[view.shape.len - 1]);
+            self.plans[tensor_idx] = switch (self.mode) {
+                .search => search.synthesizeTensorPlan(self.alloc, stream, view.dtype, inner, self.pr, .{}),
+                .fixed => search.fixedPlan(self.alloc, view.dtype),
+            } catch |err| {
                 std.debug.print("tensor {d} dtype {s}: {t}\n", .{ tensor_idx, @tagName(view.dtype), err });
                 _ = self.fails.fetchAdd(1, .acq_rel);
                 continue;
@@ -294,6 +303,7 @@ fn synthesizePlans(
     tensors: []const safetensors.Tensor,
     pr: *const prior.Prior,
     n_threads: usize,
+    mode: PlanMode,
 ) ![]?search.Plan {
     const plans = try alloc.alloc(?search.Plan, tensors.len);
     errdefer freePlans(alloc, plans);
@@ -312,6 +322,7 @@ fn synthesizePlans(
         .tensor_indices = tensor_indices.items,
         .plans = plans,
         .pr = pr,
+        .mode = mode,
         .alloc = alloc,
     };
     if (tensor_indices.items.len > 0) {
@@ -359,8 +370,9 @@ fn synthesizeBlocks(
     blocks: []const Block,
     pr: *const prior.Prior,
     n_threads: usize,
+    mode: PlanMode,
 ) ![]?search.Result {
-    const plans = try synthesizePlans(alloc, tensors, pr, n_threads);
+    const plans = try synthesizePlans(alloc, tensors, pr, n_threads, mode);
     defer freePlans(alloc, plans);
     return encodeBlocks(alloc, tensors, blocks, plans, n_threads, null);
 }
@@ -412,14 +424,21 @@ fn threadCount(opt: ?usize) usize {
     return opt orelse (std.Thread.getCpuCount() catch 8);
 }
 
-fn cmdCalibrate(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: []const u8, n_sample: usize) !void {
+fn cmdCalibrate(
+    io: std.Io,
+    out: *std.Io.Writer,
+    in_path: []const u8,
+    prior_path: []const u8,
+    n_sample: usize,
+    jobs: ?usize,
+) !void {
     const alloc = std.heap.smp_allocator;
 
     var loaded = try safetensors.loadFromPath(alloc, io, in_path);
     defer loaded.deinitMmap(alloc, io);
     try checkTensors(loaded.tensors);
 
-    const n_threads = threadCount(null);
+    const n_threads = threadCount(jobs);
     try out.print("calibrate: {d} tensors, sampling up to {d} on {d} threads\n", .{
         loaded.tensors.len, n_sample, n_threads,
     });
@@ -446,6 +465,7 @@ fn cmdCompress(
     out_path: []const u8,
     prior_path: ?[]const u8,
     jobs: ?usize,
+    mode: PlanMode,
 ) !void {
     const alloc = std.heap.smp_allocator;
 
@@ -453,20 +473,24 @@ fn cmdCompress(
     defer loaded.deinitMmap(alloc, io);
     try checkTensors(loaded.tensors);
 
-    var pr = try loadPrior(alloc, prior_path);
+    var pr = try loadPrior(alloc, if (mode == .search) prior_path else null);
     defer pr.deinit(alloc);
 
     const blocks = try planAll(alloc, loaded.tensors);
     defer alloc.free(blocks);
 
     const n_threads = threadCount(jobs);
-    try out.print("compress: {d} tensors, {d} blocks, {d} threads, prior={s}\n", .{
-        loaded.tensors.len, blocks.len, n_threads, prior_path orelse "uniform",
+    try out.print("compress: {d} tensors, {d} blocks, {d} threads, plan={s}, prior={s}\n", .{
+        loaded.tensors.len,
+        blocks.len,
+        n_threads,
+        @tagName(mode),
+        if (mode == .search) prior_path orelse "uniform" else "none",
     });
     try out.flush();
 
     const t0 = std.Io.Timestamp.now(io, .awake);
-    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads);
+    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads, mode);
     defer freePlans(alloc, plans);
     const metas = try tensorMetas(alloc, loaded.tensors, blocks);
     defer alloc.free(metas);
@@ -847,27 +871,38 @@ fn report(alloc: Allocator, out: *std.Io.Writer, blocks: []const Block, results:
     try out.print("\noverall: {d} -> {d} bytes ({d:.3}x)\n", .{ total_raw, total_comp, ratio(total_raw, total_comp) });
 }
 
-fn cmdBench(io: std.Io, out: *std.Io.Writer, in_path: []const u8, prior_path: ?[]const u8, jobs: ?usize) !void {
+fn cmdBench(
+    io: std.Io,
+    out: *std.Io.Writer,
+    in_path: []const u8,
+    prior_path: ?[]const u8,
+    jobs: ?usize,
+    mode: PlanMode,
+) !void {
     const alloc = std.heap.smp_allocator;
 
     var loaded = try safetensors.loadFromPath(alloc, io, in_path);
     defer loaded.deinitMmap(alloc, io);
     try checkTensors(loaded.tensors);
 
-    var pr = try loadPrior(alloc, prior_path);
+    var pr = try loadPrior(alloc, if (mode == .search) prior_path else null);
     defer pr.deinit(alloc);
 
     const blocks = try planAll(alloc, loaded.tensors);
     defer alloc.free(blocks);
 
     const n_threads = threadCount(jobs);
-    try out.print("=== brevis bench: {s} ({d} tensors, {d} blocks, {d} threads) ===\n", .{
-        in_path, loaded.tensors.len, blocks.len, n_threads,
+    try out.print("=== brevis bench: {s} ({d} tensors, {d} blocks, {d} threads, {s}) ===\n", .{
+        in_path,
+        loaded.tensors.len,
+        blocks.len,
+        n_threads,
+        if (mode == .fixed) "fixed" else if (prior_path == null) "uniform" else "phog",
     });
     try out.flush();
 
     const t0 = std.Io.Timestamp.now(io, .awake);
-    const results = try synthesizeBlocks(alloc, loaded.tensors, blocks, &pr, n_threads);
+    const results = try synthesizeBlocks(alloc, loaded.tensors, blocks, &pr, n_threads, mode);
     defer freeResults(alloc, results);
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
 
@@ -969,7 +1004,7 @@ fn cmdDemo(io: std.Io, out: *std.Io.Writer) !void {
     try out.flush();
 
     const t0 = std.Io.Timestamp.now(io, .awake);
-    const results = try synthesizeBlocks(alloc, tensors.items, blocks, &pr, threadCount(null));
+    const results = try synthesizeBlocks(alloc, tensors.items, blocks, &pr, threadCount(null), .search);
     defer freeResults(alloc, results);
     const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
 

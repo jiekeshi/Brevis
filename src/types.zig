@@ -169,7 +169,7 @@ pub const TensorView = struct {
 
 pub const TARGET_BLOCK_BYTES: usize = 256 * 1024;
 
-/// A contiguous element range of one tensor: the unit of program synthesis.
+/// A contiguous element range of one tensor: the unit of program execution.
 pub const Block = struct {
     tensor_idx: u32,
     elem_offset: usize,

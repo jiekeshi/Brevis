@@ -7,13 +7,14 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BREVIS = pathlib.Path(os.environ.get("BREVIS_BIN", ROOT / "zig-out" / "bin" / "brevis"))
+BREVIS = ROOT / "zig-out" / "bin" / "brevis"
 CACHE = pathlib.Path(os.environ.get("BREVIS_EVAL_CACHE", ROOT / "eval" / "cache"))
 RESULTS = ROOT / "eval" / "results.json"
 GENERIC_BASELINES = (
@@ -22,6 +23,7 @@ GENERIC_BASELINES = (
     ("xz", ["-9"], ["-d"], "xz"),
 )
 BASELINE_KEYS = ("gzip", "zstd", "xz", "openzl")
+RESULT_SCHEMA = 2
 
 
 class EvalError(RuntimeError):
@@ -43,11 +45,105 @@ def write_json(path, value):
     os.replace(tmp, path)
 
 
-def run_fingerprint():
+def sha256_path(path):
     digest = hashlib.sha256()
-    digest.update(BREVIS.read_bytes())
-    digest.update(pathlib.Path(__file__).read_bytes())
+    with pathlib.Path(path).open("rb") as source:
+        while chunk := source.read(8 << 20):
+            digest.update(chunk)
     return digest.hexdigest()
+
+
+def named_digest(records, field):
+    digest = hashlib.sha256()
+    for record in records:
+        digest.update(record["file"].encode())
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(record[field]))
+    return digest.hexdigest()
+
+
+def model_manifest_sha256(model):
+    manifest = {
+        "repo": model["repo"],
+        "revision": model["revision"],
+        "files": model_files(model),
+    }
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+
+
+def zig_constants(path, names):
+    source = pathlib.Path(path).read_text()
+    values = {}
+    for name in names:
+        match = re.search(rf"\bconst\s+{name}\s*:[^=]+\=\s*([^;]+);", source)
+        if match is None:
+            raise EvalError(f"missing Zig constant {name} in {path}")
+        literal = match.group(1).strip().replace("_", "")
+        terms = literal.split()
+        if len(terms) == 3:
+            left, op, right = terms
+            number = float if "." in left + right else lambda value: int(value, 0)
+            values[name] = number(left) * number(right) if op == "*" else number(left) / number(right)
+        else:
+            values[name] = int(literal, 0)
+    return values
+
+
+def search_config(calibration_tensors):
+    ops = zig_constants(ROOT / "src" / "ops.zig", (
+        "K_TRANSFORM_LAYERS", "MAX_ENTROPY_BPE", "MAX_NODES", "MAX_EXPANSIONS",
+        "MAX_REALIZATIONS", "SEARCH_SAMPLE_ELEMS", "PLAN_CANDIDATES", "PLAN_PROBE_BLOCKS",
+        "UNIFORM_SCORE",
+    ))
+    block = zig_constants(ROOT / "src" / "types.zig", ("TARGET_BLOCK_BYTES",))
+    phog = zig_constants(ROOT / "src" / "prior.zig", ("PHOG_WEIGHT",))
+    return {
+        "transform_layers": ops["K_TRANSFORM_LAYERS"],
+        "max_entropy_bpe": ops["MAX_ENTROPY_BPE"],
+        "max_nodes": ops["MAX_NODES"],
+        "max_expansions": ops["MAX_EXPANSIONS"],
+        "max_realizations": ops["MAX_REALIZATIONS"],
+        "sample_elems": ops["SEARCH_SAMPLE_ELEMS"],
+        "target_block_bytes": block["TARGET_BLOCK_BYTES"],
+        "rerank_candidates": ops["PLAN_CANDIDATES"],
+        "rerank_blocks": ops["PLAN_PROBE_BLOCKS"],
+        "uniform_score": ops["UNIFORM_SCORE"],
+        "phog_weight": phog["PHOG_WEIGHT"],
+        "calibration_tensors": calibration_tensors,
+    }
+
+
+def git_output(*args):
+    return subprocess.check_output(("git", "-C", ROOT, *args), text=True).strip()
+
+
+def provenance(jobs, calibration_tensors):
+    return {
+        "git_commit": git_output("rev-parse", "HEAD"),
+        "git_dirty": bool(git_output("status", "--porcelain")),
+        "binary_sha256": sha256_path(BREVIS),
+        "eval_sha256": sha256_path(__file__),
+        "threads": {
+            "calibration": jobs,
+            "compression": jobs,
+            "parallel_decompression": jobs,
+            "serial_decompression": 1,
+        },
+        "search": search_config(calibration_tensors),
+        "modes": {
+            "fixed": {"plan": "fixed", "prior": None},
+            "uniform": {"plan": "search", "prior": None},
+            "phog": {"plan": "search", "prior": "shard-local"},
+        },
+        "baselines": {**{
+            key: {"tool": tool, "compress_args": cargs, "decompress_args": dargs}
+            for tool, cargs, dargs, key in GENERIC_BASELINES
+        }, "openzl": {"tool": "zli", "compress_args": ["--profile", "serial"]}},
+    }
+
+
+def run_fingerprint(metadata):
+    return hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
 
 
 def fetch(repo, revision, fname, url=None):
@@ -150,30 +246,43 @@ def require_equal(source, restored, label):
         raise EvalError(f"{label}: restored bytes differ")
 
 
-def evaluate_shard(model, src, fname, index, work, run_baselines=True):
+def evaluate_shard(
+    model, src, fname, index, work, run_baselines=True, jobs=None, calibration_tensors=None,
+):
     prefix = f"{model['tag'].replace('/', '_')}.{index:05d}"
+    fixed_brv = work / f"{prefix}.fixed.brv"
     uniform_brv = work / f"{prefix}.uniform.brv"
     prior = work / f"{prefix}.prior"
     brv = work / f"{prefix}.brv"
     restored = work / f"{prefix}.rec.safetensors"
-    artifacts = (uniform_brv, prior, brv, restored)
+    artifacts = (fixed_brv, uniform_brv, prior, brv, restored)
     for path in artifacts:
         path.unlink(missing_ok=True)
 
     try:
         raw = src.stat().st_size
-        t_uniform = timed(BREVIS, "compress", src, uniform_brv)
+        input_sha256 = sha256_path(src)
+        job_args = () if jobs is None else ("--jobs", jobs)
+        tensor_args = () if calibration_tensors is None else ("--tensors", calibration_tensors)
+
+        t_fixed = timed(BREVIS, "compress", src, fixed_brv, "--plan", "fixed", *job_args)
+        sh(BREVIS, "verify", fixed_brv, src)
+        fixed_size = fixed_brv.stat().st_size
+        fixed_brv.unlink()
+
+        t_uniform = timed(BREVIS, "compress", src, uniform_brv, "--plan", "search", *job_args)
         sh(BREVIS, "verify", uniform_brv, src)
         uniform_size = uniform_brv.stat().st_size
         uniform_brv.unlink()
 
-        t_cal = timed(BREVIS, "calibrate", src, prior)
-        t_cmp = timed(BREVIS, "compress", src, brv, "--prior", prior)
+        t_cal = timed(BREVIS, "calibrate", src, prior, *tensor_args, *job_args)
+        prior_sha256 = sha256_path(prior)
+        t_cmp = timed(BREVIS, "compress", src, brv, "--plan", "search", "--prior", prior, *job_args)
         prior.unlink()
         sh(BREVIS, "verify", brv, src)
         brevis_size = brv.stat().st_size
 
-        t_dec = timed(BREVIS, "decompress", brv, restored)
+        t_dec = timed(BREVIS, "decompress", brv, restored, *job_args)
         require_equal(src, restored, f"{model['tag']}:{fname}:parallel")
         restored.unlink()
         t_dec_jobs1 = timed(BREVIS, "decompress", brv, restored, "--jobs", 1)
@@ -183,17 +292,22 @@ def evaluate_shard(model, src, fname, index, work, run_baselines=True):
 
         row = {
             "file": fname,
+            "input_sha256": input_sha256,
+            "prior_sha256": prior_sha256,
             "raw": raw,
-            "brevis": brevis_size,
+            "fixed": fixed_size,
+            "t_fixed_cmp": t_fixed,
+            "fixed_verified": True,
+            "phog": brevis_size,
             "uniform": uniform_size,
             "t_uniform_cmp": t_uniform,
             "uniform_verified": True,
             "t_cal": t_cal,
-            "t_cmp": t_cmp,
-            "t_dec_jobs1": t_dec_jobs1,
-            "t_dec": t_dec,
-            "bitexact_jobs1": True,
-            "bitexact": True,
+            "t_phog_cmp": t_cmp,
+            "t_phog_dec_jobs1": t_dec_jobs1,
+            "t_phog_dec": t_dec,
+            "phog_bitexact_jobs1": True,
+            "phog_bitexact": True,
         }
         if run_baselines:
             for tool, cargs, dargs, key in GENERIC_BASELINES:
@@ -221,18 +335,21 @@ def all_field(shards, field):
     return all(values) if all(value is not None for value in values) else None
 
 
-def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None, fingerprint=None):
+def evaluate_model(
+    model, work, previous=None, resumed=None, checkpoint=None, fingerprint=None,
+    jobs=None, calibration_tensors=None,
+):
     files = model_files(model)
     names = [name for name, _ in files]
+    manifest_sha256 = model_manifest_sha256(model)
     reuse = (
         previous is not None
-        and previous.get("repo") == model["repo"]
-        and previous.get("revision") == model["revision"]
-        and previous.get("files") == names
+        and previous.get("manifest_sha256") == manifest_sha256
     )
     old_shards = {shard["file"]: shard for shard in previous.get("shards", [])} if reuse else {}
-    resume_matches = resumed is not None and (resumed.get("repo"), resumed.get("revision")) == (
-        model["repo"], model["revision"])
+    resume_matches = resumed is not None and (
+        resumed.get("repo"), resumed.get("revision"), resumed.get("manifest_sha256")
+    ) == (model["repo"], model["revision"], manifest_sha256)
     if fingerprint is not None:
         resume_matches = resume_matches and resumed.get("fingerprint") == fingerprint
     if resume_matches:
@@ -248,7 +365,9 @@ def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None, fi
         print(f"  [{index}/{len(files)}] {fname}")
         src = fetch(model["repo"], model["revision"], fname, url)
         sh(sys.executable, ROOT / "eval" / "tensor_stats.py", src)
-        shard = evaluate_shard(model, src, fname, index, work, not reuse)
+        shard = evaluate_shard(
+            model, src, fname, index, work, not reuse, jobs, calibration_tensors,
+        )
         if fname in old_shards:
             for key in BASELINE_KEYS:
                 for field in baseline_fields(key):
@@ -262,17 +381,22 @@ def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None, fi
         "repo": model["repo"],
         "revision": model["revision"],
         "files": names,
+        "manifest_sha256": manifest_sha256,
+        "model_sha256": named_digest(shards, "input_sha256"),
         "raw": sum_field(shards, "raw"),
-        "brevis": sum_field(shards, "brevis"),
+        "fixed": sum_field(shards, "fixed"),
+        "t_fixed_cmp": sum_field(shards, "t_fixed_cmp"),
+        "fixed_verified": all_field(shards, "fixed_verified"),
+        "phog": sum_field(shards, "phog"),
         "uniform": sum_field(shards, "uniform"),
         "t_uniform_cmp": sum_field(shards, "t_uniform_cmp"),
         "uniform_verified": all_field(shards, "uniform_verified"),
         "t_cal": sum_field(shards, "t_cal"),
-        "t_cmp": sum_field(shards, "t_cmp"),
-        "t_dec_jobs1": sum_field(shards, "t_dec_jobs1"),
-        "t_dec": sum_field(shards, "t_dec"),
-        "bitexact_jobs1": all_field(shards, "bitexact_jobs1"),
-        "bitexact": all_field(shards, "bitexact"),
+        "t_phog_cmp": sum_field(shards, "t_phog_cmp"),
+        "t_phog_dec_jobs1": sum_field(shards, "t_phog_dec_jobs1"),
+        "t_phog_dec": sum_field(shards, "t_phog_dec"),
+        "phog_bitexact_jobs1": all_field(shards, "phog_bitexact_jobs1"),
+        "phog_bitexact": all_field(shards, "phog_bitexact"),
         "shards": shards,
     }
     for key in BASELINE_KEYS:
@@ -291,18 +415,18 @@ def evaluate_model(model, work, previous=None, resumed=None, checkpoint=None, fi
 
 
 def print_summary(rows):
-    print("\n" + "=" * 119)
-    print(f"{'model':12} {'shards':>6} {'raw':>14} {'brevis':>14} {'ratio':>7} {'uniform':>8} "
+    print("\n" + "=" * 128)
+    print(f"{'model':12} {'shards':>6} {'raw':>14} {'phog':>14} {'ratio':>7} {'fixed':>8} {'uniform':>8} "
           f"{'gzip-9':>7} {'zstd-19':>8} {'xz-9':>7} {'openzl':>7} {'cal s':>7} {'cmp s':>7} {'dec s':>7}")
-    print("=" * 119)
+    print("=" * 128)
     for row in rows:
         def ratio(key):
             return f"{row['raw'] / row[key]:.3f}" if row.get(key) else "-"
 
-        print(f"{row['tag']:12} {len(row['files']):>6} {row['raw']:>14,} {row['brevis']:>14,} "
-              f"{row['raw'] / row['brevis']:>7.3f} {ratio('uniform'):>8} {ratio('gzip'):>7} "
+        print(f"{row['tag']:12} {len(row['files']):>6} {row['raw']:>14,} {row['phog']:>14,} "
+              f"{row['raw'] / row['phog']:>7.3f} {ratio('fixed'):>8} {ratio('uniform'):>8} {ratio('gzip'):>7} "
               f"{ratio('zstd'):>8} {ratio('xz'):>7} {ratio('openzl'):>7} "
-              f"{row['t_cal']:>7.1f} {row['t_cmp']:>7.1f} {row['t_dec']:>7.1f}")
+              f"{row['t_cal']:>7.1f} {row['t_phog_cmp']:>7.1f} {row['t_phog_dec']:>7.1f}")
 
 
 def main(argv=None):
@@ -310,10 +434,14 @@ def main(argv=None):
     parser.add_argument("--models", type=pathlib.Path, default=ROOT / "eval" / "models.json")
     parser.add_argument("--results", type=pathlib.Path, default=RESULTS)
     parser.add_argument("--tag", action="append", help="run only this model tag; repeatable")
+    parser.add_argument("--jobs", type=int, default=max(1, os.cpu_count() or 1))
+    parser.add_argument("--tensors", type=int, default=200,
+                        help="maximum tensors used to train each input-local prior")
     args = parser.parse_args(argv)
+    sh("zig", "build", "-Doptimize=ReleaseFast", cwd=ROOT)
     if not BREVIS.exists():
         parser.error(f"build first: cd {ROOT} && zig build -Doptimize=ReleaseFast")
-    fingerprint = run_fingerprint()
+    run = provenance(args.jobs, args.tensors)
 
     models = json.loads(args.models.read_text())
     if args.tag:
@@ -326,17 +454,27 @@ def main(argv=None):
     work = CACHE / "work"
     work.mkdir(parents=True, exist_ok=True)
     previous = {}
-    if os.environ.get("BREVIS_REUSE_BASELINES") == "1" and args.results.exists():
-        previous = {row["tag"]: row for row in json.loads(args.results.read_text())}
+    reuse_baselines = os.environ.get("BREVIS_REUSE_BASELINES") == "1" and args.results.exists()
+    run["reuse_baselines"] = reuse_baselines
+    fingerprint = run_fingerprint(run)
+    if reuse_baselines:
+        previous_document = json.loads(args.results.read_text())
+        if isinstance(previous_document, dict) and previous_document.get("schema") == RESULT_SCHEMA:
+            previous = {row["tag"]: row for row in previous_document["models"]}
+            run["baseline_reuse"] = {"results_sha256": sha256_path(args.results)}
     checkpoint_path = pathlib.Path(f"{args.results}.checkpoint")
     checkpoints = json.loads(checkpoint_path.read_text()) if checkpoint_path.exists() else []
-    checkpoints = {(row["repo"], row["revision"], row.get("fingerprint")): row for row in checkpoints}
+    checkpoints = {
+        (row["repo"], row["revision"], row.get("manifest_sha256"), row.get("fingerprint")): row
+        for row in checkpoints
+    }
 
     rows = []
     for model in models:
         print(f"\n=== {model['tag']}: {model['repo']} — {model['note']}")
-        identity = model["repo"], model["revision"]
-        for stale in [key for key in checkpoints if key[:2] == identity and key[2] != fingerprint]:
+        manifest_sha256 = model_manifest_sha256(model)
+        identity = model["repo"], model["revision"], manifest_sha256
+        for stale in [key for key in checkpoints if key[:3] == identity and key[3] != fingerprint]:
             del checkpoints[stale]
         key = (*identity, fingerprint)
 
@@ -344,20 +482,23 @@ def main(argv=None):
             checkpoints[key] = {
                 "repo": model["repo"],
                 "revision": model["revision"],
+                "manifest_sha256": manifest_sha256,
                 "fingerprint": fingerprint,
                 "shards": shards,
             }
             write_json(checkpoint_path, list(checkpoints.values()))
 
         row = evaluate_model(
-            model, work, previous.get(model["tag"]), checkpoints.get(key), save_checkpoint, fingerprint
+            model, work, previous.get(model["tag"]), checkpoints.get(key), save_checkpoint, fingerprint,
+            args.jobs, args.tensors,
         )
         rows.append(row)
-        write_json(args.results, rows)
-        print(f"  model total: {row['brevis']:,} bytes ({row['raw'] / row['brevis']:.3f}x), bit-exact")
+        write_json(args.results, {"schema": RESULT_SCHEMA, "provenance": run, "models": rows})
+        print(f"  model total: {row['phog']:,} bytes ({row['raw'] / row['phog']:.3f}x), bit-exact")
 
     for model in models:
-        checkpoints.pop((model["repo"], model["revision"], fingerprint), None)
+        manifest_sha256 = model_manifest_sha256(model)
+        checkpoints.pop((model["repo"], model["revision"], manifest_sha256, fingerprint), None)
     if checkpoints:
         write_json(checkpoint_path, list(checkpoints.values()))
     else:

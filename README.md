@@ -13,11 +13,14 @@ Brevis uses Zig 0.16.
 ```bash
 zig build -Doptimize=ReleaseFast
 
-# Optional: calibrate a grammar prior from the current model
+# Optional: calibrate a grammar prior from the current input
 ./zig-out/bin/brevis calibrate model.safetensors prior.bin
 
-# Compress with the prior; omit --prior to use uniform search
-./zig-out/bin/brevis compress model.safetensors model.brv --prior prior.bin
+# Search with the learned prior; omit --prior for uniform A*
+./zig-out/bin/brevis compress model.safetensors model.brv --plan search --prior prior.bin
+
+# Fixed typed-DSL program baseline (no search)
+./zig-out/bin/brevis compress model.safetensors fixed.brv --plan fixed
 ./zig-out/bin/brevis decompress model.brv restored.safetensors
 ./zig-out/bin/brevis verify model.brv model.safetensors
 
@@ -36,7 +39,8 @@ python3 -m unittest discover -s eval -p 'test_*.py'
 ```text
 safetensors
   → memory-map the input and plan blocks per tensor
-  → search for a reversible program template on tensor samples
+  → search for reversible program candidates on tensor samples
+  → rerank candidates on representative full blocks and select one per tensor
   → fit small per-block parameters and execute the program
   → encode terminal streams with raw / bitpack / Huffman / rANS
   → stream output to .brv
@@ -65,15 +69,19 @@ Operator applicability depends on input bit width, dtype, tree depth, and arity.
 Brevis uses a probabilistic higher-order grammar (PHOG) to order the search. It maintains two independent costs:
 
 - `p` is the grammar description length. It only determines which partial program A* expands first.
-- `g_bytes + lowerBound` is a lower bound on serialized bytes. It enables safe pruning; complete programs are compared by their actual archive size.
+- `g_bytes + lowerBound` is a lower bound on serialized bytes for the stream being searched.
 
 PHOG does not change the compression objective. It only changes candidate order within a bounded search budget. Without a prior, Brevis uses a uniform distribution so the prior's contribution can be measured directly.
+
+Single-stream search can prune with the serialized-byte bound; tensor planning instead collects candidates in grammar order under the 256-expansion budget without sample-incumbent byte pruning, because it ultimately compares them on representative full blocks.
+
+Evaluation separates three modes: `fixed` executes a dtype-specific program expressed in the same DSL, `uniform` runs A* without a learned prior, and `phog` runs the same A* search with an input-local prior. Comparing them isolates the value of the reversible language, adaptive search, and grammar guidance.
 
 Empirical entropy is not a valid lower bound at shallow holes where transforms remain available, because a reversible transform may reduce it sharply.
 
 At those holes, the bound includes only required terminal-frame costs. A Shannon payload bound is added only after the maximum transform depth is reached.
 
-### Model-Local Calibration
+### Input-Local Calibration
 
 Calibration requires no external corpus. It stratifies samples by dtype and tensor size, searches four contiguous windows per tensor, then reranks the top eight candidates on four representative blocks using actual encoded bytes.
 
@@ -91,7 +99,13 @@ Single-threaded decoding runs directly on the calling thread. Multithreaded mode
 
 Output order and per-tensor lengths are checked before and after writing.
 
-## Full 8B Benchmark
+## Evaluation
+
+[`eval/run_eval.py`](eval/run_eval.py) evaluates fixed, uniform, and PHOG-guided plans together with gzip, Zstandard, xz, and OpenZL. New result files record the Git commit and dirty state, binary and evaluation-script hashes, each input hash and their ordered aggregate, the configured model manifest, per-shard prior hashes, thread counts, search settings, and the command mode behind every result field.
+
+The evaluator rebuilds the ReleaseFast binary so recorded source settings match the executable.
+
+### Recorded 8B Run
 
 The five bfloat16 shards of Qwen3-8B-Base total 16,381,516,776 bytes. Full results on a 12-core Apple M4 Pro are:
 
@@ -103,9 +117,9 @@ The five bfloat16 shards of Qwen3-8B-Base total 16,381,516,776 bytes. Full resul
 
 Bit-exact decompression takes 6.49 seconds with 12 threads and 40.41 seconds with one thread.
 
-PHOG saves 477,293 bytes over uniform search on this model. The gain is small but stable: its main role is to reach the same high-quality programs faster, not to replace the measured archive-size objective.
+In this run, PHOG produced an archive 477,293 bytes smaller than uniform search. This single workload does not establish a stable compression or search-time improvement; the effect of grammar guidance is workload-dependent and must be evaluated against both uniform search and the fixed-program baseline.
 
-Per-shard results and gzip, zstd, xz, and OpenZL baselines are in [`eval/results-large.json`](eval/results-large.json). The evaluation entry point is [`eval/run_eval.py`](eval/run_eval.py).
+Per-shard results are in [`eval/results-large.json`](eval/results-large.json). This historical snapshot predates the provenance schema used by new runs and should not be combined with newly generated measurements without rerunning it.
 
 ## Source Layout
 
@@ -115,7 +129,7 @@ src/ops.zig          reversible language operators
 src/program.zig      program execution, inversion, and serialization
 src/search.zig       PHOG-guided A* and byte lower bounds
 src/prior.zig        contexts and three-level backoff prior
-src/calibrate.zig    model-local sampling, reranking, and prior fitting
+src/calibrate.zig    input-local sampling and prior fitting
 src/codec.zig        bitpack, Huffman, and rANS codecs
 src/archive.zig      streaming .brv format and compatible reader
 src/safetensors.zig  memory-mapped safetensors I/O
@@ -127,7 +141,7 @@ eval/                end-to-end multishard evaluation
 
 Tests cover randomized round trips for every operator, program and archive round trips, uniform equivalence, search pruning, FP8 and u32 data types, malformed Huffman and rANS streams, legacy references, and serial and parallel decoding.
 
-Large evaluations perform complete byte comparisons for uniform and PHOG search, `--jobs 1`, default parallel decoding, and every baseline.
+Large evaluations perform complete byte comparisons for fixed, uniform, and PHOG-guided plans, `--jobs 1`, configured parallel decoding, and every baseline.
 
 ## License
 

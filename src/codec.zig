@@ -257,8 +257,7 @@ pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
     return .{ .pairs = pairs };
 }
 
-/// Build a length-limited Huffman tree (max 32 bits) from a stream.
-/// Returns the canonical table.
+/// Build a canonical Huffman table accepted by the decoder.
 pub fn huffmanBuild(alloc: Allocator, stream: Stream) !HuffmanTable {
     var hist = try buildHistogram(alloc, stream);
     defer hist.deinit(alloc);
@@ -279,9 +278,7 @@ pub fn huffmanFromHist(alloc: Allocator, hist: Histogram, bits_per_elem: u8) !Hu
         return .{ .entries = e };
     }
 
-    // Step 2: standard package-merge would be ideal for length-limiting,
-    // but plain Huffman with 32-bit codes is enough for our alphabet sizes.
-    // We build a heap of nodes and merge.
+    // Build the ordinary optimal tree; overlong codes are rejected below.
     const Node = struct { freq: u64, left: ?*@This(), right: ?*@This(), sym: u32, is_leaf: bool };
     var arena: std.heap.ArenaAllocator = .init(alloc);
     defer arena.deinit();
@@ -348,6 +345,7 @@ pub fn huffmanFromHist(alloc: Allocator, hist: Histogram, bits_per_elem: u8) !Hu
 }
 
 fn walkLengths(node: anytype, depth: u8, lengths: *std.AutoHashMap(u32, u8)) !void {
+    if (depth > 32) return error.HuffmanCodeTooLong;
     if (node.is_leaf) {
         try lengths.put(node.sym, if (depth == 0) 1 else depth);
         return;

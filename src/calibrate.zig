@@ -10,8 +10,6 @@ const Allocator = std.mem.Allocator;
 const Stream = types.Stream;
 const Dtype = types.Dtype;
 const ROOT_PARENT: u8 = 255;
-const TOP_CANDIDATES: usize = 8;
-const PROBE_BLOCKS: usize = 4;
 pub const DEFAULT_TENSORS: usize = 200;
 
 pub const Options = struct {
@@ -111,20 +109,6 @@ const Job = struct {
         }
     }
 
-    fn candidateCost(self: *Job, tensor: safetensors.Tensor, blocks: []const types.Block, candidate: search.Result) !u64 {
-        const n = @min(PROBE_BLOCKS, blocks.len);
-        const plan: search.Plan = .{ .root = candidate.node, .expanded = candidate.expanded };
-        var total: u64 = 0;
-        for (0..n) |probe| {
-            const index = if (n == 1) 0 else probe * (blocks.len - 1) / (n - 1);
-            const stream = blocks[index].asStream(tensor.view.data);
-            var encoded = try search.encode(self.alloc, &plan, stream, tensor.view.dtype);
-            defer encoded.deinit(self.alloc);
-            total += encoded.bytes;
-        }
-        return total;
-    }
-
     fn trainOne(self: *Job, slot: usize, tensor: safetensors.Tensor) !void {
         const view = tensor.view;
         const full: Stream = .{
@@ -133,30 +117,12 @@ const Job = struct {
             .bits_per_elem = view.dtype.bitWidth(),
             .owns_data = false,
         };
+        const inner: usize = if (view.shape.len == 0) 1 else @intCast(view.shape[view.shape.len - 1]);
+        var plan = try search.synthesizeTensorPlan(self.alloc, full, view.dtype, inner, &prior.Prior.empty, .{});
+        defer plan.deinit(self.alloc);
         var sample = try search.planningSample(self.alloc, full, ops.SEARCH_SAMPLE_ELEMS);
         defer sample.deinit(self.alloc);
-        const candidates = try search.synthesizeAll(self.alloc, sample, view.dtype, .{
-            .enumerate_all = true,
-            .sample_elems = 0,
-        });
-        defer {
-            for (candidates) |*candidate| candidate.deinit(self.alloc);
-            self.alloc.free(candidates);
-        }
-
-        const inner: usize = if (view.shape.len == 0) 1 else @intCast(view.shape[view.shape.len - 1]);
-        const blocks = try types.planBlocks(self.alloc, 0, view.dtype, view.numel(), inner);
-        defer self.alloc.free(blocks);
-        var best_index: usize = 0;
-        var best_cost = try self.candidateCost(tensor, blocks, candidates[0]);
-        for (candidates[1..@min(TOP_CANDIDATES, candidates.len)], 1..) |candidate, i| {
-            const cost = try self.candidateCost(tensor, blocks, candidate);
-            if (cost < best_cost) {
-                best_cost = cost;
-                best_index = i;
-            }
-        }
-        try accumulate(self.alloc, &self.counts[slot], candidates[best_index].node, sample, tensor.view.dtype, 0, 0, ROOT_PARENT, 1);
+        try accumulate(self.alloc, &self.counts[slot], plan.root, sample, tensor.view.dtype, 0, 0, ROOT_PARENT, 1);
     }
 };
 

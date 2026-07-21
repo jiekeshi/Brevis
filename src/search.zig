@@ -18,6 +18,7 @@ const OpKind = ops.OpKind;
 const NODE_HDR: usize = 7;
 /// Every hole must end in a terminal header, side record, and payload length.
 const MIN_HOLE_BYTES: u64 = NODE_HDR + 9 + 8;
+const FRAME_PREFIX_BYTES: u64 = 12;
 const ROOT_PARENT: u8 = 255;
 const MAX_ARITY: usize = 32;
 const MAX_PRODUCTIONS: usize = 32;
@@ -29,8 +30,8 @@ pub const Options = struct {
     max_realizations: usize = ops.MAX_REALIZATIONS,
     max_nodes: usize = ops.MAX_NODES,
     max_depth: u8 = ops.K_TRANSFORM_LAYERS,
-    /// Search on at most this many elements, then realize the winner on the
-    /// full block. Every candidate costs O(sample), not O(block). 0 disables.
+    /// Bound the stream used by A*. Tensor planning realizes only the shortlist
+    /// on full blocks. Zero searches the complete input.
     sample_elems: usize = ops.SEARCH_SAMPLE_ELEMS,
 };
 
@@ -55,6 +56,24 @@ pub const Plan = struct {
         self.root.deinit(alloc);
     }
 };
+
+pub fn fixedPlan(alloc: Allocator, dtype: Dtype) !Plan {
+    const bits = dtype.bitWidth();
+    const fields = dtype.floatFields();
+    const start = if (fields) |f| f.mant else bits / 2;
+    const width = if (fields) |f| f.exp else bits - start;
+    const children = try alloc.alloc(Node, 2);
+    children[0] = .{ .op = .rans };
+    children[1] = .{ .op = .bitpack };
+    return .{
+        .root = .{
+            .op = .split_field,
+            .params = @as(u32, start) | (@as(u32, width) << 8),
+            .children = children,
+        },
+        .expanded = 0,
+    };
+}
 
 // ==================== partial programs ====================
 
@@ -167,7 +186,10 @@ fn terminalCost(alloc: Allocator, prod: OpKind, params: u32, s: Stream, hist: co
             side = 9;
         },
         .huffman => {
-            var t = try codec.huffmanFromHist(alloc, hist, s.bits_per_elem);
+            var t = codec.huffmanFromHist(alloc, hist, s.bits_per_elem) catch |e| switch (e) {
+                error.HuffmanCodeTooLong => return null,
+                else => return e,
+            };
             defer t.deinit(alloc);
             payload = codec.huffmanPayloadBytes(t, hist);
             side = 13 + 5 * t.entries.len;
@@ -389,7 +411,7 @@ fn encodeTemplate(alloc: Allocator, template: Node, in: Stream, dtype: Dtype) !R
 
 pub fn encode(alloc: Allocator, plan: *const Plan, in: Stream, dtype: Dtype) !Result {
     var result = encodeTemplate(alloc, plan.root, in, dtype) catch |err| switch (err) {
-        error.AlphabetTooLarge, error.SymbolNotInTable => return encodeTemplate(alloc, .{ .op = .raw }, in, dtype),
+        error.AlphabetTooLarge, error.HuffmanCodeTooLong, error.SymbolNotInTable => return encodeTemplate(alloc, .{ .op = .raw }, in, dtype),
         else => return err,
     };
     if (plan.root.op == .raw or result.bytes < in.data.len + 24) return result;
@@ -460,6 +482,70 @@ pub fn synthesizePlan(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const pri
     return .{ .root = picked.node, .expanded = picked.expanded };
 }
 
+fn candidateCost(
+    alloc: Allocator,
+    candidate: Result,
+    full: Stream,
+    blocks: []const types.Block,
+    dtype: Dtype,
+) !u64 {
+    const plan: Plan = .{ .root = candidate.node, .expanded = candidate.expanded };
+    const n = @min(ops.PLAN_PROBE_BLOCKS, blocks.len);
+    var total: u64 = 0;
+    for (0..n) |probe| {
+        const index = if (n == 1) 0 else probe * (blocks.len - 1) / (n - 1);
+        var encoded = try encode(alloc, &plan, blocks[index].asStream(full.data), dtype);
+        defer encoded.deinit(alloc);
+        total += encoded.bytes + FRAME_PREFIX_BYTES;
+    }
+    return total;
+}
+
+pub fn synthesizeTensorPlan(
+    alloc: Allocator,
+    full: Stream,
+    dtype: Dtype,
+    inner: usize,
+    pr: *const prior.Prior,
+    opts: Options,
+) !Plan {
+    var sample: ?Stream = null;
+    defer if (sample) |*stream| stream.deinit(alloc);
+    if (opts.sample_elems > 0 and full.count > opts.sample_elems)
+        sample = try planningSample(alloc, full, opts.sample_elems);
+
+    var candidate_opts = opts;
+    // A sample-byte incumbent cannot safely prune a real-block objective.
+    candidate_opts.enumerate_all = true;
+    candidate_opts.sample_elems = 0;
+    const candidates = try synthesizeCandidates(alloc, sample orelse full, dtype, pr, candidate_opts);
+    errdefer {
+        for (candidates) |*candidate| candidate.deinit(alloc);
+        alloc.free(candidates);
+    }
+
+    const blocks = try types.planBlocks(alloc, 0, dtype, full.count, inner);
+    defer alloc.free(blocks);
+    var best: usize = 0;
+    var best_cost = try candidateCost(alloc, candidates[0], full, blocks, dtype);
+    for (candidates[1..@min(ops.PLAN_CANDIDATES, candidates.len)], 1..) |candidate, i| {
+        const cost = try candidateCost(alloc, candidate, full, blocks, dtype);
+        if (cost < best_cost) {
+            best = i;
+            best_cost = cost;
+        }
+    }
+
+    for (candidates, 0..) |*candidate, i| {
+        if (i != best) candidate.deinit(alloc);
+    }
+    var picked = candidates[best];
+    alloc.free(candidates);
+    dropRuntime(alloc, &picked.node);
+    alloc.free(picked.payload);
+    return .{ .root = picked.node, .expanded = picked.expanded };
+}
+
 pub fn synthesize(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const prior.Prior, opts: Options) !Result {
     var plan = try synthesizePlan(alloc, in, dtype, pr, opts);
     defer plan.deinit(alloc);
@@ -499,12 +585,22 @@ pub fn synthesizeAll(alloc: Allocator, in: Stream, dtype: Dtype, opts: Options) 
     var untrained: prior.Prior = .empty;
     defer untrained.deinit(alloc);
 
+    return synthesizeCandidates(alloc, in, dtype, &untrained, opts);
+}
+
+fn synthesizeCandidates(
+    alloc: Allocator,
+    in: Stream,
+    dtype: Dtype,
+    pr: *const prior.Prior,
+    opts: Options,
+) ![]Result {
     var all: std.ArrayList(Result) = .empty;
     errdefer {
         for (all.items) |*r| r.deinit(alloc);
         all.deinit(alloc);
     }
-    var best = try run(alloc, in, dtype, &untrained, opts, &all);
+    var best = try run(alloc, in, dtype, pr, opts, &all);
     var best_in_all = false;
     errdefer if (!best_in_all) best.deinit(alloc);
     try all.append(alloc, best);

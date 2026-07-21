@@ -17,6 +17,8 @@ pub const MAX_NODES: usize = 12;
 pub const MAX_EXPANSIONS: usize = 256;
 pub const MAX_REALIZATIONS: usize = 32;
 pub const SEARCH_SAMPLE_ELEMS: usize = 4096;
+pub const PLAN_CANDIDATES: usize = 8;
+pub const PLAN_PROBE_BLOCKS: usize = 4;
 pub const UNIFORM_SCORE: u32 = 1024 * 8;
 
 pub const OpKind = enum(u8) {

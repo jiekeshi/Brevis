@@ -260,6 +260,21 @@ test "codec: huffman long codes use canonical fallback" {
     );
 }
 
+test "codec: huffman builder rejects codes the decoder cannot read" {
+    const a = std.testing.allocator;
+    var pairs: [34]codec.Histogram.Pair = undefined;
+    var lo: u64 = 1;
+    var hi: u64 = 1;
+    for (&pairs, 0..) |*pair, sym| {
+        pair.* = .{ .sym = @intCast(sym), .count = lo };
+        const next = lo + hi;
+        lo = hi;
+        hi = next;
+    }
+    const hist: codec.Histogram = .{ .pairs = &pairs };
+    try std.testing.expectError(error.HuffmanCodeTooLong, codec.huffmanFromHist(a, hist, 8));
+}
+
 test "codec: huffman rejects malformed tables and truncated payloads" {
     const a = std.testing.allocator;
 
@@ -836,6 +851,75 @@ test "search: sampled synthesis is bit-exact on the full stream" {
     var other_decoded = try program.decode(a, other_result.node);
     defer other_decoded.deinit(a);
     try expectStreamsEqual(other, other_decoded);
+}
+
+test "search: tensor planning reranks candidates on real blocks" {
+    const a = std.testing.allocator;
+    var in = try Stream.init(a, 300_000, 8);
+    defer in.deinit(a);
+
+    const sample_len = ops.SEARCH_SAMPLE_ELEMS / 4;
+    const skipped = in.count - ops.SEARCH_SAMPLE_ELEMS;
+    var written: usize = 0;
+    for (0..4) |window| {
+        const start = written + window * skipped / 3;
+        for (0..sample_len) |i| in.setU32(start + i, @intCast(i & 15));
+        written += sample_len;
+    }
+
+    var uniform: prior.Prior = .empty;
+    defer uniform.deinit(a);
+    const opts: search.Options = .{ .max_nodes = 1, .max_depth = 0, .max_expansions = 16 };
+    var sampled = try search.synthesizePlan(a, in, .u8, &uniform, opts);
+    defer sampled.deinit(a);
+    var planned = try search.synthesizeTensorPlan(a, in, .u8, 1, &uniform, opts);
+    defer planned.deinit(a);
+    try expectEqual(OpKind.bitpack, sampled.root.op);
+    try expect(planned.root.op != sampled.root.op);
+
+    const blocks = try types.planBlocks(a, 0, .u8, in.count, 1);
+    defer a.free(blocks);
+    var sampled_bytes: usize = 0;
+    var planned_bytes: usize = 0;
+    for (blocks) |block| {
+        const stream = block.asStream(in.data);
+        var old = try search.encode(a, &sampled, stream, .u8);
+        defer old.deinit(a);
+        var new = try search.encode(a, &planned, stream, .u8);
+        defer new.deinit(a);
+        sampled_bytes += old.bytes;
+        planned_bytes += new.bytes;
+
+        var decoded = try program.decode(a, new.node);
+        defer decoded.deinit(a);
+        try expectStreamsEqual(stream, decoded);
+    }
+    try expect(planned_bytes < sampled_bytes);
+}
+
+test "search: fixed baseline is a typed reversible DSL program" {
+    const a = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0xF17ED);
+    const rng = prng.random();
+
+    for (std.enums.values(Dtype)) |dtype| {
+        var in = try makeBlock(a, rng, dtype, 512, 0);
+        defer in.deinit(a);
+        var plan = try search.fixedPlan(a, dtype);
+        defer plan.deinit(a);
+
+        try expectEqual(OpKind.split_field, plan.root.op);
+        try expectEqual(@as(usize, 2), plan.root.children.len);
+        try expectEqual(OpKind.rans, plan.root.children[0].op);
+        try expectEqual(OpKind.bitpack, plan.root.children[1].op);
+        try expectEqual(@as(usize, 0), plan.expanded);
+
+        var encoded = try search.encode(a, &plan, in, dtype);
+        defer encoded.deinit(a);
+        var decoded = try program.decode(a, encoded.node);
+        defer decoded.deinit(a);
+        try expectStreamsEqual(in, decoded);
+    }
 }
 
 test "search: representative sampling covers arbitrary sizes" {
