@@ -173,11 +173,11 @@ def evaluate_shard(model, src, fname, index, work, run_baselines=True):
         sh(BREVIS, "verify", brv, src)
         brevis_size = brv.stat().st_size
 
-        t_dec_jobs1 = timed(BREVIS, "decompress", brv, restored, "--jobs", 1)
-        require_equal(src, restored, f"{model['tag']}:{fname}:jobs=1")
-        restored.unlink()
         t_dec = timed(BREVIS, "decompress", brv, restored)
         require_equal(src, restored, f"{model['tag']}:{fname}:parallel")
+        restored.unlink()
+        t_dec_jobs1 = timed(BREVIS, "decompress", brv, restored, "--jobs", 1)
+        require_equal(src, restored, f"{model['tag']}:{fname}:jobs=1")
         restored.unlink()
         brv.unlink()
 
