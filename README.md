@@ -8,6 +8,53 @@ An archive contains the program, leaf data, and required metadata. Decompression
 
 Brevis uses Zig 0.16.
 
+## Cluster Setup (Alliance / Nibi)
+
+`source setup_env.sh` prepares everything. It loads the modules, puts Zig on
+`PATH`, and creates a node-local virtual environment on first use.
+
+| Component | Source |
+| --- | --- |
+| `StdEnv/2023`, `python/3.12` | Lmod |
+| gzip, bzip2, xz, Zstandard, LZ4, Brotli | already in the `gentoo/2023` base environment; no module needed |
+| Zig 0.16.0 | no Lmod module exists — install once (below) |
+| numpy | `requirements.txt`; needed only by `eval/tensor_stats.py` |
+
+Install the Zig toolchain once. `setup_env.sh` looks for `$ZIG_ROOT`, then
+`.toolchain/zig-0.16.0` in the repository, then `~/software/zig-0.16.0`:
+
+```bash
+mkdir -p ~/software && cd ~/software     # or: mkdir -p .toolchain && cd .toolchain
+curl -LO https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+tar xf zig-x86_64-linux-0.16.0.tar.xz && mv zig-x86_64-linux-0.16.0 zig-0.16.0
+```
+
+The toolchain is 19.5 K files and 347 MB. Keep it out of `/project`, whose
+inode quota is the tight one.
+
+Build and evaluate on a compute node, not a login node:
+
+```bash
+salloc --account=def-zhouyang --time=2:00:00 --cpus-per-task=16 --mem=64G
+source setup_env.sh && zig build -Doptimize=ReleaseFast
+```
+
+Two environment details matter and are handled by `setup_env.sh`:
+
+- **Do not export `OMP_NUM_THREADS`, `XZ_OPT`, `ZSTD_NBTHREADS`, or the other
+  names in `benchmarking.py`'s `CODEC_ENVIRONMENT_VARIABLES`.** Formal campaign
+  execution requires them to be truly unset and aborts otherwise. Use `--jobs`.
+- Some Alliance sessions export `PIP_PREFIX`, which silently redirects `pip
+  install` out of the active virtual environment while still reporting success.
+  `setup_env.sh` clears it along with `PYTHONPATH`.
+
+The build cache and virtual environment go to `$SLURM_TMPDIR`. The parallel
+filesystem is slow on many small files: a cold ReleaseFast build takes about
+four minutes of wall time for well under one minute of CPU.
+
+[`doc/cluster-pitfalls.md`](doc/cluster-pitfalls.md) records these traps in full,
+plus one known environment-sensitive test failure.
+
 ## Quick Start
 
 ```bash
@@ -44,6 +91,16 @@ zig build -Doptimize=ReleaseFast
 ```bash
 zig build test -Doptimize=ReleaseFast
 python3 -m unittest discover -s eval -p 'test_*.py'
+```
+
+To run a single test, note two invocation constraints. `build.zig` does not
+forward `b.args` to the test runner, so `zig build test -- …` cannot filter; and
+the `eval/` modules import each other by bare name, so a single Python test must
+run from inside `eval/`.
+
+```bash
+zig test src/tests.zig --test-filter "codec: huffman and rans roundtrip"
+cd eval && python3 -m unittest test_campaign_runner -k stage_gate
 ```
 
 ## Pipeline
@@ -223,7 +280,20 @@ src/archive.zig      streaming .brv format and compatible reader
 src/safetensors.zig  memory-mapped safetensors I/O
 src/main.zig         CLI, batching, and parallel pipeline
 eval/                end-to-end multishard evaluation
+doc/                 engineering principles and cluster notes
+tools/model_cache.py fetch / verify / drop evaluation checkpoints one at a time
+setup_env.sh         cluster modules, Zig toolchain, virtual environment
+requirements.txt     Python dependencies (numpy, for eval/tensor_stats.py only)
 ```
+
+[`doc/engineering-principles.md`](doc/engineering-principles.md) states the
+design principles code in this repository is expected to follow.
+[`doc/cluster-pitfalls.md`](doc/cluster-pitfalls.md) documents the environment
+traps behind `setup_env.sh`.
+[`doc/checkpoint_acquisition.md`](doc/checkpoint_acquisition.md) covers where the
+evaluation inputs come from, how to verify them, and the storage gate that
+applies before downloading. `CLAUDE.md` is guidance for AI coding agents: the
+search and archive invariants that are silent to break, and the evaluation gates.
 
 ## Correctness
 
