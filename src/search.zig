@@ -7,6 +7,7 @@ const ops = @import("ops.zig");
 const codec = @import("codec.zig");
 const program = @import("program.zig");
 const prior = @import("prior.zig");
+const macro = @import("macro.zig");
 
 const Allocator = std.mem.Allocator;
 const Stream = types.Stream;
@@ -41,6 +42,10 @@ pub const Options = struct {
     /// Bit mask over OpKind values. Raw remains an implicit fallback even for
     /// direct API callers that clear its bit.
     enabled_ops: u64 = ops.ALL_OPS_MASK,
+    /// Learned subtrees offered as single productions. They add no expressive
+    /// power — every body is checked against `legalProductions` node by node —
+    /// so they change only how many expansions a program costs to reach.
+    macros: []const macro.Macro = &.{},
 };
 
 pub const Result = struct {
@@ -48,6 +53,9 @@ pub const Result = struct {
     payload: []u8,
     bytes: usize,
     expanded: usize,
+    /// Bit i is set when macro i contributed a subtree. Reporting this is what
+    /// distinguishes "the macro was offered" from "the macro was chosen".
+    macros_used: u64 = 0,
 
     pub fn deinit(self: *Result, alloc: Allocator) void {
         self.node.deinit(alloc);
@@ -59,6 +67,7 @@ pub const Result = struct {
 pub const Plan = struct {
     root: Node,
     expanded: usize,
+    macros_used: u64 = 0,
     candidates_realized: usize = 0,
     candidates_reranked: usize = 0,
     probe_blocks_used: usize = 0,
@@ -141,6 +150,7 @@ const PNode = union(enum) {
 
 const Partial = struct {
     root: PNode,
+    macros: u64,
     p: u64,
     f: u64,
     g_bytes: usize,
@@ -296,10 +306,11 @@ fn completionScoreLowerBound(
     dtype: Dtype,
     is_root: bool,
     enabled_ops: u64,
+    n_macros: usize,
 ) u32 {
     var storage: [MAX_PRODUCTIONS]OpKind = undefined;
     const productions = legalProductions(bpe, depth, max_depth, dtype, is_root, enabled_ops, &storage);
-    return pr.scoreLowerBound(productions.len);
+    return pr.scoreLowerBound(productions.len + n_macros);
 }
 
 const Feat = struct { mode: u32, max_bits: u8 };
@@ -447,6 +458,7 @@ pub fn encode(alloc: Allocator, plan: *const Plan, in: Stream, dtype: Dtype) !Re
         error.AlphabetTooLarge, error.HuffmanCodeTooLong, error.SymbolNotInTable => return encodeTemplate(alloc, .{ .op = .raw }, in, dtype),
         else => return err,
     };
+    result.macros_used = plan.macros_used;
     if (plan.root.op == .raw or result.bytes < in.data.len + 24) return result;
     result.deinit(alloc);
     return encodeTemplate(alloc, .{ .op = .raw }, in, dtype);
@@ -501,6 +513,145 @@ fn streamAt(alloc: Allocator, root: PNode, in: Stream, path: []const u8) !Stream
     return cur;
 }
 
+// ==================== macro instantiation ====================
+
+/// What grafting one macro body into a hole costs the partial program.
+const MacroFit = struct {
+    /// Serialized bytes the body's own nodes contribute, terminals included.
+    add: usize,
+    /// Summed byte lower bound over the holes the body leaves open.
+    lb_bits: u64 = 0,
+    /// Summed completion score over those same holes.
+    score_lb: u64 = 0,
+    n_holes: usize = 0,
+};
+
+/// True when `op` is a production the primitive grammar would also offer here.
+/// Checking every body node against `legalProductions` is what keeps a macro
+/// from reaching a program the primitive grammar cannot express — the width
+/// guards, the depth budget, and any `--disable-op` all still apply.
+fn bodyOpIsLegal(
+    op: OpKind,
+    bpe: u8,
+    depth: u8,
+    max_depth: u8,
+    dtype: Dtype,
+    is_root: bool,
+    enabled_ops: u64,
+) bool {
+    var storage: [MAX_PRODUCTIONS]OpKind = undefined;
+    for (legalProductions(bpe, depth, max_depth, dtype, is_root, enabled_ops, &storage)) |legal| {
+        if (legal == op) return true;
+    }
+    return false;
+}
+
+/// Build the filled subtree for `body` against the stream that reaches it.
+/// Returns null when the body does not apply here, which is an ordinary
+/// outcome: a macro learned on one dtype simply will not fit another.
+fn fitMacroBody(
+    alloc: Allocator,
+    body: macro.Body,
+    s: Stream,
+    depth: u8,
+    slot: u8,
+    parent_op: u8,
+    is_root: bool,
+    dtype: Dtype,
+    pr: *const prior.Prior,
+    opts: Options,
+    fit: *MacroFit,
+) !?PNode {
+    const spec = switch (body) {
+        .hole => {
+            const bits = try holeBits(alloc, s, depth, opts.max_depth);
+            const score = completionScoreLowerBound(
+                pr,
+                s.bits_per_elem,
+                depth,
+                opts.max_depth,
+                dtype,
+                is_root,
+                opts.enabled_ops,
+                opts.macros.len,
+            );
+            fit.lb_bits += bits;
+            fit.score_lb += score;
+            fit.n_holes += 1;
+            return .{ .hole = .{
+                .depth = depth,
+                .slot = slot,
+                .parent_op = parent_op,
+                .score_lb = score,
+                .lb_bits = bits,
+            } };
+        },
+        .node => |n| n,
+    };
+
+    if (s.count == 0 and spec.op != .raw) return null;
+    if (!bodyOpIsLegal(spec.op, s.bits_per_elem, depth, opts.max_depth, dtype, is_root, opts.enabled_ops))
+        return null;
+
+    var hist = try codec.buildHistogram(alloc, s);
+    defer hist.deinit(alloc);
+    const params = switch (spec.params) {
+        .literal => |v| v,
+        .auto => chooseParams(spec.op, s, dtype, featOf(hist)) orelse return null,
+    };
+
+    if (spec.op.isTerminal()) {
+        const cost = terminalCost(alloc, spec.op, params, s, hist) catch |e| switch (e) {
+            error.AlphabetTooLarge => return null,
+            else => return e,
+        } orelse return null;
+        fit.add += cost;
+        return .{ .filled = .{ .op = spec.op, .params = params, .kids = &.{} } };
+    }
+
+    if (depth + 1 > opts.max_depth) return null;
+
+    var outs: std.ArrayList(Stream) = .empty;
+    defer {
+        for (outs.items) |*out| out.deinit(alloc);
+        outs.deinit(alloc);
+    }
+    var side: ops.SideInfo = .none;
+    defer side.deinit(alloc);
+    try ops.forward(alloc, spec.op, params, s, &outs, &side);
+    if (outs.items.len != spec.children.len) return null;
+    fit.add += NODE_HDR + sideBody(side);
+
+    const kids = try alloc.alloc(PNode, spec.children.len);
+    var built: usize = 0;
+    errdefer {
+        for (kids[0..built]) |*kid| kid.deinit(alloc);
+        alloc.free(kids);
+    }
+    for (spec.children, outs.items, 0..) |child, out, i| {
+        const sub = try fitMacroBody(
+            alloc,
+            child,
+            out,
+            depth + 1,
+            @intCast(i),
+            @intFromEnum(spec.op),
+            false,
+            dtype,
+            pr,
+            opts,
+            fit,
+        ) orelse {
+            for (kids[0..built]) |*kid| kid.deinit(alloc);
+            alloc.free(kids);
+            return null;
+        };
+        kids[i] = sub;
+        built = i + 1;
+    }
+    return .{ .filled = .{ .op = spec.op, .params = params, .kids = kids } };
+}
+
 // ==================== search ====================
 
 pub fn synthesizePlan(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const prior.Prior, opts: Options) !Plan {
@@ -512,7 +663,11 @@ pub fn synthesizePlan(alloc: Allocator, in: Stream, dtype: Dtype, pr: *const pri
     var picked = try run(alloc, sample orelse in, dtype, pr, opts, null);
     dropRuntime(alloc, &picked.node);
     alloc.free(picked.payload);
-    return .{ .root = picked.node, .expanded = picked.expanded };
+    return .{
+        .root = picked.node,
+        .expanded = picked.expanded,
+        .macros_used = picked.macros_used,
+    };
 }
 
 fn candidateCost(
@@ -588,6 +743,7 @@ pub fn synthesizeTensorPlan(
     return .{
         .root = picked.node,
         .expanded = picked.expanded,
+        .macros_used = picked.macros_used,
         .candidates_realized = candidates_realized,
         .candidates_reranked = candidates_reranked,
         .probe_blocks_used = probe_blocks_used,
@@ -686,6 +842,7 @@ fn run(
         dtype,
         true,
         opts.enabled_ops,
+        opts.macros.len,
     );
     try q.push(alloc, .{
         .root = .{ .hole = .{
@@ -695,6 +852,7 @@ fn run(
             .score_lb = root_score_lb,
             .lb_bits = root_bits,
         } },
+        .macros = 0,
         .p = 0,
         .f = root_score_lb,
         .g_bytes = 0,
@@ -715,6 +873,7 @@ fn run(
                 break;
             }
             realized += 1;
+            const built_with = part.macros;
             var res = encodeReal(alloc, part.root, in) catch |e| switch (e) {
                 error.AlphabetTooLarge => {
                     part.deinit(alloc);
@@ -723,6 +882,7 @@ fn run(
                 else => return e,
             };
             std.debug.assert(res.bytes >= part.g_bytes); // g_bytes is a lower bound
+            res.macros_used = built_with;
             part.deinit(alloc);
             if (res.bytes < incumbent.bytes) {
                 if (all) |l| try l.append(alloc, incumbent) else incumbent.deinit(alloc);
@@ -815,6 +975,7 @@ fn run(
                         dtype,
                         false,
                         opts.enabled_ops,
+                        opts.macros.len,
                     );
                 }
             }
@@ -843,12 +1004,72 @@ fn run(
             const p = part.p + score;
             try q.push(alloc, .{
                 .root = root,
+                .macros = part.macros,
                 .p = p,
                 .f = p + score_lb_sum,
                 .g_bytes = g,
                 .lb_sum = lb_sum,
                 .score_lb_sum = score_lb_sum,
                 .n_nodes = part.n_nodes + 1,
+                .n_holes = n_holes,
+            });
+        }
+
+        // A macro is one symbol of the extended grammar, so it is charged one
+        // production — not the sum its expansion would cost. That is the whole
+        // point of an abstraction: it shortens the description of the programs
+        // that use it. Charging per expanded node instead leaves every macro
+        // ordered behind the entire primitive frontier, where a bounded budget
+        // never reaches it. The byte objective is untouched either way, so the
+        // prior still only decides expansion order.
+        const macro_floor: u64 = pr.scoreLowerBound(prods.len + opts.macros.len);
+        for (opts.macros, 0..) |m, macro_index| {
+            if (opts.enabled_ops & m.ops_mask != m.ops_mask) continue;
+            if (@as(usize, hole.depth) + m.transform_depth > opts.max_depth) continue;
+            if (part.n_nodes + m.node_count + part.n_holes - 1 + m.hole_count > opts.max_nodes) continue;
+
+            var fit: MacroFit = .{ .add = 0 };
+            var sub = try fitMacroBody(
+                alloc,
+                .{ .node = m.body },
+                hs,
+                hole.depth,
+                hole.slot,
+                hole.parent_op,
+                hole.depth == 0,
+                dtype,
+                pr,
+                opts,
+                &fit,
+            ) orelse continue;
+
+            const g = part.g_bytes + fit.add;
+            const n_holes = part.n_holes - 1 + fit.n_holes;
+            const lb_sum = part.lb_sum - hole.lb_bits + fit.lb_bits;
+            const score_lb_sum = part.score_lb_sum - hole.score_lb + fit.score_lb;
+
+            if (!opts.enumerate_all and boundBytes(g, lb_sum, n_holes) >= incumbent.bytes) {
+                sub.deinit(alloc);
+                continue;
+            }
+
+            var root = part.root.clone(alloc) catch |e| {
+                sub.deinit(alloc);
+                return e;
+            };
+            nodePtr(&root, path.items).* = sub; // `root` now owns the subtree
+            errdefer root.deinit(alloc);
+
+            const p = part.p + macro_floor;
+            try q.push(alloc, .{
+                .root = root,
+                .macros = part.macros | (@as(u64, 1) << @intCast(macro_index)),
+                .p = p,
+                .f = p + score_lb_sum,
+                .g_bytes = g,
+                .lb_sum = lb_sum,
+                .score_lb_sum = score_lb_sum,
+                .n_nodes = part.n_nodes + m.node_count,
                 .n_holes = n_holes,
             });
         }
@@ -875,6 +1096,7 @@ test "uniform root completion score uses cheapest legal production" {
             .i8,
             true,
             ops.ALL_OPS_MASK,
+            0,
         ),
     );
 }

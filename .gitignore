@@ -9,4 +9,7 @@ eval/cache/
 .claude
 paper/
 overleaf.credential
+llm.credential
 .toolchain/
+autodsl/runs/
+.ipynb_checkpoints/

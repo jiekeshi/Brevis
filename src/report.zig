@@ -11,6 +11,7 @@ const prior = @import("prior.zig");
 const program = @import("program.zig");
 const search = @import("search.zig");
 const safetensors = @import("safetensors.zig");
+const macro = @import("macro.zig");
 const archive = @import("archive.zig");
 
 const Allocator = std.mem.Allocator;
@@ -91,6 +92,93 @@ pub fn writeSearchConfigFields(json: *std.json.Stringify, options: search.Option
     try json.write("all_within_expansion_budget");
     try json.objectField("sample_byte_pruning");
     try json.write(false);
+    try json.objectField("macro_count");
+    try json.write(options.macros.len);
+    try json.objectField("macro_semantics");
+    try json.write("expanded_into_primitive_operators_before_serialization; " ++
+        "archives and the decoder are unaffected; every body node is checked " ++
+        "against legalProductions, so macros change reachability within the " ++
+        "expansion budget and not what is representable");
+    try json.objectField("macros");
+    try json.beginArray();
+    for (options.macros) |m| {
+        try json.beginObject();
+        try json.objectField("name");
+        try json.write(m.name);
+        try json.objectField("node_count");
+        try json.write(m.node_count);
+        try json.objectField("hole_count");
+        try json.write(m.hole_count);
+        try json.objectField("transform_depth");
+        try json.write(m.transform_depth);
+        try json.objectField("body");
+        try writeMacroBody(json, .{ .node = m.body });
+        try json.endObject();
+    }
+    try json.endArray();
+}
+
+/// The operator table, so a tool that writes macro libraries can validate
+/// shape against the engine rather than re-declaring the DSL and drifting.
+/// Legality guards are deliberately not exposed: they depend on the stream a
+/// node meets, and the engine already rejects a body that does not fit.
+pub fn writeOperatorTable(json: *std.json.Stringify) !void {
+    try json.objectField("operators");
+    try json.beginArray();
+    for (std.enums.values(ops.OpKind)) |op| {
+        try json.beginObject();
+        try json.objectField("name");
+        try json.write(@tagName(op));
+        try json.objectField("opcode");
+        try json.write(@intFromEnum(op));
+        try json.objectField("terminal");
+        try json.write(op.isTerminal());
+        try json.objectField("alphabet_permutation");
+        try json.write(op.isAlphabetPermutation());
+        try json.objectField("arity");
+        if (macro.hasFixedArity(op)) try json.write(ops.arity(op, 32)) else try json.write(null);
+        try json.objectField("arity_is_width_dependent");
+        try json.write(!macro.hasFixedArity(op));
+        try json.objectField("usable_in_macro_body");
+        try json.write(macro.hasFixedArity(op));
+        try json.endObject();
+    }
+    try json.endArray();
+    try json.objectField("macro_library_schema");
+    try json.write(macro.SCHEMA);
+    try json.objectField("macro_library_limits");
+    try json.beginObject();
+    try json.objectField("max_macros");
+    try json.write(macro.MAX_MACROS);
+    try json.objectField("max_body_nodes");
+    try json.write(macro.MAX_BODY_NODES);
+    try json.endObject();
+}
+
+fn writeMacroBody(json: *std.json.Stringify, body: macro.Body) !void {
+    const node = switch (body) {
+        .hole => {
+            try json.beginObject();
+            try json.objectField("op");
+            try json.write("hole");
+            try json.endObject();
+            return;
+        },
+        .node => |n| n,
+    };
+    try json.beginObject();
+    try json.objectField("op");
+    try json.write(@tagName(node.op));
+    try json.objectField("params");
+    switch (node.params) {
+        .auto => try json.write("auto"),
+        .literal => |v| try json.write(v),
+    }
+    try json.objectField("children");
+    try json.beginArray();
+    for (node.children) |child| try writeMacroBody(json, child);
+    try json.endArray();
+    try json.endObject();
 }
 
 fn renderProgram(alloc: Allocator, out: *std.ArrayList(u8), node: program.Node) Allocator.Error!void {
@@ -469,6 +557,13 @@ pub fn reportJson(
             if (mode.plan_is_search) try json.write(plan.probe_blocks_used) else try json.write(null);
             try json.objectField("selected_sample_rank_zero_based");
             if (mode.plan_is_search) try json.write(plan.selected_sample_rank) else try json.write(null);
+            try json.objectField("macros_used");
+            try json.beginArray();
+            for (search_options.macros, 0..) |m, macro_index| {
+                if (plan.macros_used & (@as(u64, 1) << @intCast(macro_index)) != 0)
+                    try json.write(m.name);
+            }
+            try json.endArray();
             try json.objectField("program");
             try json.write(buf.items);
             try json.objectField("root_operator");

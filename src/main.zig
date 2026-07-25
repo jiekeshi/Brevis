@@ -11,6 +11,7 @@ const archive = @import("archive.zig");
 const safetensors = @import("safetensors.zig");
 const pool_mod = @import("pool.zig");
 const report_mod = @import("report.zig");
+const macro = @import("macro.zig");
 
 const Allocator = std.mem.Allocator;
 const Dtype = types.Dtype;
@@ -52,6 +53,7 @@ pub fn main(init: std.process.Init) !void {
     var pos: std.ArrayList([]const u8) = .empty;
     defer pos.deinit(alloc);
     var opt_prior: ?[]const u8 = null;
+    var opt_macros: ?[]const u8 = null;
     var opt_jobs: ?usize = null;
     var opt_tensors: usize = calibrate.DEFAULT_TENSORS;
     var opt_plan: PlanMode = .search;
@@ -108,6 +110,9 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, a, "--rerank-blocks")) {
             saw_search_option = true;
             opt_search.rerank_blocks = try std.fmt.parseInt(usize, v, 10);
+        } else if (std.mem.eql(u8, a, "--macros")) {
+            saw_search_option = true;
+            opt_macros = v;
         } else if (std.mem.eql(u8, a, "--disable-op")) {
             saw_search_option = true;
             const op = std.meta.stringToEnum(ops.OpKind, v) orelse try usage(err);
@@ -115,6 +120,17 @@ pub fn main(init: std.process.Init) !void {
             opt_search.enabled_ops &= ~ops.opMask(op);
         } else try usage(err);
     }
+    var library: ?macro.Library = null;
+    defer if (library) |*loaded| loaded.deinit();
+    if (opt_macros) |path| {
+        library = macro.load(alloc, io, path) catch |e| {
+            try err.print("brevis: cannot load macro library '{s}': {t}\n", .{ path, e });
+            try err.flush();
+            std.process.exit(2);
+        };
+        opt_search.macros = library.?.macros;
+    }
+
     if (opt_search.max_expansions == 0 or opt_search.max_nodes == 0) try usage(err);
     if (opt_jobs) |jobs| if (jobs == 0) try usage(err);
     if (saw_tensors and opt_tensors == 0) try usage(err);
@@ -179,6 +195,7 @@ fn usage(w: *std.Io.Writer) !noreturn {
         \\Search options (calibrate, compress, bench, and config):
         \\  --max-expansions N --max-nodes N --max-depth N --sample-elems N
         \\  --rerank-candidates N --rerank-blocks N --disable-op NAME (repeatable)
+        \\  --macros <library.json>   learned subtrees offered as single productions
         \\
     );
     try w.flush();
@@ -193,6 +210,7 @@ fn cmdConfig(out: *std.Io.Writer, options: search.Options) !void {
     };
     try json.beginObject();
     try report_mod.writeSearchConfigFields(&json, options);
+    try report_mod.writeOperatorTable(&json);
     try json.endObject();
     try out.writeByte('\n');
 }

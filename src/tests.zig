@@ -13,6 +13,7 @@ const archive = @import("archive.zig");
 const safetensors = @import("safetensors.zig");
 const pool = @import("pool.zig");
 const report = @import("report.zig");
+const macro = @import("macro.zig");
 
 const Allocator = std.mem.Allocator;
 const Stream = types.Stream;
@@ -26,7 +27,7 @@ const expectEqual = std.testing.expectEqual;
 // `codec.HuffmanTable.clone`/`RansTable.clone`, which codec.zig never defines.
 // Everything they do define is exercised directly by the tests below.
 test "module references" {
-    inline for (.{ types, codec, prior, search, calibrate, archive, safetensors, pool, report }) |m| {
+    inline for (.{ types, codec, prior, search, calibrate, archive, safetensors, pool, report, macro }) |m| {
         std.testing.refAllDecls(m);
     }
 }
@@ -1528,4 +1529,169 @@ test "safetensors: roundtrip" {
         }
         try expect(found);
     }
+}
+
+// ==================== macros ====================
+//
+// A macro is a shorthand for a subtree the primitive grammar can already
+// build, so the properties worth pinning are that a malformed library never
+// loads, and that enabling one changes which program is *found* without ever
+// changing whether the result decodes.
+
+const ZIGZAG_SPLIT =
+    \\{"schema":"brevis.macro-library.v1","macros":[
+    \\{"name":"zigzag_split","body":{"op":"zigzag","children":[
+    \\{"op":"split_field","children":[{"op":"hole"},{"op":"hole"}]}]}}]}
+;
+
+test "macro: a well-formed library parses with the shape the engine will charge for" {
+    const a = std.testing.allocator;
+    var lib = try macro.parse(a, ZIGZAG_SPLIT);
+    defer lib.deinit();
+
+    try expectEqual(@as(usize, 1), lib.macros.len);
+    const m = lib.macros[0];
+    try std.testing.expectEqualStrings("zigzag_split", m.name);
+    try expectEqual(@as(usize, 2), m.node_count);
+    try expectEqual(@as(usize, 2), m.hole_count);
+    try expectEqual(@as(u8, 2), m.transform_depth);
+    try expectEqual(ops.opMask(.zigzag) | ops.opMask(.split_field), m.ops_mask);
+
+    var rendered: std.ArrayList(u8) = .empty;
+    defer rendered.deinit(a);
+    try macro.render(a, &rendered, .{ .node = m.body });
+    try std.testing.expectEqualStrings("zigzag(split_field(?,?))", rendered.items);
+}
+
+test "macro: terminals close a branch and count toward the body" {
+    const a = std.testing.allocator;
+    var lib = try macro.parse(a,
+        \\{"schema":"brevis.macro-library.v1","macros":[
+        \\{"name":"split_then_code","body":{"op":"split_field","children":[
+        \\{"op":"rans"},{"op":"bitpack"}]}}]}
+    );
+    defer lib.deinit();
+    const m = lib.macros[0];
+    try expectEqual(@as(usize, 3), m.node_count);
+    try expectEqual(@as(usize, 0), m.hole_count);
+    try expectEqual(@as(u8, 1), m.transform_depth);
+}
+
+test "macro: malformed libraries are refused, each for its own reason" {
+    const a = std.testing.allocator;
+    const cases = .{
+        // Schema mismatch: a future format must not be read as this one.
+        .{ \\{"schema":"brevis.macro-library.v2","macros":[]}
+        , macro.ParseError.BadSchema },
+        // Width-dependent arity would make the body's shape depend on the data.
+        .{ \\{"schema":"brevis.macro-library.v1","macros":[{"name":"planes",
+           \\"body":{"op":"bit_plane","children":[]}}]}
+        , macro.ParseError.VariableArityOperator },
+        .{ \\{"schema":"brevis.macro-library.v1","macros":[{"name":"half",
+           \\"body":{"op":"split_field","children":[{"op":"hole"}]}}]}
+        , macro.ParseError.WrongChildCount },
+        .{ \\{"schema":"brevis.macro-library.v1","macros":[{"name":"nope",
+           \\"body":{"op":"transpose","children":[]}}]}
+        , macro.ParseError.UnknownOperator },
+        .{ \\{"schema":"brevis.macro-library.v1","macros":[{"name":"kids",
+           \\"body":{"op":"rans","children":[{"op":"hole"}]}}]}
+        , macro.ParseError.TerminalHasChildren },
+        // Two macros the search could not tell apart.
+        .{ \\{"schema":"brevis.macro-library.v1","macros":[
+           \\{"name":"same","body":{"op":"zigzag","children":[{"op":"hole"}]}},
+           \\{"name":"same","body":{"op":"gray","children":[{"op":"hole"}]}}]}
+        , macro.ParseError.DuplicateMacroName },
+        // A bare hole is the identity and would let A* loop on itself.
+        .{ \\{"schema":"brevis.macro-library.v1","macros":[{"name":"id",
+           \\"body":{"op":"hole"}}]}
+        , macro.ParseError.BadMacroField },
+    };
+    inline for (cases) |case| {
+        try std.testing.expectError(case[1], macro.parse(a, case[0]));
+    }
+}
+
+test "macro: a macro-derived program still decodes bit-exact" {
+    const a = std.testing.allocator;
+    var lib = try macro.parse(a, ZIGZAG_SPLIT);
+    defer lib.deinit();
+
+    var prng = std.Random.DefaultPrng.init(0x5EED_B10C);
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
+
+    for ([_]Dtype{ .bf16, .f32, .i8, .u16 }) |dt| {
+        var in = try makeBlock(a, prng.random(), dt, 4096, 0);
+        defer in.deinit(a);
+
+        var result = try search.synthesize(a, in, dt, &untrained, .{
+            .sample_elems = 0,
+            .macros = lib.macros,
+        });
+        defer result.deinit(a);
+
+        var decoded = try program.decode(a, result.node);
+        defer decoded.deinit(a);
+        try expectEqual(in.count, decoded.count);
+        try std.testing.expectEqualSlices(u8, in.data, decoded.data);
+    }
+}
+
+test "macro: offering one never costs bytes at an unbounded budget" {
+    const a = std.testing.allocator;
+    var lib = try macro.parse(a, ZIGZAG_SPLIT);
+    defer lib.deinit();
+
+    var prng = std.Random.DefaultPrng.init(0xB0B0);
+    var in = try makeBlock(a, prng.random(), .bf16, 2048, 0);
+    defer in.deinit(a);
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
+
+    // With the budget large enough to exhaust the grammar, a macro can only
+    // re-reach programs already reachable, so the winner cannot get worse.
+    const opts: search.Options = .{
+        .sample_elems = 0,
+        .max_expansions = 20_000,
+        .max_realizations = 20_000,
+    };
+    var without = try search.synthesize(a, in, .bf16, &untrained, opts);
+    defer without.deinit(a);
+
+    var with_opts = opts;
+    with_opts.macros = lib.macros;
+    var with = try search.synthesize(a, in, .bf16, &untrained, with_opts);
+    defer with.deinit(a);
+
+    try expect(with.bytes <= without.bytes);
+}
+
+test "macro: a body whose operators are disabled is never offered" {
+    const a = std.testing.allocator;
+    var lib = try macro.parse(a, ZIGZAG_SPLIT);
+    defer lib.deinit();
+
+    var prng = std.Random.DefaultPrng.init(0xD15A);
+    var in = try makeBlock(a, prng.random(), .bf16, 2048, 0);
+    defer in.deinit(a);
+    var untrained: prior.Prior = .empty;
+    defer untrained.deinit(a);
+
+    var result = try search.synthesize(a, in, .bf16, &untrained, .{
+        .sample_elems = 0,
+        .macros = lib.macros,
+        .enabled_ops = ops.ALL_OPS_MASK & ~ops.opMask(.zigzag),
+    });
+    defer result.deinit(a);
+
+    // The ablation must still hold: nothing in the tree may be the disabled op.
+    try expect(!containsOp(result.node, .zigzag));
+}
+
+fn containsOp(node: Node, needle: OpKind) bool {
+    if (node.op == needle) return true;
+    for (node.children) |child| {
+        if (containsOp(child, needle)) return true;
+    }
+    return false;
 }
