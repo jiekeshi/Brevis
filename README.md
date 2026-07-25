@@ -90,7 +90,8 @@ zig build -Doptimize=ReleaseFast
 
 ```bash
 zig build test -Doptimize=ReleaseFast
-python3 -m unittest discover -s eval -p 'test_*.py'
+python3 -m unittest discover -s eval  -p 'test_*.py'
+python3 -m unittest discover -s tools -p 'test_*.py'
 ```
 
 To run a single test, note two invocation constraints. `build.zig` does not
@@ -278,7 +279,9 @@ src/calibrate.zig    input-local sampling and prior fitting
 src/codec.zig        bitpack, Huffman, and rANS codecs
 src/archive.zig      streaming .brv format and compatible reader
 src/safetensors.zig  memory-mapped safetensors I/O
-src/main.zig         CLI, batching, and parallel pipeline
+src/pool.zig         worker threads and the reusable batch pool
+src/report.zig       text and schema-4 JSON bench reporting
+src/main.zig         CLI, argument handling, and orchestration
 eval/                end-to-end multishard evaluation
 doc/                 engineering principles and cluster notes
 tools/model_cache.py fetch / verify / drop evaluation checkpoints one at a time
@@ -286,6 +289,8 @@ setup_env.sh         cluster modules, Zig toolchain, virtual environment
 requirements.txt     Python dependencies (numpy, for eval/tensor_stats.py only)
 ```
 
+[`doc/architecture.md`](doc/architecture.md) describes every module, the
+dependency layering, and the invariants that span files.
 [`doc/engineering-principles.md`](doc/engineering-principles.md) states the
 design principles code in this repository is expected to follow.
 [`doc/cluster-pitfalls.md`](doc/cluster-pitfalls.md) documents the environment

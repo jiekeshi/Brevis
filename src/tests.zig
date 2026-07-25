@@ -11,6 +11,8 @@ const search = @import("search.zig");
 const calibrate = @import("calibrate.zig");
 const archive = @import("archive.zig");
 const safetensors = @import("safetensors.zig");
+const pool = @import("pool.zig");
+const report = @import("report.zig");
 
 const Allocator = std.mem.Allocator;
 const Stream = types.Stream;
@@ -24,7 +26,7 @@ const expectEqual = std.testing.expectEqual;
 // `codec.HuffmanTable.clone`/`RansTable.clone`, which codec.zig never defines.
 // Everything they do define is exercised directly by the tests below.
 test "module references" {
-    inline for (.{ types, codec, prior, search, calibrate, archive, safetensors }) |m| {
+    inline for (.{ types, codec, prior, search, calibrate, archive, safetensors, pool, report }) |m| {
         std.testing.refAllDecls(m);
     }
 }

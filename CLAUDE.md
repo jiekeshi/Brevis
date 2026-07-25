@@ -9,6 +9,8 @@ apparatus (~25 K lines) and holds most of the repository's invariants.
 Read first:
 
 - [`README.md`](README.md) — what Brevis is, cluster setup, CLI, pipeline, source layout.
+- [`doc/architecture.md`](doc/architecture.md) — per-file responsibilities, the
+  acyclic module layering, and known tensions worth not re-litigating.
 - [`doc/engineering-principles.md`](doc/engineering-principles.md) — **follow these when
   writing or refactoring code here.**
 - [`doc/cluster-pitfalls.md`](doc/cluster-pitfalls.md) — environment traps, and the one
@@ -21,7 +23,8 @@ Read first:
 ```bash
 zig build -Doptimize=ReleaseFast          # binary at ./zig-out/bin/brevis
 zig build test -Doptimize=ReleaseFast     # 39 tests in src/tests.zig
-python3 -m unittest discover -s eval -p 'test_*.py'
+python3 -m unittest discover -s eval  -p 'test_*.py'
+python3 -m unittest discover -s tools -p 'test_*.py'
 ```
 
 Two invocation traps:

@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const types = @import("types.zig");
+const safetensors = @import("safetensors.zig");
 const program = @import("program.zig");
 
 const Allocator = std.mem.Allocator;
@@ -24,6 +25,30 @@ pub fn frameHeader(alloc: Allocator, node: Node, payload_len: usize) ![]u8 {
     try out.appendSlice(alloc, bytecode);
     try w64(alloc, &out, @intCast(payload_len));
     return out.toOwnedSlice(alloc);
+}
+
+/// Group planned blocks under their tensors so a writer or a report can
+/// describe the archive footer without re-deriving block ownership.
+pub fn tensorMetas(
+    alloc: Allocator,
+    tensors: []const safetensors.Tensor,
+    blocks: []const types.Block,
+) ![]TensorMeta {
+    const metas = try alloc.alloc(TensorMeta, tensors.len);
+    var bi: usize = 0;
+    for (tensors, 0..) |t, ti| {
+        var n: u32 = 0;
+        while (bi + n < blocks.len and blocks[bi + n].tensor_idx == ti) n += 1;
+        metas[ti] = .{
+            .name = t.name,
+            .dtype = t.view.dtype,
+            .shape = t.view.shape,
+            .n_blocks = n,
+        };
+        bi += n;
+    }
+    std.debug.assert(bi == blocks.len);
+    return metas;
 }
 
 pub fn makeFooter(alloc: Allocator, tensors: []const TensorMeta, index_off: u64, safetensors_prefix: []const u8) ![]u8 {
