@@ -15,6 +15,8 @@ Read first:
   writing or refactoring code here.**
 - [`doc/cluster-pitfalls.md`](doc/cluster-pitfalls.md) — environment traps, and the one
   known environment-sensitive test failure. Check it before debugging a setup problem.
+- [`doc/autodsl.md`](doc/autodsl.md) — the self-extending grammar loop in `autodsl/`:
+  what a macro is, why the obvious MDL objective does not apply here, and the gates.
 
 ## Commands
 
@@ -25,6 +27,7 @@ zig build -Doptimize=ReleaseFast          # binary at ./zig-out/bin/brevis
 zig build test -Doptimize=ReleaseFast     # 39 tests in src/tests.zig
 python3 -m unittest discover -s eval  -p 'test_*.py'
 python3 -m unittest discover -s tools -p 'test_*.py'
+cd autodsl && python3 -m unittest discover -s . -p 'test_*.py'
 ```
 
 Two invocation traps:
@@ -77,6 +80,16 @@ terminal layer). Do not use them interchangeably.
 the authority. Grammar guards live in `legalProductions` (`search.zig`), keyed on width:
 Huffman and rANS only through `MAX_ENTROPY_BPE` (16) bits, `bit_plane` only above 1 bit,
 `byte_plane` only above 8, `split_float` only at a floating root.
+
+**Macros are a search-time device only.** A `--macros` library names subtrees of
+existing operators. The engine expands them into primitives *before* serializing, so
+the `.brv` schema, the bytecode, and the decoder never see one, and an archive written
+with a library is byte-identical to one written without it whenever both select the
+same program. Every body node is checked against `legalProductions` where it lands, so
+a macro cannot reach a program the primitive grammar cannot, and `--disable-op` still
+removes every macro containing that operator. What changes is only how many expansions
+a program costs to find. A macro body holds no data, so payload can never migrate into
+the grammar. See [`doc/autodsl.md`](doc/autodsl.md).
 
 **Calibration searches one centered contiguous window per tensor.** That single window is
 load-bearing — concatenating disjoint windows would fabricate transitions that

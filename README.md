@@ -134,6 +134,10 @@ Terminals are `raw`, `bitpack`, canonical Huffman, and rANS.
 
 Operator applicability depends on input bit width, dtype, tree depth, arity, and the runtime operator mask. Repeating `--disable-op NAME` removes individual transforms or terminal codecs from search for controlled ablations. The CLI does not allow `raw` to be disabled; direct API callers also retain it as an implicit reversible fallback, so every supported tensor has at least one valid program. Fixed-plan mode deliberately ignores the search mask and continues to execute the same typed template.
 
+### Learned macros
+
+`--macros <library.json>` offers named subtrees of the operators above as single productions. A macro holds operators and holes, never data, and every node in its body is checked against the same legality rules it would face as a primitive production — so a macro cannot reach a program the grammar could not, and `--disable-op` still removes every macro that uses that operator. The engine expands macros into primitives before serializing, so archives and the decoder are unaffected; what a macro changes is how many search expansions a program costs to find. `brevis config --macros L` prints how a library resolves, and the JSON bench report attributes each tensor's plan to the macros that built it. `autodsl/` is the loop that proposes and gates them — see [`doc/autodsl.md`](doc/autodsl.md).
+
 ## Grammar-Guided A* Search
 
 Brevis uses a probabilistic higher-order grammar (PHOG) to order the search. It maintains two independent costs:
@@ -272,6 +276,7 @@ The evaluator rebuilds the ReleaseFast binary so recorded source settings match 
 ```text
 src/types.zig        dtypes, Stream, TensorView, and block planning
 src/ops.zig          reversible language operators
+src/macro.zig        learned macro libraries offered as single productions
 src/program.zig      program execution, inversion, and serialization
 src/search.zig       PHOG-guided A* and byte lower bounds
 src/prior.zig        contexts and three-level backoff prior
@@ -283,6 +288,7 @@ src/pool.zig         worker threads and the reusable batch pool
 src/report.zig       text and schema-4 JSON bench reporting
 src/main.zig         CLI, argument handling, and orchestration
 eval/                end-to-end multishard evaluation
+autodsl/             self-extending grammar loop: mine, propose, verify, gate
 doc/                 engineering principles and cluster notes
 tools/model_cache.py fetch / verify / drop evaluation checkpoints one at a time
 setup_env.sh         cluster modules, Zig toolchain, virtual environment
@@ -297,7 +303,8 @@ design principles code in this repository is expected to follow.
 traps behind `setup_env.sh`.
 [`doc/checkpoint_acquisition.md`](doc/checkpoint_acquisition.md) covers where the
 evaluation inputs come from, how to verify them, and the storage gate that
-applies before downloading. `CLAUDE.md` is guidance for AI coding agents: the
+applies before downloading.
+[`doc/autodsl.md`](doc/autodsl.md) describes the self-extending grammar loop. `CLAUDE.md` is guidance for AI coding agents: the
 search and archive invariants that are silent to break, and the evaluation gates.
 
 ## Correctness

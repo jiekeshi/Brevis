@@ -32,6 +32,7 @@ Line counts are the shape of the module, not a target.
 | `types.zig` | 210 | `Dtype`, `Stream` (1–32 bit logical elements), `TensorView`, `planBlocks`. The vocabulary everything else shares. |
 | `codec.zig` | 844 | Terminal encoders: bitpack, canonical Huffman, rANS, histograms, and their exact cost functions. |
 | `ops.zig` | 758 | The reversible operator set. Every non-terminal defines `forward`/`inverse`; `arity()` and the budget constants live here. |
+| `macro.zig` | 268 | Learned macro libraries: schema, parsing, validation, body statistics. Pure data; the search does the grafting. |
 | `program.zig` | 430 | The `Node` tree: execute, decode, serialize, and split payload from bytecode. |
 | `prior.zig` | 309 | `Context`, three-level backoff, `Counts` → `Prior`. The PHOG grammar model. |
 | `search.zig` | 913 | PHOG-guided A*, byte lower bounds, `fixedPlan`, and per-tensor planning with full-block reranking. |
@@ -46,9 +47,9 @@ Line counts are the shape of the module, not a target.
 ### The dependency graph is an acyclic layering
 
 ```
-types  <- codec <- ops <- program, prior <- search <- calibrate, archive
+types  <- codec <- ops <- program, prior, macro <- search <- calibrate, archive
 pool   (no local dependencies)
-report <- archive, ops, prior, program, safetensors, search, types
+report <- archive, macro, ops, prior, program, safetensors, search, types
 main   <- everything
 ```
 
@@ -101,6 +102,15 @@ features would then read as real structure.
 back-references, so each frame decodes alone and compression can stream frames
 out in batches instead of holding the archive in memory.
 
+**Macros never reach the archive.** A `--macros` library names subtrees of
+existing operators; `search.fitMacroBody` expands one into primitives at plan
+time, checking each node against `legalProductions` where it lands. So a macro
+cannot reach a program the primitive grammar cannot, `--disable-op` still
+removes every macro using that operator, and the `.brv` schema and the decoder
+are untouched. Only the number of expansions a program costs changes. A body
+holds operators and holes and never data, so payload cannot migrate into the
+grammar. See [`autodsl.md`](autodsl.md).
+
 ## `eval/` — the measurement apparatus
 
 21 K lines across seven modules, each with a matching `test_*.py` (159 tests).
@@ -128,7 +138,8 @@ preregistered; changing them is a protocol amendment, not an edit.
 | `setup_env.sh` | Cluster modules, Zig toolchain lookup, node-local virtual environment. |
 | `requirements.txt` | numpy, needed only by `eval/tensor_stats.py`. |
 | `tools/model_cache.py` | Fetch / verify / drop one checkpoint at a time (13 tests). |
-| `doc/` | This file, engineering principles, cluster pitfalls, checkpoint acquisition. |
+| `autodsl/` | The self-extending grammar loop: mine, propose, verify, gate (96 tests). Development apparatus, not audited measurement. |
+| `doc/` | This file, engineering principles, cluster pitfalls, checkpoint acquisition, the autodsl design, and the progress log. |
 | `CLAUDE.md` | Guidance for AI coding agents: cross-module invariants and evaluation gates. |
 
 ## Known tensions
