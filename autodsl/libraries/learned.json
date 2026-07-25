@@ -1,0 +1,90 @@
+{
+  "schema": "brevis.macro-library.v1",
+  "provenance": {
+    "produced_by": "autodsl/loop.py",
+    "run": "learn",
+    "budget": {
+      "max_depth": 2,
+      "max_expansions": 256,
+      "max_nodes": 12,
+      "rerank_candidates": 64,
+      "rerank_blocks": 8,
+      "jobs": 12
+    },
+    "split": {
+      "develop": [
+        "RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/model.safetensors",
+        "google-bert__bert-base-uncased/model.safetensors"
+      ],
+      "holdout": [
+        "google__vit-base-patch16-224/model.safetensors",
+        "TinyLlama__TinyLlama-1.1B-Chat-v1.0/model.safetensors"
+      ],
+      "caveat": "a handful of cached checkpoints is a weak split; a claim about generalization needs more models than this"
+    },
+    "measurement_status": "development_only_not_formal",
+    "note": "Macros are expanded into primitive operators before serialization, so an archive written with this library is byte-identical to one written without it whenever both select the same program."
+  },
+  "macros": [
+    {
+      "name": "zigzag_split_field_h_h",
+      "body": {
+        "op": "zigzag",
+        "params": "auto",
+        "children": [
+          {
+            "op": "split_field",
+            "params": "auto",
+            "children": [
+              {
+                "op": "hole"
+              },
+              {
+                "op": "hole"
+              }
+            ]
+          }
+        ]
+      },
+      "why": "Mined from 540 blocks governing 96.4 MB of encoded output.",
+      "origin": "mined"
+    },
+    {
+      "name": "split_float_sign_exp_split_mantissa",
+      "body": {
+        "op": "split_float",
+        "params": "auto",
+        "children": [
+          {
+            "op": "bitpack",
+            "params": "auto",
+            "children": []
+          },
+          {
+            "op": "rans",
+            "params": "auto",
+            "children": []
+          },
+          {
+            "op": "split_field",
+            "params": "auto",
+            "children": [
+              {
+                "op": "rans",
+                "params": "auto",
+                "children": []
+              },
+              {
+                "op": "bitpack",
+                "params": "auto",
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      "why": "113 MB of BF16 (embedding/lm_head) currently settles for split_field(rans,raw), which pays ~8 flat bits for the mantissa and never isolates the 1-bit sign; this delivers sign->bitpack, exponent->rans and a second split of the mantissa so its high bits are entropy-coded while only the noise bits are packed. A 3-arity root with a nested transform under one child is four operators deep and is exactly what a 256-expansion, 12-node search never assembles.",
+      "origin": "proposed"
+    }
+  ]
+}
