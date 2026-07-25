@@ -7,3 +7,6 @@ __pycache__/
 eval/cache/
 
 .claude
+paper/
+overleaf.credential
+.toolchain/
