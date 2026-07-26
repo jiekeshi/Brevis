@@ -32,14 +32,24 @@ class EngineError(RuntimeError):
     pass
 
 
+CACHE = REPO / "eval" / "cache"
+
+
 def label(model: pathlib.Path) -> str:
     """A readable name for a cached checkpoint.
 
-    Every cache entry is `<repo>/<revision>/model.safetensors`, so the file
-    name alone identifies nothing.
+    A cache entry is `<repo>/<revision>/<file>`, and a multi-component model
+    like SDXL nests a component directory under that, so neither the file name
+    nor a fixed number of parent levels identifies it. Drop the revision and
+    keep everything else.
     """
-    repository = model.resolve().parent.parent.name
-    return f"{repository}/{model.name}" if repository else model.name
+    resolved = model.resolve()
+    try:
+        parts = resolved.relative_to(CACHE.resolve()).parts
+    except ValueError:
+        repository = resolved.parent.parent.name
+        return f"{repository}/{model.name}" if repository else model.name
+    return "/".join(parts[:1] + parts[2:]) if len(parts) > 2 else "/".join(parts)
 
 
 @dataclasses.dataclass(frozen=True)

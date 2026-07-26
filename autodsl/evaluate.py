@@ -39,15 +39,27 @@ evidence.
 
 The split
 ---------
-Proposals are written against develop-set evidence, so accepting on the develop
-set alone would reward memorizing it. Acceptance therefore requires a develop
-gain *and* the absence of a holdout regression. With a handful of cached
-models this is a weak split and the ledger records it as such.
+Three tiers, because two is not enough to keep an honest claim:
+
+  develop     mined for candidates, shown to the proposer, and the set a gain
+              must appear on. Thoroughly contaminated by construction.
+  validation  a veto during acceptance: a candidate that helps develop but
+              hurts here is refused. Seen once per candidate, so it steers the
+              library and is *not* a test set.
+  test        never read by mining, by the proposer, or by any acceptance
+              decision. `verdict()` is the only thing that touches it, and
+              every touch is appended to a test log so repeated measurement is
+              visible rather than hidden.
+
+An earlier version of this file had only develop and holdout, and used the
+holdout as the acceptance veto — which makes it validation, not test. The
+numbers from that arrangement are validation numbers.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import json
 import pathlib
 
 import engine
@@ -63,6 +75,11 @@ REGRESSION_TOLERANCE = 1e-5
 # A library that buys bytes with unbounded planning time has not paid for
 # itself; this is the "acceptable running cost" half of the objective.
 MAX_PLANNING_SLOWDOWN = 1.25
+# A corpus total hides a model being badly hurt: on the locked test set the
+# library was worth -7.36 MB overall while making one Qwen shard 4.43 MB
+# larger. Nobody compressing that shard cares about the corpus. Cap the damage
+# any single measured file may take, as a fraction of its own archive.
+MAX_MODEL_REGRESSION = 2e-3
 
 
 def objective(corpus: "CorpusResult", library_bytes: int) -> int:
@@ -70,24 +87,45 @@ def objective(corpus: "CorpusResult", library_bytes: int) -> int:
     return corpus.archive_bytes + library_bytes
 
 
+def worst_regression(
+    before: dict[str, int], after: dict[str, int]
+) -> tuple[str, int, float] | None:
+    """The single measured file hurt most, if any exceeds the per-model limit.
+
+    Returns (name, bytes grown, fraction of its own archive), or None.
+    """
+    worst = None
+    for name, base in before.items():
+        if name not in after or base <= 0:
+            continue
+        grew = after[name] - base
+        share = grew / base
+        if share > MAX_MODEL_REGRESSION and (worst is None or share > worst[2]):
+            worst = (name, grew, share)
+    return worst
+
+
 @dataclasses.dataclass(frozen=True)
 class Split:
-    """Which models steer the loop and which only witness it."""
+    """Which models steer the loop, which veto it, and which only witness it."""
 
     develop: tuple[pathlib.Path, ...]
-    holdout: tuple[pathlib.Path, ...]
+    validation: tuple[pathlib.Path, ...]
+    test: tuple[pathlib.Path, ...] = ()
 
     def all(self) -> tuple[pathlib.Path, ...]:
-        return self.develop + self.holdout
+        return self.develop + self.validation + self.test
 
     def describe(self) -> dict:
         return {
             "develop": [engine.label(p) for p in self.develop],
-            "holdout": [engine.label(p) for p in self.holdout],
-            "caveat": (
-                "a handful of cached checkpoints is a weak split; a claim about "
-                "generalization needs more models than this"
-            ),
+            "validation": [engine.label(p) for p in self.validation],
+            "test": [engine.label(p) for p in self.test],
+            "roles": {
+                "develop": "mined, shown to the proposer, and required to improve",
+                "validation": "veto during acceptance; steers the library, so not a test set",
+                "test": "read only by verdict(); never by mining, proposing, or acceptance",
+            },
         }
 
 
@@ -160,12 +198,13 @@ def evaluate(
     if baseline is None:
         baseline = (
             measure_corpus(split.develop, budget, base_path if library.macros else None),
-            measure_corpus(split.holdout, budget, base_path if library.macros else None),
+            measure_corpus(split.validation, budget,
+                           base_path if library.macros else None),
         )
     develop_before, holdout_before = baseline
 
     develop_after = measure_corpus(split.develop, budget, cand_path)
-    holdout_after = measure_corpus(split.holdout, budget, cand_path)
+    holdout_after = measure_corpus(split.validation, budget, cand_path)
 
     base_bytes = len(library.canonical_bytes())
     serialized = len(candidate.canonical_bytes())
@@ -178,6 +217,10 @@ def evaluate(
     allowed = int(REGRESSION_TOLERANCE * max(holdout_before.archive_bytes, 1))
 
     total_archive = develop_after.archive_bytes + holdout_after.archive_bytes
+    worst_model = worst_regression(
+        {**develop_before.per_model, **holdout_before.per_model},
+        {**develop_after.per_model, **holdout_after.per_model},
+    )
     planning_before = develop_before.planning_wall_ms + holdout_before.planning_wall_ms
     planning_after = develop_after.planning_wall_ms + holdout_after.planning_wall_ms
     slowdown = planning_after / max(planning_before, 1)
@@ -193,16 +236,22 @@ def evaluate(
         )
     elif holdout_delta > allowed:
         accept, reason = False, (
-            f"holdout regressed {holdout_delta} bytes, tolerance {allowed}"
+            f"validation regressed {holdout_delta} bytes, tolerance {allowed}"
         )
     elif slowdown > MAX_PLANNING_SLOWDOWN:
         accept, reason = False, (
             f"planning slowed {slowdown:.2f}x, limit {MAX_PLANNING_SLOWDOWN}x"
         )
+    elif worst_model is not None:
+        accept, reason = False, (
+            f"{worst_model[0]} grew {worst_model[1]} bytes "
+            f"({worst_model[2]:.2%} of itself), above the "
+            f"{MAX_MODEL_REGRESSION:.2%} per-model limit"
+        )
     else:
         accept, reason = True, (
             f"develop shrank by {-develop_delta} bytes, "
-            f"holdout {holdout_delta:+d} bytes"
+            f"validation {holdout_delta:+d} bytes"
         )
 
     decision = Decision(
@@ -236,13 +285,21 @@ class Verdict:
 
     success: bool
     reason: str
-    holdout_models: list[str]
-    holdout_before: int
-    holdout_after: int
-    holdout_delta: int
+    tier: str
+    models: list[str]
+    before: int
+    after: int
+    delta: int
     library_serialized_bytes: int
     planning_slowdown: float
     bit_exact: bool
+    prior_measurements_of_this_tier: int
+    # Per model, so "the corpus shrank" can be checked against "how many
+    # models shrank" and "what was the worst regression".
+    per_model_delta: dict = dataclasses.field(default_factory=dict)
+    models_improved: int = 0
+    models_regressed: int = 0
+    worst_model_regression: int = 0
 
     def describe(self) -> dict:
         return dataclasses.asdict(self)
@@ -255,13 +312,36 @@ def verdict(
     workdir: pathlib.Path,
     *,
     bit_exact: bool,
+    tier: str = "test",
+    test_log: pathlib.Path | None = None,
 ) -> Verdict:
-    """Measure the holdout set with and without the library and judge."""
+    """Measure the locked tier with and without the library and judge.
+
+    Every measurement is appended to `test_log`. Reading a held-out set more
+    than once is multiple testing; recording it makes that visible instead of
+    letting a later run quietly become the reported one.
+    """
     path = workdir / "verdict-library.json"
     library.write(path)
+    models = getattr(split, tier)
+    if not models:
+        return Verdict(
+            success=False, reason=f"the {tier} tier is empty; nothing to measure on",
+            tier=tier, models=[], before=0, after=0, delta=0,
+            library_serialized_bytes=len(library.canonical_bytes()),
+            planning_slowdown=1.0, bit_exact=bit_exact,
+            prior_measurements_of_this_tier=0,
+        )
 
-    before = measure_corpus(split.holdout, budget, None)
-    after = measure_corpus(split.holdout, budget, path if library.macros else None)
+    prior_touches = 0
+    if test_log is not None and test_log.exists():
+        prior_touches = sum(
+            1 for line in test_log.read_text().splitlines()
+            if line.strip() and json.loads(line).get("tier") == tier
+        )
+
+    before = measure_corpus(models, budget, None)
+    after = measure_corpus(models, budget, path if library.macros else None)
     serialized = len(library.canonical_bytes())
     delta = objective(after, serialized) - objective(before, 0)
     slowdown = after.planning_wall_ms / max(before.planning_wall_ms, 1)
@@ -272,28 +352,46 @@ def verdict(
         success, reason = False, "bit-exactness was not confirmed"
     elif delta >= 0:
         success, reason = False, (
-            f"unseen checkpoints did not shrink: {delta:+d} bytes once the "
+            f"the {tier} tier did not shrink: {delta:+d} bytes once the "
             f"{serialized}-byte library is charged"
         )
     elif slowdown > MAX_PLANNING_SLOWDOWN:
         success, reason = False, (
-            f"unseen checkpoints shrank by {-delta} bytes but planning slowed "
+            f"the {tier} tier shrank by {-delta} bytes but planning slowed "
             f"{slowdown:.2f}x, above the {MAX_PLANNING_SLOWDOWN}x limit"
         )
     else:
         success, reason = True, (
-            f"unseen checkpoints shrank by {-delta} bytes after charging the "
+            f"the {tier} tier shrank by {-delta} bytes after charging the "
             f"{serialized}-byte library, at {slowdown:.2f}x planning cost"
         )
 
-    return Verdict(
+    per_model = {
+        name: after.per_model[name] - base
+        for name, base in before.per_model.items()
+        if name in after.per_model
+    }
+    result = Verdict(
         success=success,
         reason=reason,
-        holdout_models=[engine.label(p) for p in split.holdout],
-        holdout_before=before.archive_bytes,
-        holdout_after=after.archive_bytes,
-        holdout_delta=delta,
+        tier=tier,
+        per_model_delta=per_model,
+        models_improved=sum(1 for d in per_model.values() if d < 0),
+        models_regressed=sum(1 for d in per_model.values() if d > 0),
+        worst_model_regression=max(per_model.values(), default=0),
+        models=[engine.label(p) for p in models],
+        before=before.archive_bytes,
+        after=after.archive_bytes,
+        delta=delta,
         library_serialized_bytes=serialized,
         planning_slowdown=slowdown,
         bit_exact=bit_exact,
+        prior_measurements_of_this_tier=prior_touches,
     )
+    if test_log is not None:
+        test_log.parent.mkdir(parents=True, exist_ok=True)
+        with test_log.open("a") as handle:
+            handle.write(json.dumps(
+                {**result.describe(), "library_sha256": library.sha256(),
+                 "budget": budget.describe()}, sort_keys=True) + "\n")
+    return result

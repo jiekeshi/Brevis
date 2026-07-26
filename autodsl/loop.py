@@ -47,15 +47,30 @@ RUNS = HERE / "runs"
 LIBRARIES = HERE / "libraries"
 CACHE = REPO / "eval" / "cache"
 
-# Cached checkpoints, split so that proposals are written against one half and
-# gated against the other. Deliberately spans dtypes: F32, BF16, and I8+BF16.
-DEVELOP = ["RedHatAI__SmolLM-135M-Instruct-quantized.w8a8", "google-bert__bert-base-uncased"]
-HOLDOUT = ["google__vit-base-patch16-224", "TinyLlama__TinyLlama-1.1B-Chat-v1.0"]
+# Three tiers. `develop` is mined and shown to the proposer; `validation` vetoes
+# a candidate that helps develop but hurts elsewhere; `test` is read only by
+# `verdict` and by nothing else, so it is the only tier a generalization claim
+# may rest on. See evaluate.Split.
+DEVELOP = [
+    "RedHatAI__SmolLM-135M-Instruct-quantized.w8a8",   # I8 + BF16
+    "google-bert__bert-base-uncased",                  # F32
+]
+VALIDATION = [
+    "google__vit-base-patch16-224",                    # F32, vision
+    "TinyLlama__TinyLlama-1.1B-Chat-v1.0",             # BF16
+]
+TEST = [
+    "openai__whisper-large-v3",                        # F16, speech
+    "stabilityai__stable-diffusion-xl-base-1.0",       # F16, diffusion
+    "Qwen__Qwen3-8B-Base",                             # BF16, larger LM
+]
 
 
-def find_models(names: list[str]) -> list[pathlib.Path]:
+def find_models(names: list[str], *, required: bool = True) -> list[pathlib.Path]:
     found = []
     for name in names:
+        if not required and not (CACHE / name).exists():
+            continue
         matches = sorted((CACHE / name).rglob("*.safetensors")) if (CACHE / name).exists() else []
         if not matches:
             raise SystemExit(
@@ -110,9 +125,12 @@ def budget_from(args) -> engine.Budget:
 
 
 def split_from(args) -> evaluate.Split:
+    """Resolve the three tiers. Test checkpoints that are not cached are simply
+    absent — a claim then rests on fewer models, which the verdict records."""
     return evaluate.Split(
         develop=tuple(find_models(args.develop)),
-        holdout=tuple(find_models(args.holdout)),
+        validation=tuple(find_models(args.validation)),
+        test=tuple(find_models(args.test, required=False)),
     )
 
 
@@ -321,23 +339,29 @@ def cmd_verdict(args) -> int:
     workdir.mkdir(parents=True, exist_ok=True)
     ledger = Ledger(workdir / "ledger.jsonl")
 
+    models = getattr(split, args.tier)
     bit_exact = True
     detail = {}
-    if library.macros:
-        check = verify_mod.roundtrip(library, list(split.holdout), budget, workdir)
+    if library.macros and models:
+        check = verify_mod.roundtrip(library, list(models), budget, workdir)
         bit_exact, detail = check.ok, check.detail
-        print(f"bit-exactness on holdout: {check.reason}")
+        print(f"bit-exactness on {args.tier}: {check.reason}")
 
     result = evaluate.verdict(
-        library, split, budget, workdir, bit_exact=bit_exact
+        library, split, budget, workdir, bit_exact=bit_exact,
+        tier=args.tier, test_log=RUNS / "test-log.jsonl",
     )
     print(f"\n{'SUCCESS' if result.success else 'FAILURE'} — {result.reason}")
-    print(f"  holdout {result.holdout_before} -> {result.holdout_after} bytes "
-          f"({result.holdout_delta:+d} charged)")
-    print(f"  library {len(library.macros)} macros, "
+    print(f"  {result.tier:10s} {result.before} -> {result.after} bytes "
+          f"({result.delta:+d} charged)")
+    print(f"  library    {len(library.macros)} macros, "
           f"{result.library_serialized_bytes} bytes, "
           f"sha256={library.sha256()[:16]}")
-    print(f"  models  {', '.join(result.holdout_models)}")
+    print(f"  models     {', '.join(result.models) or '(none cached)'}")
+    if result.prior_measurements_of_this_tier:
+        print(f"  NOTE: the {result.tier} tier has been measured "
+              f"{result.prior_measurements_of_this_tier} time(s) before; "
+              f"see autodsl/runs/test-log.jsonl")
     ledger.append("verdict", library_sha256=library.sha256(),
                   budget=budget.describe(), split=split.describe(),
                   roundtrip=detail, **result.describe())
@@ -356,10 +380,15 @@ def cmd_status(args) -> int:
     print(f"ledger: {json.dumps(ledger.summary())}")
     if args.measure:
         macros_path = args.library if library.macros else None
-        for half, models in (("develop", split.develop), ("holdout", split.holdout)):
+        for half, models in (("develop", split.develop),
+                             ("validation", split.validation),
+                             ("test", split.test)):
+            if not models:
+                continue
             result = evaluate.measure_corpus(models, budget, macros_path)
-            print(f"  {half:8s} {result.archive_bytes:>14d} bytes  "
-                  f"ratio {result.ratio:.4f}")
+            print(f"  {half:10s} {result.archive_bytes:>14d} bytes  "
+                  f"ratio {result.ratio:.4f}  "
+                  f"({len(models)} models)")
     return 0
 
 
@@ -384,7 +413,8 @@ def main(argv: list[str] | None = None) -> int:
                         default=LIBRARIES / "learned.json")
     parser.add_argument("--run", default="latest", help="subdirectory under autodsl/runs/")
     parser.add_argument("--develop", nargs="+", default=DEVELOP)
-    parser.add_argument("--holdout", nargs="+", default=HOLDOUT)
+    parser.add_argument("--validation", nargs="+", default=VALIDATION)
+    parser.add_argument("--test", nargs="+", default=TEST)
     parser.add_argument("--max-depth", type=int, default=2)
     parser.add_argument("--max-expansions", type=int, default=256)
     parser.add_argument("--max-nodes", type=int, default=12)
@@ -427,6 +457,10 @@ def main(argv: list[str] | None = None) -> int:
     verdict = sub.add_parser(
         "verdict", help="did unseen checkpoints shrink, bit-exactly, after "
                         "charging the library?")
+    verdict.add_argument("--tier", default="test",
+                         choices=("test", "validation", "develop"),
+                         help="which tier to judge on; anything but `test` is "
+                              "a diagnostic, not a generalization claim")
     verdict.set_defaults(func=cmd_verdict)
 
     status = sub.add_parser("status", help="library, ledger, and corpus")

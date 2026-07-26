@@ -23,8 +23,9 @@ import library as lib  # noqa: E402
 from test_library import zigzag_split  # noqa: E402
 
 DEVELOP = (pathlib.Path("/probe/develop.safetensors"),)
-HOLDOUT = (pathlib.Path("/probe/holdout.safetensors"),)
-SPLIT = evaluate.Split(develop=DEVELOP, holdout=HOLDOUT)
+VALIDATION = (pathlib.Path("/probe/validation.safetensors"),)
+TEST = (pathlib.Path("/probe/test.safetensors"),)
+SPLIT = evaluate.Split(develop=DEVELOP, validation=VALIDATION, test=TEST)
 BUDGET = engine.Budget()
 
 BASE = 100_000_000
@@ -89,12 +90,12 @@ class DecisionTests(unittest.TestCase):
         self.assertFalse(self.decide(BASE - margin, BASE).accept)
         self.assertTrue(self.decide(BASE - margin - overhead, BASE).accept)
 
-    def test_a_develop_gain_paid_for_by_a_holdout_regression_is_rejected(self):
+    def test_a_develop_gain_paid_for_by_a_validation_regression_is_rejected(self):
         decision = self.decide(BASE - 50_000, BASE + 50_000)
         self.assertFalse(decision.accept)
-        self.assertIn("holdout regressed", decision.reason)
+        self.assertIn("validation regressed", decision.reason)
 
-    def test_a_holdout_gain_alone_does_not_accept(self):
+    def test_a_validation_gain_alone_does_not_accept(self):
         decision = self.decide(BASE, BASE - 50_000)
         self.assertFalse(decision.accept)
 
@@ -111,6 +112,35 @@ class DecisionTests(unittest.TestCase):
         overhead = len(self.candidate.canonical_bytes())
         decision = self.decide(BASE - overhead // 2, BASE)
         self.assertFalse(decision.accept)
+
+    def test_a_macro_that_wrecks_one_model_is_rejected_despite_a_corpus_gain(self):
+        """The locked-test run shrank the corpus by 7.36 MB while growing one
+        Qwen shard by 4.43 MB. A corpus-only gate would have allowed that."""
+        pair = (pathlib.Path("/probe/small.safetensors"),
+                pathlib.Path("/probe/large.safetensors"))
+        split = evaluate.Split(develop=pair, validation=VALIDATION, test=TEST)
+        baseline = (
+            evaluate.CorpusResult(
+                100_000_000, 200_000_000,
+                {"small.safetensors": 1_000_000, "large.safetensors": 99_000_000},
+                20),   # two models, so the baseline wall is two benches
+            evaluate.CorpusResult(BASE, BASE * 2, {"validation.safetensors": BASE}, 10),
+        )
+        # The corpus falls by 5 MB while `small` grows 10%.
+        sizes = iter([1_100_000, 93_900_000, BASE])
+
+        def fake_bench(model, budget, macros=None, **kwargs):
+            return measurement(next(sizes))
+
+        with mock.patch.object(engine, "bench", fake_bench):
+            decision, _ = evaluate.evaluate(
+                self.library, self.candidate, split, BUDGET, self.workdir,
+                baseline=baseline,
+            )
+        self.assertLess(decision.develop_delta, 0, "the corpus did fall")
+        self.assertFalse(decision.accept)
+        self.assertIn("per-model limit", decision.reason)
+        self.assertIn("small.safetensors", decision.reason)
 
     def test_a_macro_that_slows_planning_past_the_limit_is_rejected(self):
         slow = int(10 * evaluate.MAX_PLANNING_SLOWDOWN) + 5
@@ -132,10 +162,36 @@ class CorpusTests(unittest.TestCase):
             return measurement(next(sizes))
 
         with mock.patch.object(engine, "bench", fake_bench):
-            result = evaluate.measure_corpus(DEVELOP + HOLDOUT, BUDGET, None)
+            result = evaluate.measure_corpus(DEVELOP + VALIDATION, BUDGET, None)
         self.assertEqual(42, result.archive_bytes)
-        self.assertEqual({"develop.safetensors": 10, "holdout.safetensors": 32},
+        self.assertEqual({"develop.safetensors": 10, "validation.safetensors": 32},
                          result.per_model)
+
+
+class WorstRegressionTests(unittest.TestCase):
+    """A corpus total hides a single model being badly hurt."""
+
+    def test_a_model_within_the_limit_is_not_flagged(self):
+        limit = evaluate.MAX_MODEL_REGRESSION
+        self.assertIsNone(evaluate.worst_regression(
+            {"a": 1_000_000}, {"a": 1_000_000 + int(limit * 1_000_000 / 2)}))
+
+    def test_a_model_past_the_limit_is_named_with_its_share(self):
+        found = evaluate.worst_regression({"a": 1_000_000}, {"a": 1_010_000})
+        self.assertIsNotNone(found)
+        self.assertEqual(("a", 10_000), found[:2])
+        self.assertAlmostEqual(0.01, found[2])
+
+    def test_the_worst_offender_wins_when_several_regress(self):
+        found = evaluate.worst_regression(
+            {"a": 1_000_000, "b": 1_000_000}, {"a": 1_005_000, "b": 1_050_000})
+        self.assertEqual("b", found[0])
+
+    def test_improvements_are_never_flagged(self):
+        self.assertIsNone(evaluate.worst_regression({"a": 100}, {"a": 50}))
+
+    def test_a_model_absent_from_the_after_set_is_skipped(self):
+        self.assertIsNone(evaluate.worst_regression({"a": 100}, {}))
 
 
 class VerdictTests(unittest.TestCase):
@@ -149,7 +205,7 @@ class VerdictTests(unittest.TestCase):
         self.library = lib.EMPTY.with_macro(lib.Macro("zigzag_split", zigzag_split()))
 
     def judge(self, before: int, after: int, *, bit_exact=True, library=None,
-              planning=(10, 10)):
+              planning=(10, 10), tier="test"):
         sizes = iter([before, after])
         walls = iter(planning)
 
@@ -160,13 +216,32 @@ class VerdictTests(unittest.TestCase):
         with mock.patch.object(engine, "bench", fake_bench):
             return evaluate.verdict(
                 self.library if library is None else library,
-                SPLIT, BUDGET, self.workdir, bit_exact=bit_exact,
+                SPLIT, BUDGET, self.workdir, bit_exact=bit_exact, tier=tier,
+                test_log=self.workdir / "test-log.jsonl",
             )
 
     def test_a_real_gain_on_unseen_checkpoints_is_success(self):
         result = self.judge(BASE, BASE - 50_000)
         self.assertTrue(result.success, result.reason)
-        self.assertIn("unseen checkpoints shrank", result.reason)
+        self.assertEqual("test", result.tier)
+
+    def test_every_touch_of_the_test_tier_is_logged_and_counted(self):
+        """Reading a locked set twice is multiple testing; make it visible."""
+        first = self.judge(BASE, BASE - 50_000)
+        self.assertEqual(0, first.prior_measurements_of_this_tier)
+        second = self.judge(BASE, BASE - 50_000)
+        self.assertEqual(1, second.prior_measurements_of_this_tier)
+        logged = (self.workdir / "test-log.jsonl").read_text().splitlines()
+        self.assertEqual(2, len(logged))
+
+    def test_an_empty_tier_is_reported_rather_than_silently_passing(self):
+        empty = evaluate.Split(develop=DEVELOP, validation=VALIDATION, test=())
+        with mock.patch.object(engine, "bench") as bench:
+            result = evaluate.verdict(self.library, empty, BUDGET, self.workdir,
+                                      bit_exact=True)
+        self.assertFalse(result.success)
+        self.assertIn("empty", result.reason)
+        bench.assert_not_called()
 
     def test_no_gain_on_unseen_checkpoints_is_failure(self):
         result = self.judge(BASE, BASE)
@@ -209,9 +284,28 @@ class LabelTests(unittest.TestCase):
 
 
 class SplitTests(unittest.TestCase):
-    def test_split_records_its_own_weakness(self):
-        self.assertIn("weak split", SPLIT.describe()["caveat"])
-        self.assertEqual(DEVELOP + HOLDOUT, SPLIT.all())
+    def test_split_names_the_role_of_every_tier(self):
+        roles = SPLIT.describe()["roles"]
+        self.assertIn("not a test set", roles["validation"])
+        self.assertIn("never by mining", roles["test"])
+        self.assertEqual(DEVELOP + VALIDATION + TEST, SPLIT.all())
+
+    def test_acceptance_never_reads_the_test_tier(self):
+        """The veto is the validation tier; test must stay untouched."""
+        seen = []
+
+        def fake_bench(model, budget, macros=None, **kwargs):
+            seen.append(model)
+            return measurement(BASE)
+
+        with mock.patch.object(engine, "bench", fake_bench), \
+             tempfile.TemporaryDirectory() as tmp:
+            evaluate.evaluate(
+                lib.EMPTY, lib.EMPTY.with_macro(lib.Macro("m", zigzag_split())),
+                SPLIT, BUDGET, pathlib.Path(tmp),
+            )
+        self.assertNotIn(TEST[0], seen)
+        self.assertIn(VALIDATION[0], seen)
 
 
 if __name__ == "__main__":

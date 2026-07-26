@@ -114,11 +114,17 @@ A candidate must survive all of these, cheapest first:
    This should never fail, which is why it is worth running: a failure means an
    assumption broke.
 5. **Pays** — archive bytes must fall on the develop set by more than the
-   margin, *and* must not rise on the holdout set by more than the tolerance.
+   margin, and must not rise on the validation set by more than the tolerance.
+   Planning may not slow by more than `MAX_PLANNING_SLOWDOWN`.
+6. **Wrecks nothing** — a corpus total hides one file being badly hurt, so
+   `MAX_MODEL_REGRESSION` caps what any single measured file may lose.
 
-Proposals are written against develop-set evidence, so gating on develop alone
-would reward memorizing it. With four cached checkpoints this is a weak split
-and every ledger entry records it as such.
+Proposals are written against develop evidence, so gating on develop alone
+would reward memorizing it. Three tiers keep that honest: `develop` is mined
+and shown to the proposer, `validation` is the acceptance veto — which makes it
+part of the training loop, not a test set — and `test` is read only by
+`verdict`, with every touch appended to `runs/test-log.jsonl` so repeated
+measurement is visible rather than hidden.
 
 ## Running it
 
@@ -159,9 +165,10 @@ To use a library outside the loop, any command that takes search options takes
 | `autodsl/backend.py` | LLM transport: Anthropic native and OpenAI-compatible. |
 | `autodsl/propose.py` | Prompt construction and reply parsing. |
 | `autodsl/verify.py` | Gates 1–4. |
-| `autodsl/evaluate.py` | Gate 5, and the MDL accounting. |
+| `autodsl/evaluate.py` | Gates 5–6, the three-tier split, and the MDL accounting. |
 | `autodsl/ledger.py` | Append-only record of every proposal and its fate. |
 | `autodsl/loop.py` | The driver. |
+| `autodsl/experiments.py` | Budget curve, per-tensor distribution, hashed real archives. |
 
 The operator table in the prompt and in every validator comes from
 `brevis config`, so the DSL is declared once, in `src/ops.zig`.
@@ -172,13 +179,16 @@ operator it does not describe.
 ## Where it stands
 
 Two macros have survived every gate, one mined and one proposed by
-`claude-opus-5`. On the holdout split they are worth **−2,125,950 bytes
-(0.122%)** after charging the 547-byte library, bit-exact, at 0.89× planning
-cost. The proposed macro accounts for 44× what the mined one does — mining
-recovers shapes the search mostly finds anyway, while the proposer reached
-`split_float(bitpack,rans,split_field(rans,bitpack))`, a structure legal in the
-primitive grammar that a 256-expansion budget never assembles. Numbers, the
-run log, and the caveats are in [`progress.md`](progress.md).
+`claude-opus-5`. On a locked test set of three unseen checkpoint families
+(Whisper F16, SDXL F16, Qwen3-8B BF16 — 26.4 GB, 10 files) they are worth
+**−7,357,344 bytes (0.038%)** after charging the 547-byte library, bit-exact
+on every file, at 0.93× planning cost.
+
+Read the breakdown before believing the total: two of three models improve, the
+whole net gain is Qwen3-8B, one Qwen shard is 4.4 MB *worse*, and Whisper
+regresses outright. What was learned is a BF16 float-field rule — it never
+fires on F32 at all. Numbers, the budget curve that separates acceleration from
+reachability, and the leakage history are in [`progress.md`](progress.md).
 
 ## Status and limits
 
