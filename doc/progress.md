@@ -325,6 +325,79 @@ Cost accounting, so "0.93× planning" is not read as free:
 - The baseline is held at the same expansion budget. `budget-curve` is the
   place where equal-wall-time is compared instead, and it is reported there.
 
+---
+
+## 2026-07-25 (later) — From greedy acceptance to a population search
+
+The loop up to here proposed one macro at a time and kept each that paid on its
+own. That cannot find a *set*: two macros can cover different tensors, and a
+macro that loses alone can win beside another. Directly measured here — a
+hand-written four-macro library beat the baseline on both develop models while
+most of its members are refused individually.
+
+### What changed
+
+A **library**, not a macro, now carries a fitness. `variation.py` supplies the
+moves — random generation, four body mutations, member dropping, and crossover
+between two libraries — all pure functions of `(library, table, rng)`, so the
+loop is reproducible from a seed and every operator is testable without the
+engine. `search.py` runs a population of libraries, recombines them, feeds the
+measured history back to the proposer, and stops on patience or budget.
+
+**Every arm spends the same currency.** One *evaluation* is one fitness
+measurement of one library over the develop tier. The cache is shared across
+arms, so revisiting a library is free for everyone. When an arm's budget is
+gone it stops, whatever it was doing. Validation is applied once per arm, to
+its final library, as a veto.
+
+### The arena: five arms, 30 evaluations each, one seed
+
+| Arm | develop Δ | validation Δ | evals | rounds | macros |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **search** | **−735,741** | −2,132,909 | 30 | 4 | 2 |
+| greedy | −32,095 | **−2,296,109** | 18 | 6 | 1 |
+| mining | −10,637 | −48,978 | 5 | 5 | 1 |
+| random | 0 | 0 | 4 | 4 | 0 |
+| one_shot | 0 | 0 | 1 | 1 | 0 |
+
+**The gain is not a single lucky hit.** The search arm's best-so-far by round:
+
+```
+537,823,854 → 537,727,913 → 537,727,869 → 537,110,605
+       −22,492      −95,941           −44        −617,264
+```
+
+Four rounds, improving at each, and the largest step is the *last* one. It also
+exhausted its budget rather than converging, so 30 evaluations is a floor on
+what it can find, not a ceiling.
+
+**The winning macro came from mutation, not from the model.** The final library
+is `zigzag(split_field(?,?))` (mined) plus:
+
+```
+split_float(?, rans, split_field(?, bitpack))        [mutated]
+```
+
+which is the search generalising the model's earlier
+`split_float(bitpack, rans, split_field(rans, bitpack))` — two pinned terminals
+opened back into holes. The generalisation is worth 23× the proposal it came
+from. Neither mining nor the proposer would have produced it: mining only
+recovers shapes already being found, and the model wrote the specific form.
+
+**One result cuts against the ranking.** Greedy won *validation* by a little
+while losing develop by 23×. Develop order is therefore not transfer order, and
+the search arm may be fitting develop. Only the frozen test tier settles it.
+
+### Honest notes on the arena
+
+- `random` and `one_shot` produced nothing at all, so "beats random" and
+  "beats one-shot" here means "beats zero". That is a real result for those
+  arms under this budget, not a strong comparison.
+- `mining` and `random` stopped on patience after 4–5 evaluations, well under
+  the cap. They could not spend the budget; that is a property of the method,
+  and the cap was identical for all five.
+- One seed. Variance across seeds is unmeasured.
+
 ### Open
 
 - **The library is BF16-shaped.** It never fires on F32 and makes one F16 model

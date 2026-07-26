@@ -110,6 +110,7 @@ def build_prompt(
     mined: list | None = None,
     rejected: list[dict] | None = None,
     wanted: int = 4,
+    history: list[dict] | None = None,
 ) -> str:
     current = (
         "\n".join(
@@ -132,6 +133,16 @@ def build_prompt(
         )
         or "  (none yet)"
     )
+    history_text = (
+        "\n".join(
+            f"  {'+' if row['objective_delta_vs_best'] > 0 else ''}"
+            f"{row['objective_delta_vs_best']:>10d} bytes vs the best so far  "
+            f"{'' if row['feasible'] else '[INFEASIBLE: ' + row['note'] + '] '}"
+            f"{' + '.join(row['macros']) or '(empty library)'}"
+            for row in (history or [])[:10]
+        )
+        or "  (nothing measured yet)"
+    )
 
     return f"""\
 OPERATORS
@@ -149,6 +160,11 @@ CURRENT LIBRARY
 SHAPES THE SEARCH ALREADY FINDS ON ITS OWN, by encoded bytes they govern.
 Proposing one of these is usually pointless: the search reaches them anyway.
 {mined_text}
+
+LIBRARIES ALREADY MEASURED THIS RUN, best first. A library is a *set* of
+macros measured together, so a shape that appears in a losing set is not
+thereby a losing shape.
+{history_text}
 
 ALREADY TRIED AND REJECTED — do not propose these again
 {rejected_text}
@@ -214,10 +230,11 @@ def propose(
     mined: list | None = None,
     rejected: list[dict] | None = None,
     wanted: int = 4,
+    history: list[dict] | None = None,
 ) -> Proposal:
     prompt = build_prompt(
         evidence, library, table, budget=budget, mined=mined,
-        rejected=rejected, wanted=wanted,
+        rejected=rejected, wanted=wanted, history=history,
     )
     reply = llm.complete(SYSTEM, prompt)
     return Proposal(

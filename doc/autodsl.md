@@ -14,6 +14,11 @@ outer loop   mine + propose new macros -> verify -> measure -> keep or reject
 The model is confined to *proposing*. Everything that decides what survives is
 deterministic and replayable from the ledger.
 
+`loop.py` is the greedy version: one macro at a time, kept if it pays alone.
+`search.py` is the population version: a whole **library** carries a fitness, so
+combinations are measurable, and it runs against one-shot, greedy, mining and
+random arms on an identical evaluation budget.
+
 ## What a macro is
 
 A macro is a named subtree of **existing** operators whose leaves are holes
@@ -138,6 +143,9 @@ python3 loop.py mine --top 20            # shapes the search keeps rediscovering
 python3 loop.py bootstrap --top 6        # gate mined shapes; no model involved
 python3 loop.py propose --rounds 3 --model-name claude-opus-5
 python3 loop.py status --measure
+
+python3 search.py --run arena --evaluations 30      # five arms, equal budget
+python3 search.py --run arena --judge               # rank them on the frozen tier
 ```
 
 `--model-name` takes `claude-opus-5` (Anthropic protocol), `qwen3.7-max`, or
@@ -167,7 +175,9 @@ To use a library outside the loop, any command that takes search options takes
 | `autodsl/verify.py` | Gates 1–4. |
 | `autodsl/evaluate.py` | Gates 5–6, the three-tier split, and the MDL accounting. |
 | `autodsl/ledger.py` | Append-only record of every proposal and its fate. |
-| `autodsl/loop.py` | The driver. |
+| `autodsl/loop.py` | The single-macro greedy driver. |
+| `autodsl/variation.py` | Random generation, body mutation, member dropping, crossover. |
+| `autodsl/search.py` | Population search over libraries, the five arms, and the frozen-test judge. |
 | `autodsl/experiments.py` | Budget curve, per-tensor distribution, hashed real archives. |
 
 The operator table in the prompt and in every validator comes from
