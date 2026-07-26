@@ -2,7 +2,7 @@
   "schema": "brevis.macro-library.v1",
   "provenance": {
     "produced_by": "autodsl/loop.py",
-    "run": "learn",
+    "run": "smoke",
     "budget": {
       "max_depth": 2,
       "max_expansions": 256,
@@ -16,11 +16,27 @@
         "RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/model.safetensors",
         "google-bert__bert-base-uncased/model.safetensors"
       ],
-      "holdout": [
+      "validation": [
         "google__vit-base-patch16-224/model.safetensors",
         "TinyLlama__TinyLlama-1.1B-Chat-v1.0/model.safetensors"
       ],
-      "caveat": "a handful of cached checkpoints is a weak split; a claim about generalization needs more models than this"
+      "test": [
+        "openai__whisper-large-v3/model.safetensors",
+        "stabilityai__stable-diffusion-xl-base-1.0/text_encoder/model.fp16.safetensors",
+        "stabilityai__stable-diffusion-xl-base-1.0/text_encoder_2/model.fp16.safetensors",
+        "stabilityai__stable-diffusion-xl-base-1.0/unet/diffusion_pytorch_model.fp16.safetensors",
+        "stabilityai__stable-diffusion-xl-base-1.0/vae/diffusion_pytorch_model.fp16.safetensors",
+        "Qwen__Qwen3-8B-Base/model-00001-of-00005.safetensors",
+        "Qwen__Qwen3-8B-Base/model-00002-of-00005.safetensors",
+        "Qwen__Qwen3-8B-Base/model-00003-of-00005.safetensors",
+        "Qwen__Qwen3-8B-Base/model-00004-of-00005.safetensors",
+        "Qwen__Qwen3-8B-Base/model-00005-of-00005.safetensors"
+      ],
+      "roles": {
+        "develop": "mined, shown to the proposer, and required to improve",
+        "validation": "veto during acceptance; steers the library, so not a test set",
+        "test": "read only by verdict(); never by mining, proposing, or acceptance"
+      }
     },
     "measurement_status": "development_only_not_formal",
     "note": "Macros are expanded into primitive operators before serialization, so an archive written with this library is byte-identical to one written without it whenever both select the same program."

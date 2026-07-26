@@ -42,12 +42,22 @@ class Ledger:
     def count(self) -> int:
         return sum(1 for _ in self.entries())
 
-    def rejected(self) -> list[dict]:
-        """What to tell the proposer not to try again, newest last."""
+    def rejected(self, evaluator: str | None = None) -> list[dict]:
+        """What to tell the proposer not to try again, newest last.
+
+        A rejection is only binding while the evaluator that produced it still
+        stands. Three candidates in this repository's own history were refused
+        for "never fired" under a macro-pricing bug; carrying those forward
+        would keep a whole family of shapes permanently off the table for a
+        reason that no longer exists. Pass the current evaluator version to
+        drop anything judged under a different one.
+        """
         out: list[dict] = []
         seen: set[str] = set()
         for entry in self.entries():
             if entry.get("kind") != "rejected":
+                continue
+            if evaluator is not None and entry.get("evaluator") != evaluator:
                 continue
             shape = entry.get("shape", "")
             if shape in seen:
@@ -55,6 +65,17 @@ class Ledger:
             seen.add(shape)
             out.append({"shape": shape, "reason": entry.get("reason", "")})
         return out
+
+    def stale(self, evaluator: str) -> list[dict]:
+        """Decisions taken under a different evaluator, so no longer evidence."""
+        return [
+            {"kind": e["kind"], "name": e.get("name", ""), "shape": e.get("shape", ""),
+             "evaluator": e.get("evaluator", "unversioned"),
+             "reason": e.get("reason", "")}
+            for e in self.entries()
+            if e.get("kind") in ("accepted", "rejected")
+            and e.get("evaluator") != evaluator
+        ]
 
     def accepted_names(self) -> list[str]:
         live: list[str] = []

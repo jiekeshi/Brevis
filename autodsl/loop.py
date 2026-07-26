@@ -124,6 +124,17 @@ def budget_from(args) -> engine.Budget:
     )
 
 
+def proposer_evidence_source(split: evaluate.Split) -> pathlib.Path:
+    """The only checkpoint a proposer is ever shown.
+
+    Kept as a named function rather than an inline `split.develop[0]` so the
+    containment is a property that can be asserted: `test_loop.py` fails if
+    this ever returns a validation or test checkpoint. Everything the proposer
+    sees is derived from this one bench report.
+    """
+    return split.develop[0]
+
+
 def split_from(args) -> evaluate.Split:
     """Resolve the three tiers. Test checkpoints that are not cached are simply
     absent — a claim then rests on fewer models, which the verdict records."""
@@ -188,6 +199,7 @@ def _consider(
         ledger.append(
             "rejected", name=macro.name, shape=macro.shape(), origin=origin,
             reason=verdict.reason, stage="verify", detail=verdict.detail,
+            evaluator=evaluate.VERSION,
         )
         return library, baseline, False
 
@@ -199,7 +211,7 @@ def _consider(
     ledger.append(
         "accepted" if decision.accept else "rejected",
         name=macro.name, shape=macro.shape(), origin=origin, why=macro.why,
-        reason=decision.reason, stage="evaluate",
+        reason=decision.reason, stage="evaluate", evaluator=evaluate.VERSION,
         decision=decision.describe(), verify=verdict.detail,
     )
     if not decision.accept:
@@ -225,17 +237,18 @@ def cmd_bootstrap(args) -> int:
     macros_path = args.library if library.macros else None
     baseline = (
         evaluate.measure_corpus(split.develop, budget, macros_path),
-        evaluate.measure_corpus(split.holdout, budget, macros_path),
+        evaluate.measure_corpus(split.validation, budget, macros_path),
     )
     print(
         f"baseline: develop {baseline[0].archive_bytes} bytes, "
-        f"holdout {baseline[1].archive_bytes} bytes"
+        f"validation {baseline[1].archive_bytes} bytes"
     )
     ledger.append(
         "baseline", budget=budget.describe(), split=split.describe(),
         develop_bytes=baseline[0].archive_bytes,
-        holdout_bytes=baseline[1].archive_bytes,
-        library_sha256=library.sha256(), environment=engine.environment_notes(),
+        validation_bytes=baseline[1].archive_bytes,
+        library_sha256=library.sha256(), evaluator=evaluate.VERSION,
+        environment=engine.environment_notes(),
     )
 
     pooled: dict[str, mine_mod.Candidate] = {}
@@ -280,20 +293,21 @@ def cmd_propose(args) -> int:
     macros_path = args.library if library.macros else None
     baseline = (
         evaluate.measure_corpus(split.develop, budget, macros_path),
-        evaluate.measure_corpus(split.holdout, budget, macros_path),
+        evaluate.measure_corpus(split.validation, budget, macros_path),
     )
     ledger.append(
         "baseline", budget=budget.describe(), split=split.describe(),
         develop_bytes=baseline[0].archive_bytes,
-        holdout_bytes=baseline[1].archive_bytes,
+        validation_bytes=baseline[1].archive_bytes,
         library_sha256=library.sha256(), backend=llm.describe(),
-        environment=engine.environment_notes(),
+        evaluator=evaluate.VERSION, environment=engine.environment_notes(),
     )
 
     for round_index in range(args.rounds):
         print(f"\n=== round {round_index + 1}/{args.rounds} ===")
         macros_path = args.library if library.macros else None
-        measurement = engine.bench(split.develop[0], budget, macros_path)
+        measurement = engine.bench(
+            proposer_evidence_source(split), budget, macros_path)
         evidence = mine_mod.evidence(measurement.report, table)
         mined = mine_mod.mine(measurement.report, table, library)
 
@@ -301,7 +315,7 @@ def cmd_propose(args) -> int:
             proposal = propose_mod.propose(
                 llm, evidence, library, table,
                 budget=budget.describe(), mined=mined,
-                rejected=ledger.rejected(), wanted=args.wanted,
+                rejected=ledger.rejected(evaluate.VERSION), wanted=args.wanted,
             )
         except Exception as exc:  # a bad reply ends the round, not the run
             print(f"  proposal failed: {type(exc).__name__}: {exc}")
@@ -398,7 +412,7 @@ def _report(library: Library, baseline, path: pathlib.Path, ledger: Ledger,
     print(
         f"\nlibrary: {len(library.macros)} macros, sha256={library.sha256()[:16]}\n"
         f"  develop {baseline[0].archive_bytes} bytes   "
-        f"holdout {baseline[1].archive_bytes} bytes\n"
+        f"validation {baseline[1].archive_bytes} bytes\n"
         f"  ledger  {json.dumps(ledger.summary())}\n"
         f"  written to {path}"
     )

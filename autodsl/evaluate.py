@@ -65,6 +65,12 @@ import pathlib
 import engine
 from library import Library
 
+# Bump whenever a change could flip a past decision: the objective, any
+# threshold, the split, or the engine's macro pricing. A rejection recorded
+# under an older evaluator is not evidence and must not keep a candidate off
+# the table — see Ledger.rejected.
+VERSION = "2026-07-25.3"
+
 # A gain smaller than this is real but not worth the permanent branching cost.
 # Expressed as a fraction of the corpus archive, so it scales with the corpus.
 ACCEPT_MARGIN = 1e-5

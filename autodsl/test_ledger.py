@@ -51,6 +51,28 @@ class LedgerTests(unittest.TestCase):
             self.ledger.rejected(),
         )
 
+    def test_a_rejection_from_another_evaluator_is_not_binding(self):
+        """Three real candidates were refused under a macro-pricing bug.
+        Carrying those forward would bar a whole family for a dead reason."""
+        self.ledger.append("rejected", name="a", shape="gray(?)", reason="inert",
+                           evaluator="old")
+        self.ledger.append("rejected", name="b", shape="rle(?,?)", reason="no gain",
+                           evaluator="new")
+        self.assertEqual(["rle(?,?)"],
+                         [r["shape"] for r in self.ledger.rejected("new")])
+        self.assertEqual(2, len(self.ledger.rejected()))
+
+    def test_stale_lists_decisions_taken_under_another_evaluator(self):
+        self.ledger.append("accepted", name="a", shape="x", evaluator="old")
+        self.ledger.append("rejected", name="b", shape="y", evaluator="new")
+        self.ledger.append("proposed", name="c")
+        stale = self.ledger.stale("new")
+        self.assertEqual([("accepted", "a")], [(e["kind"], e["name"]) for e in stale])
+
+    def test_an_unversioned_entry_counts_as_stale(self):
+        self.ledger.append("rejected", name="a", shape="x", reason="r")
+        self.assertEqual("unversioned", self.ledger.stale("new")[0]["evaluator"])
+
     def test_accepted_names_reflect_later_drops(self):
         self.ledger.append("accepted", name="a")
         self.ledger.append("accepted", name="b")
