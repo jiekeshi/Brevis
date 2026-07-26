@@ -4,6 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    _ = b.addModule("brevis", .{
+        .root_source_file = b.path("src/brevis.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -22,7 +28,6 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run brevis CLI");
     run_step.dependOn(&run_cmd.step);
 
-    // Test runner
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
@@ -32,10 +37,4 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_tests.step);
-
-    // Convenience: `zig build demo` invokes the CLI's demo subcommand.
-    const demo_run = b.addRunArtifact(exe);
-    demo_run.addArg("demo");
-    const demo_step = b.step("demo", "Run synthetic-tensor demo (calls `brevis demo`)");
-    demo_step.dependOn(&demo_run.step);
 }

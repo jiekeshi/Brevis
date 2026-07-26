@@ -138,6 +138,10 @@ pub const Histogram = struct {
 /// than the stream costs to sort. The search evaluates many short streams, so
 /// this path dominates in practice.
 const SMALL_STREAM: usize = 8192;
+/// Physical entropy candidates with larger alphabets cannot justify their
+/// table memory in this implementation. `Lit` remains total through raw and
+/// bitpack, while Huffman/rANS report themselves inapplicable.
+pub const MAX_HISTOGRAM_SYMBOLS: usize = 65_536;
 
 fn histogramBySort(alloc: Allocator, stream: Stream) !Histogram {
     const tmp = try alloc.alloc(u32, stream.count);
@@ -154,9 +158,9 @@ fn histogramBySort(alloc: Allocator, stream: Stream) !Histogram {
     var j: usize = 0;
     var i: usize = 0;
     while (i < tmp.len) {
-        var run: u64 = 1;
+        var run: usize = 1;
         while (i + run < tmp.len and tmp[i + run] == tmp[i]) run += 1;
-        pairs[j] = .{ .sym = tmp[i], .count = run };
+        pairs[j] = .{ .sym = tmp[i], .count = @intCast(run) };
         j += 1;
         i += run;
     }
@@ -167,14 +171,14 @@ pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
     const bpe_pow2 = types.roundUpToPow2(stream.bits_per_elem);
     if (bpe_pow2 != 8 and stream.count < SMALL_STREAM) return histogramBySort(alloc, stream);
     if (bpe_pow2 == 8) {
-        var c0: [256]u32 = .{0} ** 256;
-        var c1: [256]u32 = .{0} ** 256;
-        var c2: [256]u32 = .{0} ** 256;
-        var c3: [256]u32 = .{0} ** 256;
+        var c0: [256]u64 = .{0} ** 256;
+        var c1: [256]u64 = .{0} ** 256;
+        var c2: [256]u64 = .{0} ** 256;
+        var c3: [256]u64 = .{0} ** 256;
         const data = stream.data;
         var i: usize = 0;
         const n = stream.count;
-        while (i + 4 <= n) : (i += 4) {
+        while (n - i >= 4) : (i += 4) {
             c0[data[i + 0]] += 1;
             c1[data[i + 1]] += 1;
             c2[data[i + 2]] += 1;
@@ -190,7 +194,7 @@ pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
         var j: usize = 0;
         k = 0;
         while (k < 256) : (k += 1) {
-            const tot: u64 = @as(u64, c0[k]) + c1[k] + c2[k] + c3[k];
+            const tot = c0[k] + c1[k] + c2[k] + c3[k];
             if (tot > 0) {
                 pairs[j] = .{ .sym = @intCast(k), .count = tot };
                 j += 1;
@@ -199,9 +203,10 @@ pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
         return .{ .pairs = pairs };
     }
     if (bpe_pow2 == 16) {
-        // 4 × 65536 × u32 = 1 MB on the heap (don't put on the stack).
+        // Four u64 lanes avoid counter overflow on very large trusted inputs.
+        // Keep the 2 MiB table off the stack.
         const slots: usize = 65536;
-        const pool = try alloc.alloc(u32, slots * 4);
+        const pool = try alloc.alloc(u64, slots * 4);
         defer alloc.free(pool);
         @memset(pool, 0);
         const c0 = pool[0..slots];
@@ -210,7 +215,7 @@ pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
         const c3 = pool[3 * slots .. 4 * slots];
         var i: usize = 0;
         const n = stream.count;
-        while (i + 4 <= n) : (i += 4) {
+        while (n - i >= 4) : (i += 4) {
             c0[std.mem.readInt(u16, stream.data[(i + 0) * 2 ..][0..2], .little)] += 1;
             c1[std.mem.readInt(u16, stream.data[(i + 1) * 2 ..][0..2], .little)] += 1;
             c2[std.mem.readInt(u16, stream.data[(i + 2) * 2 ..][0..2], .little)] += 1;
@@ -220,13 +225,13 @@ pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
         var unique: usize = 0;
         var k: usize = 0;
         while (k < slots) : (k += 1) {
-            if (@as(u64, c0[k]) + c1[k] + c2[k] + c3[k] > 0) unique += 1;
+            if (c0[k] + c1[k] + c2[k] + c3[k] > 0) unique += 1;
         }
         const pairs = try alloc.alloc(Histogram.Pair, unique);
         var j: usize = 0;
         k = 0;
         while (k < slots) : (k += 1) {
-            const tot: u64 = @as(u64, c0[k]) + c1[k] + c2[k] + c3[k];
+            const tot = c0[k] + c1[k] + c2[k] + c3[k];
             if (tot > 0) {
                 pairs[j] = .{ .sym = @intCast(k), .count = tot };
                 j += 1;
@@ -240,7 +245,11 @@ pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
     for (0..stream.count) |i| {
         const sym = stream.getU32(i);
         const gop = try map.getOrPut(sym);
-        if (!gop.found_existing) gop.value_ptr.* = 0;
+        if (!gop.found_existing) {
+            if (map.count() > MAX_HISTOGRAM_SYMBOLS)
+                return error.AlphabetTooLarge;
+            gop.value_ptr.* = 0;
+        }
         gop.value_ptr.* += 1;
     }
     const pairs = try alloc.alloc(Histogram.Pair, map.count());
@@ -268,6 +277,8 @@ pub fn huffmanBuild(alloc: Allocator, stream: Stream) !HuffmanTable {
 pub fn huffmanFromHist(alloc: Allocator, hist: Histogram, bits_per_elem: u8) !HuffmanTable {
     _ = bits_per_elem;
 
+    if (hist.pairs.len > MAX_HISTOGRAM_SYMBOLS)
+        return error.AlphabetTooLarge;
     if (hist.pairs.len == 0) {
         return .{ .entries = try alloc.alloc(HuffmanTable.Entry, 0) };
     }
@@ -536,10 +547,13 @@ pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable,
 // Each element is written as exactly `width` bits, MSB-first. No table.
 
 pub fn bitpackEncode(alloc: Allocator, stream: Stream, width: u8) ![]u8 {
-    std.debug.assert(width > 0 and width <= 32);
+    if (width == 0 or width > 32) return error.InvalidBitpackWidth;
 
     var out: std.ArrayList(u8) = .empty;
-    try out.ensureTotalCapacity(alloc, (stream.count * width + 7) / 8);
+    try out.ensureTotalCapacity(
+        alloc,
+        try bitpackByteCount(stream.count, width),
+    );
     defer out.deinit(alloc);
     var bw = BitWriter.init(alloc, &out);
 
@@ -553,14 +567,13 @@ pub fn bitpackEncode(alloc: Allocator, stream: Stream, width: u8) ![]u8 {
 }
 
 pub fn bitpackDecode(alloc: Allocator, payload: []const u8, width: u8, count: usize, out_bpe: u8) !Stream {
-    std.debug.assert(width > 0 and width <= 32);
+    if (width == 0 or width > 32) return error.InvalidBitpackWidth;
+    const required_payload = try bitpackByteCount(count, width);
+    if (payload.len < required_payload) return error.CorruptBitpackStream;
 
-    const buf = try alloc.alloc(u8, count * (types.roundUpToPow2(out_bpe) / 8));
-    var s: Stream = .{ .data = buf, .count = count, .bits_per_elem = out_bpe };
+    var s = try Stream.init(alloc, count, out_bpe);
     errdefer s.deinit(alloc);
     if (count == 0) return s;
-
-    if (payload.len * 8 < count * @as(usize, width)) return error.CorruptBitpackStream;
 
     var br = BitReader.init(payload);
     for (0..count) |i| {
@@ -570,8 +583,28 @@ pub fn bitpackDecode(alloc: Allocator, payload: []const u8, width: u8, count: us
 }
 
 pub fn bitpackCostBits(stream: Stream, width: u8) u64 {
-    const bits = @as(u64, stream.count) * @as(u64, width);
-    return ((bits + 7) / 8) * 8;
+    const count = std.math.cast(u64, stream.count) orelse
+        return std.math.maxInt(u64) - 7;
+    const bits = std.math.mul(u64, count, width) catch
+        return std.math.maxInt(u64) - 7;
+    const rounded = std.math.add(u64, bits, 7) catch
+        return std.math.maxInt(u64) - 7;
+    return (rounded / 8) * 8;
+}
+
+fn bitpackByteCount(count: usize, width: u8) !usize {
+    if (width == 0 or width > 32) return error.InvalidBitpackWidth;
+    const count_u64 = std.math.cast(u64, count) orelse
+        return error.BitpackSizeOverflow;
+    const bit_count = std.math.mul(
+        u64,
+        count_u64,
+        @as(u64, width),
+    ) catch return error.BitpackSizeOverflow;
+    const rounded = std.math.add(u64, bit_count, 7) catch
+        return error.BitpackSizeOverflow;
+    return std.math.cast(usize, rounded / 8) orelse
+        error.BitpackSizeOverflow;
 }
 
 // ==================== rANS ====================
@@ -629,6 +662,7 @@ pub fn ransFromHist(alloc: Allocator, hist: Histogram, count: usize) !RansTable 
     // Pairs are already sorted by symbol ascending.
     const n = hist.pairs.len;
     const syms = try alloc.alloc(u32, n);
+    errdefer alloc.free(syms);
     for (hist.pairs, 0..) |p, k| syms[k] = p.sym;
 
     // Quantize frequencies to RANS_PROB_SCALE.
@@ -747,7 +781,21 @@ pub fn ransEncode(alloc: Allocator, stream: Stream, table: RansTable) ![]u8 {
     return owned;
 }
 
-pub fn ransDecode(alloc: Allocator, payload: []const u8, table: RansTable, count: usize, bits_per_elem: u8) !Stream {
+pub const RansDecodeResult = struct {
+    stream: Stream,
+    consumed_bytes: usize,
+    final_state: u32,
+};
+
+pub fn ransDecodeWithState(
+    alloc: Allocator,
+    payload: []const u8,
+    table: RansTable,
+    count: usize,
+    bits_per_elem: u8,
+) !RansDecodeResult {
+    if (bits_per_elem == 0 or bits_per_elem > 32)
+        return error.InvalidWordWidth;
     if (count != 0 and payload.len < 4) return error.CorruptRansStream;
     // Build cum->sym lookup locally so the table stays read-only.
     const cum2sym = try alloc.alloc(u16, RANS_PROB_SCALE);
@@ -758,16 +806,13 @@ pub fn ransDecode(alloc: Allocator, payload: []const u8, table: RansTable, count
         while (c < end) : (c += 1) cum2sym[c] = @intCast(ii);
     }
 
-    const elem_bytes: usize = switch (types.roundUpToPow2(bits_per_elem)) {
-        8 => 1,
-        16 => 2,
-        32 => 4,
-        else => unreachable,
-    };
-    const buf = try alloc.alloc(u8, count * elem_bytes);
-    var s: Stream = .{ .data = buf, .count = count, .bits_per_elem = bits_per_elem };
+    var s = try Stream.init(alloc, count, bits_per_elem);
     errdefer s.deinit(alloc);
-    if (count == 0) return s;
+    if (count == 0) return .{
+        .stream = s,
+        .consumed_bytes = 0,
+        .final_state = RANS_L,
+    };
 
     var pos: usize = 0;
     var state: u32 = std.mem.readInt(u32, payload[pos..][0..4], .big);
@@ -789,7 +834,27 @@ pub fn ransDecode(alloc: Allocator, payload: []const u8, table: RansTable, count
             pos += 1;
         }
     }
-    return s;
+    return .{
+        .stream = s,
+        .consumed_bytes = pos,
+        .final_state = state,
+    };
+}
+
+pub fn ransDecode(
+    alloc: Allocator,
+    payload: []const u8,
+    table: RansTable,
+    count: usize,
+    bits_per_elem: u8,
+) !Stream {
+    return (try ransDecodeWithState(
+        alloc,
+        payload,
+        table,
+        count,
+        bits_per_elem,
+    )).stream;
 }
 
 // ==================== closed-form terminal costs ====================
@@ -812,10 +877,18 @@ pub fn huffmanPayloadBytes(table: HuffmanTable, hist: Histogram) u64 {
             if (hist.pairs[mid].sym < e.sym) lo = mid + 1 else hi = mid;
         }
         if (lo < hist.pairs.len and hist.pairs[lo].sym == e.sym) {
-            bits += @as(u64, e.len) * hist.pairs[lo].count;
+            const contribution = std.math.mul(
+                u64,
+                @as(u64, e.len),
+                hist.pairs[lo].count,
+            ) catch return std.math.maxInt(u64);
+            bits = std.math.add(u64, bits, contribution) catch
+                return std.math.maxInt(u64);
         }
     }
-    return (bits + 7) / 8;
+    const rounded = std.math.add(u64, bits, 7) catch
+        return std.math.maxInt(u64);
+    return rounded / 8;
 }
 
 /// Strict lower bound on ransEncode's payload: sum count[s]*log2(SCALE/freq[s]).

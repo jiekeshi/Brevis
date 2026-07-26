@@ -8,6 +8,8 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "docs",
+        "eval/README.md",
         "README.md",
         "LICENSE",
     },
