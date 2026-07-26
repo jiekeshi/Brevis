@@ -73,8 +73,18 @@ class Fitness:
     worst_relative_gain: float = 0.0
     mode: str = "sum"
 
-    def score(self) -> float:
-        return self.worst_relative_gain if self.mode == "minimax" else self.objective
+    def score(self) -> tuple:
+        """Ordering key, smaller is better.
+
+        Under `minimax` the worst model leads and the tier total breaks ties.
+        The tie-break is not cosmetic: the worst model is often untouched by
+        every candidate, and without a second term the search silently
+        degenerates into "prefer the smallest library" and picks among equals
+        arbitrarily.
+        """
+        if self.mode == "minimax":
+            return (self.worst_relative_gain, self.objective)
+        return (self.objective,)
 
     def better_than(self, other: "Fitness | None") -> bool:
         if other is None:

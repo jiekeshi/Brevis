@@ -111,6 +111,19 @@ class MinimaxTests(unittest.TestCase):
         self.assertTrue(even.better_than(lopsided))
         self.assertFalse(lopsided.better_than(even))
 
+    def test_minimax_breaks_a_tie_on_the_tier_total(self):
+        """The worst model is often untouched by every candidate; without a
+        second term the search degenerates into preferring fewer macros."""
+        tied_small = self.fitness(worst=-0.001, objective=100, mode="minimax")
+        tied_large = self.fitness(worst=-0.001, objective=200, mode="minimax")
+        self.assertTrue(tied_small.better_than(tied_large))
+        self.assertFalse(tied_large.better_than(tied_small))
+
+    def test_the_worst_model_still_outranks_the_total(self):
+        lopsided = self.fitness(worst=+0.05, objective=1, mode="minimax")
+        even = self.fitness(worst=-0.001, objective=10**9, mode="minimax")
+        self.assertTrue(even.better_than(lopsided))
+
     def test_minimax_still_defers_to_feasibility(self):
         good = search.Fitness(1, 1, 0, False, "", {}, -0.9, "minimax")
         plain = search.Fitness(9, 9, 0, True, "", {}, 0.0, "minimax")
