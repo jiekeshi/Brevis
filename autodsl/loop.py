@@ -51,12 +51,16 @@ CACHE = REPO / "eval" / "cache"
 # a candidate that helps develop but hurts elsewhere; `test` is read only by
 # `verdict` and by nothing else, so it is the only tier a generalization claim
 # may rest on. See evaluate.Split.
+# ViT sits in `develop` rather than `validation`: a minimax fitness needs more
+# than two models to be worth minimising over, and ViT had already been read
+# once per candidate as a veto, so it was never test material. The test tier is
+# unchanged and has been read only by `verdict` and `search.py --judge`.
 DEVELOP = [
     "RedHatAI__SmolLM-135M-Instruct-quantized.w8a8",   # I8 + BF16
     "google-bert__bert-base-uncased",                  # F32
+    "google__vit-base-patch16-224",                    # F32, vision
 ]
 VALIDATION = [
-    "google__vit-base-patch16-224",                    # F32, vision
     "TinyLlama__TinyLlama-1.1B-Chat-v1.0",             # BF16
 ]
 TEST = [

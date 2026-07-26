@@ -68,13 +68,20 @@ class Fitness:
     feasible: bool
     reason: str
     per_model: dict
+    # The worst per-model relative gain, negative when every model improved.
+    # Under `minimax` this, not `objective`, decides which library is better.
+    worst_relative_gain: float = 0.0
+    mode: str = "sum"
+
+    def score(self) -> float:
+        return self.worst_relative_gain if self.mode == "minimax" else self.objective
 
     def better_than(self, other: "Fitness | None") -> bool:
         if other is None:
             return self.feasible
         if self.feasible != other.feasible:
             return self.feasible
-        return self.objective < other.objective
+        return self.score() < other.score()
 
 
 @dataclasses.dataclass
@@ -109,7 +116,9 @@ class Evaluator:
         workdir: pathlib.Path,
         cap: int,
         cache: dict | None = None,
+        mode: str = "sum",
     ) -> None:
+        self.mode = mode
         self.split = split
         self.budget = budget
         self.workdir = workdir
@@ -167,6 +176,15 @@ class Evaluator:
                     feasible, reason = False, (
                         f"{worst[0]} +{worst[1]}B ({worst[2]:.2%})")
 
+        worst_gain = 0.0
+        if self.baseline is not None:
+            shares = [
+                (per_model[name] - base) / max(base, 1)
+                for name, base in self.baseline.per_model.items()
+                if name in per_model
+            ]
+            worst_gain = max(shares) if shares else 0.0
+
         fitness = Fitness(
             objective=develop.archive_bytes + serialized,
             develop_bytes=develop.archive_bytes,
@@ -174,6 +192,8 @@ class Evaluator:
             feasible=feasible,
             reason=reason,
             per_model=per_model,
+            worst_relative_gain=worst_gain,
+            mode=self.mode,
         )
         self.cache[key] = fitness
         self.trace.append({
@@ -422,7 +442,7 @@ def arm_search(
 
         # Selection: feasible first, then objective, then the smaller library —
         # a tie broken toward fewer macros keeps branching cost down.
-        population.sort(key=lambda s: (not s.fitness.feasible, s.fitness.objective,
+        population.sort(key=lambda s: (not s.fitness.feasible, s.fitness.score(),
                                        len(s.library.macros)))
         population = population[:population_size]
         if population[0].fitness.better_than(best.fitness):
@@ -441,11 +461,23 @@ def arm_search(
 
 def _ask(llm, context: dict, library: Library, table: OperatorTable, *,
          wanted: int, history: list | None = None):
-    return propose_mod.propose(
-        llm, context["evidence"], library, table,
-        budget=context["budget"], mined=context["mined"],
-        rejected=context["rejected"], wanted=wanted, history=history,
-    )
+    """Ask for macros, treating a malformed reply as an empty round.
+
+    A model is untrusted input and a single bad reply must not be able to end
+    a run: one `"body": null` aborted a whole five-arm arena before this. The
+    failure is recorded on the proposal so an arm can report how often its
+    model was unusable.
+    """
+    try:
+        return propose_mod.propose(
+            llm, context["evidence"], library, table,
+            budget=context["budget"], mined=context["mined"],
+            rejected=context["rejected"], wanted=wanted, history=history,
+        )
+    except Exception as exc:            # noqa: BLE001 - any bad reply, not just ours
+        context.setdefault("proposal_failures", []).append(
+            f"{type(exc).__name__}: {exc}"[:400])
+        return propose_mod.Proposal(macros=(), raw_reply="", prompt="")
 
 
 def _history(evaluator: Evaluator, best: Scored) -> list[dict]:
@@ -482,9 +514,10 @@ def run(args) -> int:
 
     shared_cache: dict[str, Fitness] = {}
     probe = Evaluator(split, budget, workdir, cap=args.evaluations,
-                      cache=shared_cache)
+                      cache=shared_cache, mode=args.fitness)
     baseline = probe.measure(Library(), free=True)
-    baseline = dataclasses.replace(baseline, feasible=True, reason="baseline")
+    baseline = dataclasses.replace(baseline, feasible=True, reason="baseline",
+                                   worst_relative_gain=0.0, mode=args.fitness)
     baseline_validation = probe.validate(Library())
     print(f"baseline objective {baseline.objective} "
           f"(develop {baseline.develop_bytes}, validation "
@@ -498,13 +531,14 @@ def run(args) -> int:
     for name in args.arms:
         rng = random.Random(args.seed)          # every arm gets the same stream
         evaluator = Evaluator(split, budget, workdir, cap=args.evaluations,
-                              cache=shared_cache)
+                              cache=shared_cache, mode=args.fitness)
         evaluator.baseline = baseline
         llm = None
         if name in ("search", "greedy", "one_shot") and not args.no_llm:
             llm = (backend.ScriptedBackend(replies=[args.dry_run_reply] * 20)
                    if args.dry_run_reply else backend.Backend(model=args.model_name))
 
+        context["proposal_failures"] = []
         started = time.monotonic()
         if name == "search":
             result = arm_search(evaluator, baseline, table, report, rng, llm, context,
@@ -543,6 +577,9 @@ def run(args) -> int:
             "objective_delta_vs_baseline": result.fitness.objective - baseline.objective,
             "wall_s": round(time.monotonic() - started, 1),
             "seed": args.seed, "evaluator": evaluate.VERSION,
+            "fitness_mode": args.fitness,
+            "proposal_failures": list(context.get("proposal_failures", [])),
+            "worst_relative_gain": round(result.fitness.worst_relative_gain, 6),
         }
         with out.open("a") as handle:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
@@ -644,6 +681,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--patience", type=int, default=DEFAULT_PATIENCE)
     parser.add_argument("--propose-every", type=int, default=2)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--fitness", choices=("sum", "minimax"), default="minimax",
+                        help="how the develop tier is summarised; `sum` overfits")
     parser.add_argument("--model-name", default=backend.DEFAULT_MODEL)
     parser.add_argument("--dry-run-reply", default=None)
     parser.add_argument("--no-llm", action="store_true")

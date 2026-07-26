@@ -91,6 +91,32 @@ class FitnessTests(unittest.TestCase):
         self.assertFalse(self.fitness(10).better_than(self.fitness(10)))
 
 
+class MinimaxTests(unittest.TestCase):
+    """Summing the tier lets one model pay for another. That is exactly how the
+    first arena overfit: the winner held a macro worth -8 MB on one develop
+    model and +8 MB on unseen ones."""
+
+    def fitness(self, worst, objective, mode):
+        return search.Fitness(objective, objective, 0, True, "", {},
+                              worst_relative_gain=worst, mode=mode)
+
+    def test_sum_prefers_the_smaller_total_however_lopsided(self):
+        lopsided = self.fitness(worst=+0.05, objective=100, mode="sum")
+        even = self.fitness(worst=-0.01, objective=200, mode="sum")
+        self.assertTrue(lopsided.better_than(even))
+
+    def test_minimax_prefers_the_library_whose_worst_model_fares_best(self):
+        lopsided = self.fitness(worst=+0.05, objective=100, mode="minimax")
+        even = self.fitness(worst=-0.01, objective=200, mode="minimax")
+        self.assertTrue(even.better_than(lopsided))
+        self.assertFalse(lopsided.better_than(even))
+
+    def test_minimax_still_defers_to_feasibility(self):
+        good = search.Fitness(1, 1, 0, False, "", {}, -0.9, "minimax")
+        plain = search.Fitness(9, 9, 0, True, "", {}, 0.0, "minimax")
+        self.assertTrue(plain.better_than(good))
+
+
 class EvaluatorTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -169,6 +195,14 @@ class EvaluatorTests(unittest.TestCase):
             BASE, BASE, 100, True, "", {"d.safetensors": 1_000})
         self.assertFalse(evaluator.measure(self.macro_library(1)).feasible)
 
+    def test_the_worst_relative_gain_is_measured_against_the_baseline(self):
+        evaluator = self.evaluator()
+        evaluator.baseline = search.Fitness(
+            BASE, BASE, 100, True, "", {"d.safetensors": BASE})
+        fitness = evaluator.measure(self.macro_library(1))
+        expected = (fitness.per_model["d.safetensors"] - BASE) / BASE
+        self.assertAlmostEqual(expected, fitness.worst_relative_gain)
+
     def test_no_temporary_library_files_are_left_behind(self):
         evaluator = self.evaluator()
         evaluator.measure(self.macro_library(1))
@@ -243,6 +277,25 @@ class ArmTests(unittest.TestCase):
                                    random.Random(6), patience=2)
         self.assertEqual(0, len(result.library.macros))
         self.assertEqual(self.baseline.objective, result.fitness.objective)
+
+    def test_a_malformed_reply_costs_a_round_not_the_run(self):
+        """One `"body": null` ended a whole five-arm arena before this."""
+        import backend
+        context = {"evidence": {}, "budget": {}, "mined": [], "rejected": []}
+        llm = backend.ScriptedBackend(replies=['```json\n{"macros":[{"name":"x"}]}\n```'])
+        proposal = search._ask(llm, context, lib.EMPTY, table(), wanted=1)
+        self.assertEqual((), proposal.macros)
+        self.assertEqual(1, len(context["proposal_failures"]))
+
+    def test_a_usable_reply_is_returned_unchanged(self):
+        import backend
+        context = {"evidence": {}, "budget": {}, "mined": [], "rejected": []}
+        good = ('```json\n{"macros":[{"name":"ok","body":{"op":"zigzag",'
+                '"children":[{"op":"hole"}]}}]}\n```')
+        llm = backend.ScriptedBackend(replies=[good])
+        proposal = search._ask(llm, context, lib.EMPTY, table(), wanted=1)
+        self.assertEqual(1, len(proposal.macros))
+        self.assertEqual([], context.get("proposal_failures", []))
 
     def test_a_mining_arm_runs_without_a_model(self):
         report = {"blocks": [], "tensors": []}

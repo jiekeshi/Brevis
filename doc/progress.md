@@ -388,6 +388,44 @@ recovers shapes already being found, and the model wrote the specific form.
 while losing develop by 23×. Develop order is therefore not transfer order, and
 the search arm may be fitting develop. Only the frozen test tier settles it.
 
+### The frozen tier disagrees with develop, and that is the result
+
+`search.py --judge` measured every arm's final library once on the locked test
+tier (Whisper F16, SDXL F16, Qwen3-8B BF16 — 26.4 GB, 10 files), against one
+shared baseline, with a real `.brv` roundtrip per non-empty library.
+
+| Arm | develop Δ | validation Δ | **test Δ** | files better | worst file | planning | bit-exact |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| greedy | −32,095 ② | −2,296,109 ① | **−8,430,499 ①** | 6/10 | +4,131,850 | 0.95× | yes |
+| search | **−735,741 ①** | −2,132,909 ② | **−7,379,859 ②** | 7/10 | +4,427,091 | 1.22× | yes |
+| mining | −10,637 ③ | −48,978 ③ | **+7,954,920** | 7/10 | +8,233,466 | 0.98× | yes |
+| random | 0 | 0 | 0 | — | — | — | — |
+| one_shot | 0 | 0 | 0 | — | — | — | — |
+
+**The population search won develop by 23× and lost the frozen tier to plain
+greedy by 1.05 MB.** Develop order is anti-correlated with test order at the
+top. It also spent 1.22× the planning time against greedy's 0.95×.
+
+Against the standard set for this work — *stably better than one-shot, greedy,
+random and pure mining at a fixed compute budget* — the answer is **no**. It
+beats one-shot, random and mining; it does not beat greedy.
+
+The mechanism is visible rather than mysterious. `zigzag(split_field(?,?))`,
+the mined macro, is **+7,954,920 bytes on the test tier all by itself**. The
+search arm's library contains it. The search has a drop mutation and never
+used it, because dropping that macro costs develop bytes — it is worth a great
+deal on SmolLM and nothing on unseen models. A fitness that sums the tier lets
+one model buy the whole score.
+
+So the failure is in the objective, not the machinery: two develop models
+summed is far too weak a signal for a search with population, mutation and
+crossover behind it. The next run replaces the summary with **minimax** — a
+library scores as well as its *worst* develop model, which makes
+"win big on one, lose on the rest" unscoreable — and moves ViT into the
+fitness pool so there are three models to be worst over. ViT had already been
+read once per candidate as an acceptance veto, so it was never test material.
+The test tier is unchanged.
+
 ### Honest notes on the arena
 
 - `random` and `one_shot` produced nothing at all, so "beats random" and
