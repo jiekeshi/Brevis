@@ -225,7 +225,11 @@ class ArmResult:
     evaluations: int
     rounds: int
     stopped_because: str
-    best_by_round: list[int]
+    # (worst relative gain, tier total) per round. Under minimax the total can
+    # *rise* while the score falls, because a library whose worst model fares
+    # better is the better library even if it costs bytes overall. Recording
+    # only the total would make a real improvement look like a regression.
+    best_by_round: list
     trace: list[dict]
 
     def describe(self) -> dict:
@@ -281,12 +285,12 @@ def _accept_one_at_a_time(
                 fitness = evaluator.measure(grown)
             except BudgetExhausted as exc:
                 stopped = str(exc)
-                best_by_round.append(best.objective)
+                best_by_round.append(list(best.score()))
                 return ArmResult(name, library, best, evaluator.spent, rounds,
                                  stopped, best_by_round, evaluator.trace)
             if fitness.better_than(best):
                 library, best, improved = grown, fitness, True
-        best_by_round.append(best.objective)
+        best_by_round.append(list(best.score()))
         idle = 0 if improved else idle + 1
         if idle >= patience:
             stopped = f"no improvement for {patience} rounds"
@@ -351,21 +355,21 @@ def arm_one_shot(evaluator, baseline, table, llm, context) -> ArmResult:
             library = grown
     if not library.macros:
         return ArmResult("one_shot", Library(), baseline, evaluator.spent, 1,
-                         "no usable macros proposed", [baseline.objective],
+                         "no usable macros proposed", [list(baseline.score())],
                          evaluator.trace)
     try:
         fitness = evaluator.measure(library)
     except BudgetExhausted as exc:
         return ArmResult("one_shot", Library(), baseline, evaluator.spent, 1,
-                         str(exc), [baseline.objective], evaluator.trace)
+                         str(exc), [list(baseline.score())], evaluator.trace)
     if not fitness.better_than(baseline):
         why = ("did not beat the baseline" if fitness.feasible
                else f"infeasible: {fitness.reason}")
         return ArmResult("one_shot", Library(), baseline, evaluator.spent, 1,
                          f"batch {why} ({fitness.objective - baseline.objective:+d} "
-                         f"bytes)", [baseline.objective], evaluator.trace)
+                         f"bytes)", [list(baseline.score())], evaluator.trace)
     return ArmResult("one_shot", library, fitness, evaluator.spent, 1,
-                     "single shot", [fitness.objective], evaluator.trace)
+                     "single shot", [list(fitness.score())], evaluator.trace)
 
 
 def arm_search(
@@ -459,7 +463,7 @@ def arm_search(
             best, idle = population[0], 0
         else:
             idle += 1
-        best_by_round.append(best.fitness.objective)
+        best_by_round.append(list(best.fitness.score()))
 
         if idle >= patience:
             stopped = f"no improvement for {patience} rounds"

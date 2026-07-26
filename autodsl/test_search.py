@@ -273,7 +273,9 @@ class ArmTests(unittest.TestCase):
         self.assertGreater(result.rounds, 1, "a single round is not a search")
 
     def test_the_population_arm_reports_its_trajectory(self):
-        """`best_by_round` is what distinguishes a search from a lucky hit."""
+        """`best_by_round` is what distinguishes a search from a lucky hit, so
+        it records the ordering key rather than the byte total: under minimax
+        the total can rise while the library genuinely improves."""
         evaluator = self.evaluator(cap=30)
         result = search.arm_search(
             evaluator, self.baseline, table(), {"blocks": [], "tensors": []},
@@ -282,6 +284,16 @@ class ArmTests(unittest.TestCase):
         self.assertEqual(result.rounds, len(result.best_by_round))
         self.assertEqual(sorted(result.best_by_round, reverse=True),
                          result.best_by_round, "the best must never get worse")
+
+    def test_the_trajectory_records_the_ordering_key_not_the_byte_total(self):
+        evaluator = self.evaluator(cap=10)
+        evaluator.mode = "minimax"
+        result = search.arm_search(
+            evaluator, self.baseline, table(), {"blocks": [], "tensors": []},
+            random.Random(8), None, {}, population_size=3, patience=2,
+            propose_every=99)
+        for entry in result.best_by_round:
+            self.assertEqual(2, len(entry), "minimax keys are (worst, total)")
 
     def test_an_arm_that_finds_nothing_returns_the_empty_library(self):
         self.stub.per_macro = -50_000     # every macro hurts
