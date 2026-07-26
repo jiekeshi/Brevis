@@ -436,6 +436,56 @@ The test tier is unchanged.
   and the cap was identical for all five.
 - One seed. Variance across seeds is unmeasured.
 
+### Second arena: minimax fitness, and the frozen tier agrees
+
+Same five arms, same 30-evaluation budget, same seed, fitness summarised by the
+worst develop model instead of the tier total, ViT moved into the fitness pool.
+
+| Arm | develop Δ | validation Δ | **test Δ** | files better | worst file | planning | bit-exact |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| **search** | **−38,044 ①** | **−2,290,159 ①** | **−8,430,498 ①** | 6/10 | +4,131,850 | 0.94× | yes |
+| greedy | −19,415 ② | −1,929,602 ② | −5,882,844 ② | 7/10 | +4,783,972 | 0.94× | yes |
+| mining | −16,531 ③ | −43,084 ③ | **+7,954,920** | 7/10 | +8,233,466 | 0.99× | yes |
+| random | 0 | 0 | 0 | — | — | — | — |
+| one_shot | 0 | 0 | 0 | — | — | — | — |
+
+**The search arm now beats every baseline on the frozen tier**, by 43% over
+greedy, bit-exact on all ten files, at 0.94× planning cost. Develop, validation
+and test agree on the order — which under `sum` they did not.
+
+The regulariser did the specific thing it was built for: the search **did not
+adopt `zigzag(split_field(?,?))` this time**. That macro helps SmolLM and
+nothing else, so under minimax it cannot buy a score, and the arm that took it
+(mining) is the only one that made the test tier *worse*.
+
+### What is and is not established
+
+| Claim | Status |
+| --- | --- |
+| maintains several candidate libraries | yes — population of 4, selection by feasibility then score then size |
+| evaluates macro *combinations* | yes — a library carries the fitness; crossover unions parents, a drop mutation can remove a member greedy could never undo |
+| iterates from feedback | yes — every measured library, its delta and its feasibility go back into the prompt |
+| stops by itself | yes — patience or budget; arms stopped on both across the two arenas |
+| beats one-shot, greedy, random, mining at a fixed budget | yes on the frozen tier, **under minimax** |
+| bit-exact net gain on frozen unseen checkpoints | yes — −8,430,498 bytes over 26.4 GB, verified per file |
+| **stably** better | **not established.** Two arena configurations, one seed each. Under `sum` the search arm *lost* to greedy on the frozen tier; under `minimax` it won. Seed variance is unmeasured. |
+| **gain from multi-round search, not one lucky hit** | **not established in the winning run.** The minimax search arm's best-by-round was flat — `825,893,605` in every one of its four rounds. It found its library in round 1 and spent the remaining 30 evaluations without improving. Its advantage over greedy came from sampling and selecting more widely (30 libraries against 17), not from refinement. The `sum` arena *did* show refinement — four improving rounds with the largest step last — but that arm lost the frozen tier. |
+
+So: the machinery is built and it wins, and two of the seven claims are not yet
+earned. What would settle them is cheap to state and expensive to run — several
+seeds per arm, and a budget large enough that the search has room to refine
+rather than converging in round one.
+
+### Two more bugs the runs found
+
+- A single `"body": null` from the model ended an entire five-arm arena.
+  `search._ask` now treats a malformed reply as an empty round, which is what
+  `loop.py` already did.
+- Under minimax the worst develop model was untouched by every candidate, so
+  all three surviving arms scored an identical −0.000019 and the ordering fell
+  through to library size. The search was silently optimising "fewest macros".
+  Ordering is now lexicographic: worst model first, tier total second.
+
 ### Open
 
 - **The library is BF16-shaped.** It never fires on F32 and makes one F16 model
