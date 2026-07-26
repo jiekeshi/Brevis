@@ -476,6 +476,62 @@ earned. What would settle them is cheap to state and expensive to run — severa
 seeds per arm, and a budget large enough that the search has room to refine
 rather than converging in round one.
 
+### Stability across seeds, and what the search actually contributes
+
+Two experiments were run specifically against the two unearned claims.
+
+**Three seeds, search against greedy** (minimax, 30 evaluations, identical
+budget). Validation is the comparison surface here so the test tier is not
+read again:
+
+| Seed | greedy develop | search develop | greedy validation | search validation | winner |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `0x5EEDB10C` | −19,415 | **−38,044** | −1,929,602 | **−2,290,159** | search, by 360,557 |
+| `20260726` | −28,476 | −28,473 | −2,119,752 | −2,119,752 | tie — both found the same macro |
+| `987654321` | −38,328 | −38,039 | −2,290,159 | −2,290,159 | tie |
+
+**1 win, 2 ties, 0 losses.** The search arm is never worse than greedy, and
+strictly better once in three. That is weak dominance, not stable superiority,
+and it is what three seeds support.
+
+**The search machinery alone is worth nothing.** With the proposer switched off
+(`--no-llm`), the population arm spent its whole 30-evaluation budget and
+reached −16,481 on develop and −41,092 on validation — against pure mining's
+−16,531 and −43,084. Mutation, crossover and random sampling over mined seeds
+land exactly where mining lands. Its best find was
+`zigzag(split_field(?,bitpack))`, a mutation of the mined macro.
+
+So the value is in the model's proposals, and what the population adds is
+**breadth of sampling and a selection rule that refuses a lopsided macro** —
+30 libraries considered against greedy's 17, under a fitness one model cannot
+buy. That is a real contribution and it is not the contribution the design
+advertised.
+
+**The refinement claim does not hold in the winning runs.** Best-by-round for
+the minimax search arms was flat after round one in every seed. The `sum` arena
+did refine over four rounds with its largest step last, and that arm lost the
+frozen tier. On the evidence here the gain arrives in a single good proposal
+and the search's job is to notice it and to refuse the bad ones.
+
+### Scorecard against the standard set for this work
+
+| Requirement | Verdict |
+| --- | --- |
+| maintains several candidate rule libraries | **yes** — population of 4, selection by feasibility, then score, then size |
+| evaluates macro combinations jointly | **yes** — a library carries the fitness; crossover unions parents; a drop mutation can undo an earlier acceptance |
+| iterates autonomously on feedback | **yes** — every measured library, its delta and its feasibility return to the prompt |
+| stops by itself | **yes** — patience or budget; both fired across the runs |
+| beats one-shot, greedy, random and mining at a fixed budget | **yes on the frozen tier** — −8,430,498 against greedy's −5,882,844, random and one-shot at zero, and mining at **+7,954,920** |
+| bit-exact net gain on frozen unseen checkpoints | **yes** — 10 files, 26.4 GB, verified per file, 0.94× planning |
+| **stably** better | **no** — 1 win, 2 ties, 0 losses over three seeds. Never worse; strictly better once |
+| **gain from multi-round search, not one lucky hit** | **no** — trajectories are flat after round one, and with the proposer removed the search matches plain mining |
+
+Four of the six mechanism requirements are met outright, the frozen-tier
+comparison is won, and the two claims about *why* it wins are not earned. The
+honest description is: a population search that samples more proposals than
+greedy and applies a regulariser greedy lacks, not an evolutionary process that
+refines its way to a better library.
+
 ### Two more bugs the runs found
 
 - A single `"body": null` from the model ended an entire five-arm arena.
