@@ -22,16 +22,14 @@ pub fn repeat(
     if (times < 2 or target.count == 0 or target.count % times != 0) return null;
     const period_len = target.count / times;
     if (period_len == 0) return null;
+    if (!target.hasPeriod(period_len)) return null;
 
-    for (period_len..target.count) |i|
-        if (target.getU32(i) != target.getU32(i % period_len)) return null;
-
-    var period = try Stream.initUninitialized(
+    const period = try Stream.initUninitialized(
         alloc,
         period_len,
         target.bits_per_elem,
     );
-    for (0..period_len) |i| period.setU32(i, target.getU32(i));
+    @memcpy(period.data, target.data[0..period.data.len]);
     return period;
 }
 
@@ -41,19 +39,17 @@ pub fn map(
     target: Stream,
     operation: dsl.MapOp,
 ) (Allocator.Error || dsl.ValidationError)!Stream {
-    try operation.validate(target.bits_per_elem);
+    const prepared = try semantics.PreparedMap.init(
+        operation,
+        target.bits_per_elem,
+    );
     var child = try Stream.initUninitialized(
         alloc,
         target.count,
         target.bits_per_elem,
     );
     errdefer child.deinit(alloc);
-    for (0..target.count) |i|
-        child.setU32(i, try semantics.mapInverse(
-            operation,
-            target.bits_per_elem,
-            target.getU32(i),
-        ));
+    prepared.inverseInto(target, &child);
     return child;
 }
 
@@ -72,8 +68,10 @@ pub fn scan(
     target: Stream,
     operation: dsl.ScanOp,
 ) (Allocator.Error || dsl.ValidationError)!?ScanParts {
-    if (target.bits_per_elem == 0 or target.bits_per_elem > 32)
-        return error.InvalidWordWidth;
+    const prepared = try semantics.PreparedScan.init(
+        operation,
+        target.bits_per_elem,
+    );
     if (target.count < 2) return null;
 
     var updates = try Stream.initUninitialized(
@@ -82,17 +80,7 @@ pub fn scan(
         target.bits_per_elem,
     );
     errdefer updates.deinit(alloc);
-    var previous = target.getU32(0);
-    for (1..target.count) |i| {
-        const next = target.getU32(i);
-        updates.setU32(i - 1, try semantics.scanUpdate(
-            operation,
-            target.bits_per_elem,
-            previous,
-            next,
-        ));
-        previous = next;
-    }
+    prepared.updatesInto(target, &updates);
     return .{
         .initial = target.getU32(0),
         .updates = updates,

@@ -4,6 +4,7 @@ const std = @import("std");
 const dsl = @import("dsl.zig");
 const decomposition = @import("decomposition.zig");
 const interpreter = @import("interpreter.zig");
+const semantics = @import("semantics.zig");
 const types = @import("types.zig");
 
 fn streamFromWords(
@@ -234,6 +235,93 @@ test "Map Scan and Merge decompositions satisfy the reconstruction contract" {
     var merge_output = try interpreter.execute(alloc, merge_program);
     defer merge_output.deinit(alloc);
     try expectStreamsEqual(merge_target, merge_output);
+}
+
+test "prepared map and scan bulk paths match scalar semantics" {
+    const alloc = std.testing.allocator;
+    var random = std.Random.DefaultPrng.init(0x62d5_970d_8b9c_31f4);
+    const widths = [_]u8{ 1, 7, 8, 9, 16, 23, 32 };
+    const counts = [_]usize{ 2, 3, 15, 16, 17, 33 };
+
+    for (widths) |bits| {
+        const mask = if (bits == 32)
+            std.math.maxInt(u32)
+        else
+            (@as(u32, 1) << @intCast(bits)) - 1;
+        const operations = [_]dsl.MapOp{
+            .{ .xor = mask / 3 },
+            .{ .add_mod = mask / 5 },
+            .zigzag,
+            .gray,
+            .{ .rotate_left = bits / 2 },
+            .bit_reverse,
+        };
+
+        for (counts) |count| {
+            const byte_len = count * types.roundUpToPow2(bits) / 8;
+            const source_storage = try alloc.alloc(u8, byte_len + 1);
+            defer alloc.free(source_storage);
+            var source = types.Stream{
+                .data = source_storage[1..],
+                .count = count,
+                .bits_per_elem = bits,
+                .owns_data = false,
+            };
+            for (0..count) |i| source.setU32(i, random.random().int(u32) & mask);
+
+            for (operations) |operation| {
+                const prepared = try semantics.PreparedMap.init(operation, bits);
+                const mapped_storage = try alloc.alloc(u8, byte_len + 1);
+                defer alloc.free(mapped_storage);
+                var mapped = types.Stream{
+                    .data = mapped_storage[1..],
+                    .count = count,
+                    .bits_per_elem = bits,
+                    .owns_data = false,
+                };
+                @memcpy(mapped.data, source.data);
+                prepared.forwardInPlace(&mapped, 0, count);
+                for (0..count) |i|
+                    try std.testing.expectEqual(
+                        prepared.forwardWord(source.getU32(i)),
+                        mapped.getU32(i),
+                    );
+
+                const inverse_storage = try alloc.alloc(u8, byte_len + 1);
+                defer alloc.free(inverse_storage);
+                var inverse = types.Stream{
+                    .data = inverse_storage[1..],
+                    .count = count,
+                    .bits_per_elem = bits,
+                    .owns_data = false,
+                };
+                prepared.inverseInto(mapped, &inverse);
+                try expectStreamsEqual(source, inverse);
+            }
+
+            const update_len = (count - 1) * source.elemBytes();
+            for ([_]dsl.ScanOp{ .xor, .add_mod }) |operation| {
+                const prepared = try semantics.PreparedScan.init(operation, bits);
+                const update_storage = try alloc.alloc(u8, update_len + 1);
+                defer alloc.free(update_storage);
+                var updates = types.Stream{
+                    .data = update_storage[1..],
+                    .count = count - 1,
+                    .bits_per_elem = bits,
+                    .owns_data = false,
+                };
+                prepared.updatesInto(source, &updates);
+                for (0..updates.count) |i|
+                    try std.testing.expectEqual(
+                        prepared.updateWord(
+                            source.getU32(i),
+                            source.getU32(i + 1),
+                        ),
+                        updates.getU32(i),
+                    );
+            }
+        }
+    }
 }
 
 test "a TensorProgram binds dtype and shape to one complete generator" {

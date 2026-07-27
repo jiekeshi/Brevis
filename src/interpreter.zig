@@ -219,6 +219,10 @@ fn writeInto(
         },
         .map => |operation| blk: {
             if (program.children.len != 1) return error.InvalidArity;
+            const prepared = try semantics.PreparedMap.init(
+                operation,
+                output.bits_per_elem,
+            );
             const child_written = try writeInto(
                 alloc,
                 program.children[0],
@@ -226,18 +230,15 @@ fn writeInto(
                 offset,
             );
             try validateRegion(output.*, offset, child_written);
-            for (0..child_written) |i| {
-                const output_index = offset + i;
-                output.setU32(output_index, try semantics.mapForward(
-                    operation,
-                    output.bits_per_elem,
-                    output.getU32(output_index),
-                ));
-            }
+            prepared.forwardInPlace(output, offset, child_written);
             break :blk child_written;
         },
         .scan => |scan_value| blk: {
             if (program.children.len != 1) return error.InvalidArity;
+            const prepared = try semantics.PreparedScan.init(
+                scan_value.operation,
+                output.bits_per_elem,
+            );
             const updates_offset = std.math.add(usize, offset, 1) catch
                 return error.LengthOverflow;
             const updates_written = try writeInto(
@@ -254,9 +255,7 @@ fn writeInto(
             output.setU32(offset, previous);
             for (0..updates_written) |i| {
                 const update_index = updates_offset + i;
-                previous = try semantics.scanForward(
-                    scan_value.operation,
-                    output.bits_per_elem,
+                previous = prepared.forwardWord(
                     previous,
                     output.getU32(update_index),
                 );
