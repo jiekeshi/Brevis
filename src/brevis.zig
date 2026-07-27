@@ -10,12 +10,12 @@ pub const types = @import("types.zig");
 pub const dsl = @import("dsl.zig");
 pub const grammar = @import("grammar.zig");
 pub const grammar_prior = @import("grammar_prior.zig");
-pub const calibration = @import("paper_calibration.zig");
-pub const pipeline = @import("paper_pipeline.zig");
+pub const calibration = @import("calibration.zig");
+pub const checkpoint = @import("checkpoint.zig");
 pub const safetensors = @import("safetensors.zig");
 /// Low-level BRTA framing. Its `parseStructural` seam deliberately does not
 /// cross-bind record metadata to the embedded safetensors header; use
-/// `pipeline.decompress*` for full archive validation and reconstruction.
+/// `checkpoint.decompress*` for full archive validation and reconstruction.
 pub const tensor_archive = @import("tensor_archive.zig");
 
 const interpreter = @import("interpreter.zig");

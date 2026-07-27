@@ -220,13 +220,6 @@ test "canonical Huffman tables and payloads round trip deterministically" {
         defer decoded.deinit(alloc);
         try expectStreamsEqual(input, decoded);
 
-        var histogram = try codec.buildHistogram(alloc, input);
-        defer histogram.deinit(alloc);
-        try std.testing.expectEqual(
-            @as(u64, @intCast(first_payload.len)),
-            codec.huffmanPayloadBytes(first, histogram),
-        );
-
         try std.testing.expect(first_payload.len > 1);
         try std.testing.expectError(
             error.CorruptHuffmanStream,

@@ -360,12 +360,7 @@ fn analyzeProgram(program: Program) ValidationError!ProgramAnalysis {
                 stream.elemBytes(),
             ) catch return error.LengthOverflow;
             if (stream.data.len != required) return error.InvalidLiteralValue;
-            if (stream.bits_per_elem != types.roundUpToPow2(stream.bits_per_elem)) {
-                const mask = stream.mask();
-                for (0..stream.count) |index|
-                    if (stream.getU32(index) & ~mask != 0)
-                        return error.InvalidLiteralValue;
-            }
+            if (!stream.valuesFitWidth()) return error.InvalidLiteralValue;
             break :blk .{
                 .stream_type = .{
                     .bits = stream.bits_per_elem,

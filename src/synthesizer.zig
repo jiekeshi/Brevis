@@ -151,7 +151,7 @@ pub fn synthesize(
     dtype: Dtype,
     options: Options,
 ) !Result {
-    return synthesizeImpl(alloc, target, dtype, options, .own);
+    return synthesizeImpl(alloc, target, dtype, options, .own, .serialized);
 }
 
 /// Encoder-only synthesis whose returned root `Lit` may view `target`.
@@ -163,12 +163,28 @@ pub fn synthesizeBorrowingTarget(
     dtype: Dtype,
     options: Options,
 ) !Result {
-    return synthesizeImpl(alloc, target, dtype, options, .borrow);
+    return synthesizeImpl(alloc, target, dtype, options, .borrow, .serialized);
+}
+
+/// Search for callers that only inspect the winning program and its exact
+/// canonical length. `serialized_program` is empty and `target` is borrowed.
+pub fn synthesizeUnserialized(
+    alloc: Allocator,
+    target: Stream,
+    dtype: Dtype,
+    options: Options,
+) !Result {
+    return synthesizeImpl(alloc, target, dtype, options, .borrow, .size_only);
 }
 
 const RootLiteralStorage = enum {
     own,
     borrow,
+};
+
+const OutputMode = enum {
+    serialized,
+    size_only,
 };
 
 fn synthesizeImpl(
@@ -177,6 +193,7 @@ fn synthesizeImpl(
     dtype: Dtype,
     options: Options,
     root_literal_storage: RootLiteralStorage,
+    output_mode: OutputMode,
 ) !Result {
     if (target.bits_per_elem != dtype.bitWidth())
         return error.TensorWidthMismatch;
@@ -187,8 +204,15 @@ fn synthesizeImpl(
     errdefer best.deinit(alloc);
 
     if (options.max_expansions == 0) {
-        const serialized_program = try program_format.serialize(alloc, best);
+        const serialized_program: []u8 = switch (output_mode) {
+            .serialized => try program_format.serialize(alloc, best),
+            .size_only => &.{},
+        };
         errdefer alloc.free(serialized_program);
+        const exact_bytes = switch (output_mode) {
+            .serialized => serialized_program.len,
+            .size_only => try program_format.serializedSize(alloc, best),
+        };
         if (root_literal_storage == .own) {
             const owned = try dsl.Program.literalFromStream(alloc, target);
             best.deinit(alloc);
@@ -197,7 +221,7 @@ fn synthesizeImpl(
         return .{
             .program = best,
             .serialized_program = serialized_program,
-            .serialized_bytes = serialized_program.len,
+            .serialized_bytes = exact_bytes,
             .expanded = 0,
             .completed_candidates = 0,
             .status = .budget_exhausted,
@@ -205,7 +229,15 @@ fn synthesizeImpl(
         };
     }
 
-    var best_bytes = try program_format.serializedSize(alloc, best);
+    var best_serialized: []u8 = &.{};
+    errdefer alloc.free(best_serialized);
+    var best_bytes = switch (output_mode) {
+        .serialized => blk: {
+            best_serialized = try program_format.serialize(alloc, best);
+            break :blk best_serialized.len;
+        },
+        .size_only => try program_format.serializedSize(alloc, best),
+    };
     var used_literal_fallback = true;
     var completed_candidates: usize = 0;
     var expanded: usize = 0;
@@ -218,16 +250,15 @@ fn synthesizeImpl(
         var candidate = candidate_value;
         var candidate_owned = true;
         defer if (candidate_owned) candidate.deinit(alloc);
-        const candidate_bytes = try program_format.serializedSize(
-            alloc,
-            candidate,
-        );
         completed_candidates += 1;
-        if (candidate_bytes < best_bytes) {
-            best.deinit(alloc);
-            best = candidate;
+        if (try adoptIfSmaller(
+            alloc,
+            &best,
+            &best_serialized,
+            &best_bytes,
+            candidate,
+        )) {
             candidate_owned = false;
-            best_bytes = candidate_bytes;
             used_literal_fallback = false;
         }
     }
@@ -287,19 +318,15 @@ fn synthesizeImpl(
             defer if (candidate_owned) candidate.deinit(alloc);
 
             completed_candidates += 1;
-            const candidate_bytes = try program_format.serializedSize(
+            if (try adoptIfSmaller(
                 alloc,
+                &best,
+                &best_serialized,
+                &best_bytes,
                 candidate,
-            );
-            if (candidate_bytes < best_bytes) {
-                best.deinit(alloc);
-                best = candidate;
+            )) {
                 candidate_owned = false;
-                best_bytes = candidate_bytes;
-                used_literal_fallback = switch (best.kind) {
-                    .literal => true,
-                    else => false,
-                };
+                used_literal_fallback = false;
             }
             continue;
         }
@@ -520,15 +547,14 @@ fn synthesizeImpl(
         defer if (candidate_owned) candidate.deinit(alloc);
 
         completed_candidates += 1;
-        const candidate_bytes = try program_format.serializedSize(
+        if (try adoptIfSmaller(
             alloc,
+            &best,
+            &best_serialized,
+            &best_bytes,
             candidate,
-        );
-        if (candidate_bytes < best_bytes) {
-            best.deinit(alloc);
-            best = candidate;
+        )) {
             candidate_owned = false;
-            best_bytes = candidate_bytes;
             used_literal_fallback = false;
         }
     };
@@ -546,11 +572,23 @@ fn synthesizeImpl(
         },
         else => {},
     };
-    var output = try interpreter.execute(alloc, best);
-    defer output.deinit(alloc);
-    if (!target.eql(output)) return error.InvalidCandidate;
-    const serialized_program = try program_format.serialize(alloc, best);
-    std.debug.assert(serialized_program.len == best_bytes);
+    // The root literal stores the target words themselves, so only a program
+    // that replaced it has to be executed and checked.
+    if (!used_literal_fallback) {
+        var output = try interpreter.execute(alloc, best);
+        defer output.deinit(alloc);
+        if (!target.eql(output)) return error.InvalidCandidate;
+    }
+    const serialized_program: []u8 = switch (output_mode) {
+        .serialized => if (best_serialized.len != 0)
+            best_serialized
+        else
+            try program_format.serialize(alloc, best),
+        .size_only => &.{},
+    };
+    best_serialized = &.{};
+    std.debug.assert(output_mode == .size_only or
+        serialized_program.len == best_bytes);
     return .{
         .program = best,
         .serialized_program = serialized_program,
@@ -1558,6 +1596,26 @@ fn buildNode(
         },
         .literal, .constant => error.InvalidPartialProgram,
     };
+}
+
+fn adoptIfSmaller(
+    alloc: Allocator,
+    winner: *dsl.Program,
+    serialized: *[]u8,
+    byte_size: *usize,
+    candidate: dsl.Program,
+) !bool {
+    const candidate_bytes = (try program_format.serializedSizeAtMost(
+        alloc,
+        candidate,
+        byte_size.*,
+    )) orelse return false;
+    winner.deinit(alloc);
+    alloc.free(serialized.*);
+    winner.* = candidate;
+    serialized.* = &.{};
+    byte_size.* = candidate_bytes;
+    return true;
 }
 
 fn borrowedLiteral(target: Stream) !dsl.Program {

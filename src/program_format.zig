@@ -123,6 +123,28 @@ pub fn serializedSize(alloc: Allocator, program: dsl.Program) !usize {
     return emitter.count;
 }
 
+/// Exact canonical byte length when it is below `limit`, otherwise null.
+/// Emission stops as soon as the running length or an admissible literal
+/// lower bound reaches `limit`, so candidates that cannot beat the incumbent
+/// never pay for a full entropy-coded measurement.
+pub fn serializedSizeAtMost(
+    alloc: Allocator,
+    program: dsl.Program,
+    limit: usize,
+) !?usize {
+    _ = try program.typeOf();
+
+    var emitter = Emitter{
+        .allocator = alloc,
+        .limit = limit,
+    };
+    emitFile(&emitter, program) catch |err| switch (err) {
+        error.SizeLimitReached => return null,
+        else => return err,
+    };
+    return emitter.count;
+}
+
 /// Decode exactly one version-1 program. The whole tree is parsed first, then
 /// its semantic type is checked through `Program.typeOf`.
 pub fn deserialize(
@@ -164,21 +186,37 @@ const Emitter = struct {
     allocator: Allocator,
     output: ?*std.ArrayList(u8) = null,
     count: usize = 0,
+    limit: usize = literal_encoding.NO_LIMIT,
+
+    fn advance(self: *Emitter, next: usize) !void {
+        if (next >= self.limit) return error.SizeLimitReached;
+        self.count = next;
+    }
+
+    /// Bytes a literal body may occupy before the enclosing program is known
+    /// to reach `limit`. One byte is reserved for the body-length prefix that
+    /// always follows.
+    fn literalBudget(self: Emitter) usize {
+        if (self.limit == literal_encoding.NO_LIMIT)
+            return literal_encoding.NO_LIMIT;
+        if (self.limit <= self.count + 1) return 0;
+        return self.limit - self.count - 1;
+    }
 
     fn writeByte(self: *Emitter, byte: u8) !void {
         const next = std.math.add(usize, self.count, 1) catch
             return error.LengthOverflow;
+        try self.advance(next);
         if (self.output) |output|
             try output.append(self.allocator, byte);
-        self.count = next;
     }
 
     fn writeAll(self: *Emitter, bytes: []const u8) !void {
         const next = std.math.add(usize, self.count, bytes.len) catch
             return error.LengthOverflow;
+        try self.advance(next);
         if (self.output) |output|
             try output.appendSlice(self.allocator, bytes);
-        self.count = next;
     }
 
     fn writeLiteral(
@@ -190,9 +228,9 @@ const Emitter = struct {
             self.count,
             encoding.wireSize(),
         ) catch return error.LengthOverflow;
+        try self.advance(next);
         if (self.output) |output|
             try encoding.emitBody(self.allocator, output);
-        self.count = next;
     }
 
     fn writeUleb128(self: *Emitter, value: u64) !void {
@@ -213,22 +251,24 @@ fn emitFile(emitter: *Emitter, program: dsl.Program) !void {
     try emitNode(emitter, program);
 }
 
+fn emitLiteral(emitter: *Emitter, literal: types.Stream) !void {
+    try emitter.writeByte(@intFromEnum(NodeWireId.literal));
+    try emitter.writeByte(literal.bits_per_elem);
+    try emitter.writeUleb128(try usizeToU64(literal.count));
+
+    var encoding = (try literal_encoding.prepareBestWithin(
+        emitter.allocator,
+        literal,
+        emitter.literalBudget(),
+    )) orelse return error.SizeLimitReached;
+    defer encoding.deinit(emitter.allocator);
+    try emitter.writeUleb128(try usizeToU64(encoding.wireSize()));
+    try emitter.writeLiteral(encoding);
+}
+
 fn emitNode(emitter: *Emitter, program: dsl.Program) !void {
     switch (program.kind) {
-        .literal => |literal| {
-            try emitter.writeByte(@intFromEnum(NodeWireId.literal));
-            try emitter.writeByte(literal.bits_per_elem);
-            try emitter.writeUleb128(try usizeToU64(literal.count));
-
-            try validateLiteralWords(literal);
-            var encoding = try literal_encoding.prepareBest(
-                emitter.allocator,
-                literal,
-            );
-            defer encoding.deinit(emitter.allocator);
-            try emitter.writeUleb128(try usizeToU64(encoding.wireSize()));
-            try emitter.writeLiteral(encoding);
-        },
+        .literal => |literal| try emitLiteral(emitter, literal),
         .constant => |constant_value| {
             try emitter.writeByte(@intFromEnum(NodeWireId.constant));
             try emitter.writeByte(constant_value.bits);
@@ -303,16 +343,6 @@ fn usizeToU64(value: usize) dsl.ValidationError!u64 {
 
 fn storageBytes(bits: u8) usize {
     return types.roundUpToPow2(bits) / 8;
-}
-
-fn validateLiteralWords(literal: types.Stream) dsl.ValidationError!void {
-    if (literal.bits_per_elem == 0 or literal.bits_per_elem > 32)
-        return error.InvalidWordWidth;
-    if (literal.bits_per_elem == types.roundUpToPow2(literal.bits_per_elem)) return;
-    const mask = literal.mask();
-    for (0..literal.count) |index|
-        if (literal.getU32(index) & ~mask != 0)
-            return error.InvalidLiteralValue;
 }
 
 const Reader = struct {

@@ -358,42 +358,6 @@ fn inverseGrayVector(
     return result & mask;
 }
 
-pub fn mergeWord(
-    operation: dsl.MergeOp,
-    children: []const types.Stream,
-    index: usize,
-) dsl.ValidationError!u32 {
-    if (children.len < 2) return error.InvalidArity;
-    return switch (operation) {
-        .float_fields => |dtype| blk: {
-            const fields = dtype.floatFields() orelse return error.InvalidParameter;
-            if (children.len != 3 or
-                children[0].bits_per_elem != 1 or
-                children[1].bits_per_elem != fields.exp or
-                children[2].bits_per_elem != fields.mant)
-                return error.TypeMismatch;
-            const sign = children[0].getU32(index);
-            const exponent = children[1].getU32(index);
-            const mantissa = children[2].getU32(index);
-            break :blk mantissa |
-                (exponent << @intCast(fields.mant)) |
-                (sign << @intCast(fields.mant + fields.exp));
-        },
-        .fields, .bit_planes, .byte_planes => blk: {
-            var output: u32 = 0;
-            var shift: u8 = 0;
-            for (children) |child| {
-                if (child.bits_per_elem == 0 or child.bits_per_elem > 32 - shift)
-                    return error.InvalidWordWidth;
-                output |= (child.getU32(index) & wordMask(child.bits_per_elem)) <<
-                    @intCast(shift);
-                shift += child.bits_per_elem;
-            }
-            break :blk output;
-        },
-    };
-}
-
 fn wordMask(bits: u8) u32 {
     return if (bits == 32)
         std.math.maxInt(u32)

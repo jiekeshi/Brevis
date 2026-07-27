@@ -1,4 +1,4 @@
-//! In-memory and file end-to-end pipeline for the paper implementation.
+//! Safetensors checkpoint compression and decompression.
 //!
 //! The unit of synthesis and archival is exactly one complete safetensors
 //! tensor. This module intentionally has no block, template, sampling, or
@@ -7,7 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const dsl = @import("dsl.zig");
-const paper_calibration = @import("paper_calibration.zig");
+const calibration = @import("calibration.zig");
 const safetensors = @import("safetensors.zig");
 const synthesizer = @import("synthesizer.zig");
 const tensor_archive = @import("tensor_archive.zig");
@@ -21,8 +21,8 @@ const ONE_EXPANSION_TEACHER_TENSORS: usize = 4;
 const ONE_EXPANSION_TEACHER_BUDGET: usize = 6;
 
 pub const CompressOptions = struct {
-    synthesis: synthesizer.Options = .{},
-    max_calibration_tensors: usize = paper_calibration.DEFAULT_TENSORS,
+    synthesis: synthesizer.Options = .{ .seed_float_fields = false },
+    max_calibration_tensors: usize = calibration.DEFAULT_TENSORS,
     workers: usize = DEFAULT_WORKERS,
     max_source_bytes: usize = types.defaultLargeByteLimit,
     max_prefix_bytes: usize = 64 * 1024 * 1024,
@@ -85,9 +85,6 @@ pub const DecodeSummary = struct {
     output_bytes: usize,
     tensor_count: usize,
 };
-
-pub const Options = CompressOptions;
-pub const Result = CompressResult;
 
 /// Parse a complete safetensors value and synthesize one self-contained
 /// `TensorProgram` for every complete physical-word stream.
@@ -337,8 +334,8 @@ fn compressLoaded(
         loaded.tensors,
     );
 
-    var calibration: ?paper_calibration.Result = null;
-    defer if (calibration) |*result| result.deinit(alloc);
+    var learned_prior: ?calibration.Result = null;
+    defer if (learned_prior) |*result| result.deinit(alloc);
     var compression_options = options;
     if (compression_options.synthesis.rule_model == null and
         compression_options.synthesis.max_expansions != 0 and
@@ -355,12 +352,12 @@ fn compressLoaded(
                 ONE_EXPANSION_TEACHER_TENSORS,
             );
         }
-        const calibration_options = paper_calibration.Options{
+        const calibration_options = calibration.Options{
             .max_tensors = calibration_tensors,
             .synthesis = teacher,
         };
-        calibration = if (io) |threaded_io|
-            try paper_calibration.trainParallel(
+        learned_prior = if (io) |threaded_io|
+            try calibration.trainParallel(
                 alloc,
                 threaded_io,
                 loaded.tensors,
@@ -368,12 +365,12 @@ fn compressLoaded(
                 options.workers,
             )
         else
-            try paper_calibration.train(
+            try calibration.train(
                 alloc,
                 loaded.tensors,
                 calibration_options,
             );
-        compression_options.synthesis.rule_model = &calibration.?.prior;
+        compression_options.synthesis.rule_model = &learned_prior.?.prior;
     }
 
     const stats = try alloc.alloc(TensorStat, loaded.tensors.len);

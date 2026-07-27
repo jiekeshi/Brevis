@@ -1,4 +1,4 @@
-//! Deterministic input-local PHOG calibration for the paper DSL.
+//! Deterministic input-local PHOG calibration.
 //!
 //! Calibration is an encoder policy step, not part of the archive or decoder.
 //! Every observation comes from an exact winning program produced by uniform
@@ -82,7 +82,7 @@ pub fn train(
         const tensor = tensors[index];
         const target = try physicalStream(tensor.view);
 
-        var synthesis = try synthesizer.synthesize(
+        var synthesis = try synthesizer.synthesizeUnserialized(
             alloc,
             target,
             tensor.view.dtype,
@@ -241,7 +241,7 @@ fn synthesizeTask(
         return .{ .failure = err };
     return .{ .success = .{
         .tensor_index = tensor_index,
-        .synthesis = synthesizer.synthesize(
+        .synthesis = synthesizer.synthesizeUnserialized(
             alloc,
             target,
             tensor.view.dtype,

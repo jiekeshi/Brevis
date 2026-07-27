@@ -113,9 +113,9 @@ pub fn encodeBest(alloc: Allocator, stream: Stream) !OwnedEncoding {
 }
 
 pub fn encodedSize(alloc: Allocator, stream: Stream) !usize {
-    var prepared = try prepareBest(alloc, stream);
-    defer prepared.deinit(alloc);
-    return prepared.wireSize();
+    var analysis = (try analyzeBest(alloc, stream, NO_LIMIT)).?;
+    defer analysis.deinit(alloc);
+    return analysis.best.size;
 }
 
 pub const PreparedEncoding = struct {
@@ -174,8 +174,20 @@ pub fn prepareBest(
 ) !PreparedEncoding {
     return .{
         .stream = stream,
-        .analysis = try analyzeBest(alloc, stream),
+        .analysis = (try analyzeBest(alloc, stream, NO_LIMIT)).?,
     };
+}
+
+/// Prepare only when the exact body stays below `limit`. A null result means
+/// every encoding provably reaches `limit`, so the caller can abandon the
+/// enclosing candidate without paying for any exact payload size.
+pub fn prepareBestWithin(
+    alloc: Allocator,
+    stream: Stream,
+    limit: usize,
+) !?PreparedEncoding {
+    const analysis = (try analyzeBest(alloc, stream, limit)) orelse return null;
+    return .{ .stream = stream, .analysis = analysis };
 }
 
 /// Decode an owned result from `encodeBest`.
@@ -223,12 +235,8 @@ fn validateStreamStorage(stream: Stream) !void {
 
 fn validateStreamValues(stream: Stream) !void {
     if (stream.bits_per_elem == types.roundUpToPow2(stream.bits_per_elem)) return;
-    const mask = stream.mask();
-    for (0..stream.count) |index| {
-        if (builtin.is_test) AnalysisMetrics.validation_elements += 1;
-        if (stream.getU32(index) & ~mask != 0)
-            return error.InvalidLiteralStream;
-    }
+    if (builtin.is_test) AnalysisMetrics.validation_elements += stream.count;
+    if (!stream.valuesFitWidth()) return error.InvalidLiteralStream;
 }
 
 fn checkedStorageBytes(bits_per_elem: u8, count: usize) !usize {
@@ -292,10 +300,28 @@ const Analysis = struct {
     }
 };
 
+pub const NO_LIMIT: usize = std.math.maxInt(usize);
+
+/// Zero-order entropy of `histogram`, rounded down and shaded by one byte so
+/// accumulated floating-point error can never raise it above the true value.
+/// No symbol-wise encoding can code the stream below it, so it lower-bounds
+/// every payload this module can select.
+fn entropyLowerBytes(histogram: codec.Histogram, count: usize) usize {
+    const total: f64 = @floatFromInt(count);
+    var bits: f64 = 0;
+    for (histogram.pairs) |pair| {
+        const occurrences: f64 = @floatFromInt(pair.count);
+        bits -= occurrences * std.math.log2(occurrences / total);
+    }
+    const bytes: usize = @intFromFloat(@floor(bits / 8.0));
+    return bytes -| 1;
+}
+
 fn analyzeBest(
     alloc: Allocator,
     stream: Stream,
-) !Analysis {
+    limit: usize,
+) !?Analysis {
     try validateStreamStorage(stream);
 
     var analysis = Analysis{
@@ -305,20 +331,24 @@ fn analyzeBest(
         },
     };
     errdefer analysis.deinit(alloc);
-    if (stream.count == 0) return analysis;
+    if (stream.count == 0)
+        return if (analysis.best.size >= limit) null else analysis;
 
     var histogram = codec.buildHistogram(alloc, stream) catch |err| switch (err) {
         error.AlphabetTooLarge => {
             try validateStreamValues(stream);
             analysis.bitpack_width = requiredBits(stream);
             try analyzeBitpack(stream, &analysis);
-            return analysis;
+            return if (analysis.best.size >= limit) null else analysis;
         },
         else => return err,
     };
     defer histogram.deinit(alloc);
     if (histogram.requiredBits() > stream.bits_per_elem)
         return error.InvalidLiteralStream;
+    if (limit != NO_LIMIT and
+        1 + entropyLowerBytes(histogram, stream.count) >= limit)
+        return null;
     analysis.bitpack_width = histogram.requiredBits();
     try analyzeBitpack(stream, &analysis);
 
@@ -381,7 +411,7 @@ fn analyzeBest(
             fixed_bytes,
             lower_payload,
         ) catch std.math.maxInt(usize);
-        if (lower_size < analysis.best.size) {
+        if (lower_size < @min(analysis.best.size, limit)) {
             const payload_size = try codec.ransEncodedSize(
                 alloc,
                 stream,
@@ -396,6 +426,10 @@ fn analyzeBest(
         }
     }
 
+    if (analysis.best.size >= limit) {
+        analysis.deinit(alloc);
+        return null;
+    }
     return analysis;
 }
 

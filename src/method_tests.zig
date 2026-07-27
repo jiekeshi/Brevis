@@ -1,4 +1,4 @@
-//! Acceptance tests derived directly from the paper's semantic DSL.
+//! Acceptance tests derived from the method's semantic DSL.
 
 const std = @import("std");
 const dsl = @import("dsl.zig");

@@ -158,6 +158,14 @@ pub const Stream = struct {
         return (@as(u32, 1) << @intCast(self.bits_per_elem)) - 1;
     }
 
+    pub fn valuesFitWidth(self: Stream) bool {
+        if (self.bits_per_elem == 0 or self.bits_per_elem > 32) return false;
+        if (self.bits_per_elem == roundUpToPow2(self.bits_per_elem)) return true;
+        var combined: u32 = 0;
+        for (0..self.count) |index| combined |= self.getU32(index);
+        return combined & ~self.mask() == 0;
+    }
+
     pub fn eql(self: Stream, other: Stream) bool {
         if (self.bits_per_elem != other.bits_per_elem or
             self.count != other.count)

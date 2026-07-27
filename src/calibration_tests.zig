@@ -1,7 +1,7 @@
 //! Contract tests for deterministic, input-local PHOG calibration.
 
 const std = @import("std");
-const calibration = @import("paper_calibration.zig");
+const calibration = @import("calibration.zig");
 const dsl = @import("dsl.zig");
 const grammar_prior = @import("grammar_prior.zig");
 const safetensors = @import("safetensors.zig");

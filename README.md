@@ -64,9 +64,9 @@ changing the semantic language or archive format.
 
 Search begins with `Lit(target)` as the incumbent. It expands the leftmost hole,
 compares complete candidates by canonical serialized size, and continues after
-the first completion. For nonzero search budgets, only the final winner is
-executed and checked against the exact target. Zero-budget search returns the
-already-exact root literal directly.
+the first completion. A structured final winner is executed and checked against
+the exact target. The root literal is exact by construction and returns
+directly.
 
 The winner is the smallest correct complete program encountered, measured by exact canonical serialized bytes. A budget limit bounds work; it is not a claim of finding the globally shortest possible program.
 
@@ -142,7 +142,7 @@ BRTA v2
   -> restore the original prefix and tensor bytes
 ```
 
-The complete `paper_pipeline.decompress*` readers reject unknown versions and
+The complete `checkpoint.decompress*` readers reject unknown versions and
 IDs, truncation, trailing bytes, overlong integers, overflow, invalid programs,
 metadata disagreement, checksum failures, and configured resource-limit
 violations. The deliberately named low-level
@@ -193,26 +193,26 @@ Inspect the effective search configuration:
 Compress and restore a safetensors file:
 
 ```bash
-./zig-out/bin/brevis compress model.safetensors model.brta
-./zig-out/bin/brevis decompress model.brta restored.safetensors
-./zig-out/bin/brevis verify model.brta model.safetensors
+./zig-out/bin/brevis compress model.safetensors model.brv
+./zig-out/bin/brevis decompress model.brv restored.safetensors
+./zig-out/bin/brevis verify model.brv model.safetensors
 ```
 
 The CLI defaults to the detected hardware-thread count. Set `--workers 1` for
 single-core measurements or choose an explicit count for scaling experiments;
 the manuscript setting is 32. Workers synthesize or execute independent
-complete-tensor programs through a bounded completion queue. A two-window
-lookahead prevents source-order head-of-line stalls, while records are still
-written in source order and remain deterministic across worker counts.
+complete-tensor programs through a bounded two-window completion queue.
+Records are written in source order and remain deterministic across worker
+counts.
 
 Every nonzero search budget calibrates from the input checkpoint. A separately
 persisted prior overrides that checkpoint-local model:
 
 ```bash
-./zig-out/bin/brevis compress model.safetensors model.brta \
+./zig-out/bin/brevis compress model.safetensors model.brv \
   --max-expansions 512 --tensors 256 --workers 32
 ./zig-out/bin/brevis calibrate model.safetensors model.brgp --tensors 256
-./zig-out/bin/brevis compress model.safetensors model.brta --prior model.brgp
+./zig-out/bin/brevis compress model.safetensors model.brv --prior model.brgp
 ```
 
 The main compute controls are:
@@ -243,20 +243,22 @@ The byte-resource controls, accepted by all commands, are:
 | Option | Default | Meaning |
 | --- | ---: | --- |
 | `--max-total-bytes` | `17179869184` on 64-bit hosts | Maximum source, archive, or reconstructed file size; saturates to the address-space maximum on narrower hosts. |
-| `--max-tensor-bytes` | `536870912` | Maximum decoded bytes for one tensor; also bounds literal storage and open decomposition targets. |
+| `--max-tensor-bytes` | `4294967296` | Maximum decoded bytes for one tensor; also bounds literal storage and open decomposition targets. |
 | `--max-prefix-bytes` | `67108864` | Maximum safetensors prefix/JSON-header size. |
 
-The defaults cap any single decoder materialization at 512 MiB. Raise them
-explicitly for trusted models containing larger tensors. SafeTensors limits
-are enforced before format-specific metadata allocations. File commands
-truncate and stream directly to their destination; an error may therefore
-leave a partial file. Parallel paths bound scheduled work to two worker
-windows, so peak memory scales with the lookahead and active tensor sizes
-rather than the complete checkpoint. Compression preserves source record
-order, and a root `Lit` may borrow its tensor bytes until that record is
-serialized. The zero-budget terminal path prepares the canonical encoding once
-and writes its bytecode directly into archive framing. The public `synthesize`
-API remains owning; only the file pipeline uses the explicit borrowing seam.
+The default caps any single tensor at 4 GiB, which admits the embedding
+matrices of large-vocabulary checkpoints while still rejecting absurd headers.
+Lower it explicitly for untrusted input. SafeTensors limits are enforced
+before format-specific metadata allocations. File commands truncate and
+stream directly to their destination; an error may therefore leave a
+partial file. Parallel paths bound in-flight work to two worker windows, so
+peak memory scales with those windows and the active tensor sizes rather than
+the complete checkpoint. Compression preserves source record
+order, and a root `Lit` may borrow its tensor bytes while its source view is
+alive. File compression retains it through record serialization; calibration
+uses the same seam without materializing bytecode. The zero-budget terminal
+path prepares the canonical encoding once and writes its bytecode directly
+into archive framing. The public `synthesize` API remains owning.
 
 Canonical program readers additionally default to 512 MiB of output/literal
 storage and 4 GiB of cumulative interpreter byte-work, so a small deeply
@@ -294,14 +296,14 @@ src/program_format.zig           canonical BRPG v1 serialization
 src/interpreter.zig              validated program execution
 src/tensor_archive.zig           whole-tensor BRTA v2 framing and checksums
 src/safetensors.zig              strict safetensors parsing and writing
-src/paper_pipeline.zig           end-to-end compression and decompression
-src/paper_calibration.zig        deterministic input-local prior training
+src/checkpoint.zig               end-to-end compression and decompression
+src/calibration.zig              deterministic input-local prior training
 src/brevis.zig                   public behavioral seams
 src/main.zig                     command-line interface
 src/*_tests.zig                  focused acceptance and adversarial tests
 ```
 
-The central public seams are `synthesize`, `writeProgram`, `readProgram`, and `execute`. Archive and pipeline code compose those behaviors without redefining DSL semantics.
+The central public seams are `synthesize`, `writeProgram`, `readProgram`, and `execute`. Archive and checkpoint code compose those behaviors without redefining DSL semantics.
 
 ## Compatibility
 

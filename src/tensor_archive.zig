@@ -485,7 +485,7 @@ pub fn decodeVerifiedTensorRecord(
 /// Structurally parse an entire archive and reject bytes after the declared
 /// records. This low-level framing API verifies record checksums but does not
 /// bind their names/dtypes/shapes to the embedded safetensors JSON. Use
-/// `paper_pipeline.decompress*` for a complete archive read.
+/// `checkpoint.decompress*` for a complete archive read.
 pub fn parseStructural(
     alloc: Allocator,
     bytes: []const u8,

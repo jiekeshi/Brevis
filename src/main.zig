@@ -3,8 +3,8 @@
 const std = @import("std");
 const grammar = @import("grammar.zig");
 const grammar_prior = @import("grammar_prior.zig");
-const paper_calibration = @import("paper_calibration.zig");
-const pipeline = @import("paper_pipeline.zig");
+const calibration = @import("calibration.zig");
+const checkpoint = @import("checkpoint.zig");
 const safetensors = @import("safetensors.zig");
 const synthesizer = @import("synthesizer.zig");
 const types = @import("types.zig");
@@ -12,7 +12,9 @@ const types = @import("types.zig");
 const Allocator = std.mem.Allocator;
 const MAX_PRIOR_BYTES: usize = 512 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES: usize = types.defaultLargeByteLimit;
-const DEFAULT_MAX_TENSOR_BYTES: usize = 512 * 1024 * 1024;
+/// One embedding matrix of a large-vocabulary checkpoint already exceeds a
+/// gigabyte, so a smaller cap rejects ordinary models rather than bad input.
+const DEFAULT_MAX_TENSOR_BYTES: usize = 4 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_PREFIX_BYTES: usize = 64 * 1024 * 1024;
 
 const ResourceLimits = struct {
@@ -33,10 +35,10 @@ const Arguments = struct {
     command: Command,
     positional: std.ArrayList([]const u8) = .empty,
     prior_path: ?[]const u8 = null,
-    max_tensors: usize = paper_calibration.DEFAULT_TENSORS,
+    max_tensors: usize = calibration.DEFAULT_TENSORS,
     synthesis: synthesizer.Options = .{ .seed_float_fields = false },
     resources: ResourceLimits = .{},
-    workers: usize = pipeline.DEFAULT_WORKERS,
+    workers: usize = checkpoint.DEFAULT_WORKERS,
     saw_prior: bool = false,
     saw_tensors: bool = false,
     saw_workers: bool = false,
@@ -103,7 +105,7 @@ fn run(
     var args = try parseArguments(alloc, argv[1..]);
     defer args.deinit(alloc);
     if (!args.saw_workers)
-        args.workers = std.Thread.getCpuCount() catch pipeline.DEFAULT_WORKERS;
+        args.workers = std.Thread.getCpuCount() catch checkpoint.DEFAULT_WORKERS;
     try validateArguments(args);
 
     switch (args.command) {
@@ -254,6 +256,14 @@ fn validateArguments(args: Arguments) !void {
         return error.InvalidArguments;
     if (args.workers == 0)
         return error.InvalidArguments;
+    const archive_path: ?[]const u8 = switch (args.command) {
+        .compress => args.positional.items[1],
+        .decompress, .verify => args.positional.items[0],
+        .calibrate, .config => null,
+    };
+    if (archive_path) |path|
+        if (!std.mem.endsWith(u8, path, ".brv"))
+            return error.InvalidArguments;
     const grammar_options = args.synthesis.grammar_options;
     if (grammar_options.max_repeat_period > grammar.HARD_MAX_REPEAT_PERIOD or
         grammar_options.max_concat_splits > grammar.HARD_MAX_CONCAT_SPLITS or
@@ -288,7 +298,7 @@ fn parseForAllocationFailureCheck(alloc: Allocator) !void {
     var args = try parseArguments(alloc, &.{
         "compress",
         "in.safetensors",
-        "out.brta",
+        "out.brv",
         "--max-expansions",
         "64",
         "--max-tensor-bytes",
@@ -318,7 +328,7 @@ fn commandCompress(
 
     var synthesis = base_options;
     if (prior) |*model| synthesis.rule_model = model;
-    var summary = try pipeline.compressFile(
+    var summary = try checkpoint.compressFile(
         alloc,
         io,
         source_path,
@@ -387,7 +397,7 @@ fn commandDecompress(
     resources: ResourceLimits,
     workers: usize,
 ) !void {
-    const summary = try pipeline.decompressFile(
+    const summary = try checkpoint.decompressFile(
         alloc,
         io,
         archive_path,
@@ -409,7 +419,7 @@ fn commandVerify(
     resources: ResourceLimits,
     workers: usize,
 ) !void {
-    const summary = try pipeline.verifyFile(
+    const summary = try checkpoint.verifyFile(
         alloc,
         io,
         archive_path,
@@ -445,7 +455,7 @@ fn commandCalibrate(
     );
     defer loaded.deinit(alloc);
 
-    var result = try paper_calibration.trainParallel(
+    var result = try calibration.trainParallel(
         alloc,
         io,
         loaded.tensors,
@@ -536,7 +546,7 @@ fn commandConfig(
 fn decompressLimits(
     resources: ResourceLimits,
     workers: usize,
-) pipeline.DecompressLimits {
+) checkpoint.DecompressLimits {
     const program_slack: usize = 16 * 1024 * 1024;
     const program_bytes = @min(
         resources.max_total_bytes,
@@ -609,9 +619,9 @@ fn usage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         \\Brevis — exact whole-tensor program synthesis
         \\
-        \\  brevis compress   <model.safetensors> <model.brta> [--prior model.brgp] [--tensors N] [search options]
-        \\  brevis decompress <model.brta> <restored.safetensors>
-        \\  brevis verify     <model.brta> <model.safetensors>
+        \\  brevis compress   <model.safetensors> <model.brv> [--prior model.brgp] [--tensors N] [search options]
+        \\  brevis decompress <model.brv> <restored.safetensors>
+        \\  brevis verify     <model.brv> <model.safetensors>
         \\  brevis calibrate  <model.safetensors> <model.brgp> [--tensors N] [search options]
         \\  brevis config [search options]
         \\
@@ -642,7 +652,7 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
     var args = try parseArguments(alloc, &.{
         "compress",
         "model.safetensors",
-        "model.brta",
+        "model.brv",
         "--prior",
         "model.brgp",
         "--tensors",
@@ -704,13 +714,24 @@ test "CLI defaults leave one-expansion search to PHOG" {
     try validateArguments(args);
     try std.testing.expectEqual(@as(usize, 1), args.synthesis.max_expansions);
     try std.testing.expect(!args.synthesis.seed_float_fields);
+
+    var legacy_suffix = try parseArguments(alloc, &.{
+        "compress",
+        "model.safetensors",
+        "model.brta",
+    });
+    defer legacy_suffix.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidArguments,
+        validateArguments(legacy_suffix),
+    );
 }
 
 test "CLI rejects command-specific flags and an impossible node cap" {
     const alloc = std.testing.allocator;
     var decode_args = try parseArguments(alloc, &.{
         "decompress",
-        "model.brta",
+        "model.brv",
         "out.safetensors",
         "--max-depth",
         "1",
@@ -745,7 +766,7 @@ test "CLI rejects command-specific flags and an impossible node cap" {
 
     var zero_workers = try parseArguments(alloc, &.{
         "decompress",
-        "model.brta",
+        "model.brv",
         "out.safetensors",
         "--workers",
         "0",
@@ -772,7 +793,7 @@ test "CLI decoder defaults cap one materialized tensor and can be tightened" {
     const alloc = std.testing.allocator;
     var defaults = try parseArguments(alloc, &.{
         "decompress",
-        "model.brta",
+        "model.brv",
         "out.safetensors",
     });
     defer defaults.deinit(alloc);
@@ -791,7 +812,7 @@ test "CLI decoder defaults cap one materialized tensor and can be tightened" {
 
     var tightened = try parseArguments(alloc, &.{
         "decompress",
-        "model.brta",
+        "model.brv",
         "out.safetensors",
         "--max-total-bytes",
         "4096",

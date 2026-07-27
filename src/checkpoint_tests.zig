@@ -1,8 +1,8 @@
 const std = @import("std");
 const dsl = @import("dsl.zig");
 const grammar_prior = @import("grammar_prior.zig");
-const paper_calibration = @import("paper_calibration.zig");
-const pipeline = @import("paper_pipeline.zig");
+const calibration = @import("calibration.zig");
+const checkpoint = @import("checkpoint.zig");
 const safetensors = @import("safetensors.zig");
 const synthesizer = @import("synthesizer.zig");
 const tensor_archive = @import("tensor_archive.zig");
@@ -68,7 +68,7 @@ test "multiple whole tensors round trip byte-for-byte with one record each" {
     const source = try makeSafetensors(alloc, multi_header, &data);
     defer alloc.free(source);
 
-    var compressed = try pipeline.compressBytes(
+    var compressed = try checkpoint.compressBytes(
         alloc,
         source,
         .{
@@ -117,7 +117,7 @@ test "multiple whole tensors round trip byte-for-byte with one record each" {
         else => false,
     });
 
-    const restored = try pipeline.decompressBytes(
+    const restored = try checkpoint.decompressBytes(
         alloc,
         compressed.archive_bytes,
         .{},
@@ -129,8 +129,8 @@ test "multiple whole tensors round trip byte-for-byte with one record each" {
 test "compression learns a checkpoint-local prior unless one is supplied" {
     const alloc = std.testing.allocator;
     try std.testing.expectEqual(
-        paper_calibration.DEFAULT_TENSORS,
-        (pipeline.CompressOptions{}).max_calibration_tensors,
+        calibration.DEFAULT_TENSORS,
+        (checkpoint.CompressOptions{}).max_calibration_tensors,
     );
     const header =
         \\{"first":{"dtype":"U8","shape":[8],"data_offsets":[0,8]},"second":{"dtype":"U8","shape":[8],"data_offsets":[8,16]}}
@@ -150,14 +150,14 @@ test "compression learns a checkpoint-local prior unless one is supplied" {
     const calibration_source = try alloc.dupe(u8, source);
     var loaded = try safetensors.loadFromBytes(alloc, calibration_source);
     defer loaded.deinit(alloc);
-    var trained = try paper_calibration.train(alloc, loaded.tensors, .{
+    var trained = try calibration.train(alloc, loaded.tensors, .{
         .max_tensors = 1,
         .synthesis = synthesis,
     });
     defer trained.deinit(alloc);
     try std.testing.expect(!trained.prior.isEmpty());
 
-    var automatic = try pipeline.compressBytes(alloc, source, .{
+    var automatic = try checkpoint.compressBytes(alloc, source, .{
         .synthesis = synthesis,
         .max_calibration_tensors = 1,
     });
@@ -165,7 +165,7 @@ test "compression learns a checkpoint-local prior unless one is supplied" {
 
     var guided_synthesis = synthesis;
     guided_synthesis.rule_model = &trained.prior;
-    var explicit = try pipeline.compressBytes(alloc, source, .{
+    var explicit = try checkpoint.compressBytes(alloc, source, .{
         .synthesis = guided_synthesis,
         .max_calibration_tensors = 0,
     });
@@ -191,7 +191,7 @@ test "compression learns a checkpoint-local prior unless one is supplied" {
     invalid_synthesis.rule_model = &invalid_prior;
     try std.testing.expectError(
         error.InvalidConfig,
-        pipeline.compressBytes(alloc, source, .{
+        checkpoint.compressBytes(alloc, source, .{
             .synthesis = invalid_synthesis,
             .max_calibration_tensors = 0,
         }),
@@ -223,7 +223,7 @@ test "one expansion uses a learned PHOG completion instead of the float seed" {
             .max_field_splits = 0,
         },
     };
-    var automatic = try pipeline.compressBytes(alloc, source, .{
+    var automatic = try checkpoint.compressBytes(alloc, source, .{
         .synthesis = requested,
         .max_calibration_tensors = 1,
     });
@@ -235,7 +235,7 @@ test "one expansion uses a learned PHOG completion instead of the float seed" {
     var teacher_options = requested;
     teacher_options.max_expansions = 6;
     teacher_options.seed_float_fields = true;
-    var trained = try paper_calibration.train(alloc, loaded.tensors, .{
+    var trained = try calibration.train(alloc, loaded.tensors, .{
         .max_tensors = 1,
         .synthesis = teacher_options,
     });
@@ -244,7 +244,7 @@ test "one expansion uses a learned PHOG completion instead of the float seed" {
     var guided_options = requested;
     guided_options.seed_float_fields = false;
     guided_options.rule_model = &trained.prior;
-    var explicit = try pipeline.compressBytes(alloc, source, .{
+    var explicit = try checkpoint.compressBytes(alloc, source, .{
         .synthesis = guided_options,
         .max_calibration_tensors = 0,
     });
@@ -286,7 +286,7 @@ test "one-expansion PHOG learns float fields from a seeded teacher" {
     const source = try makeSafetensors(alloc, header, &data);
     defer alloc.free(source);
 
-    var compressed = try pipeline.compressBytes(alloc, source, .{
+    var compressed = try checkpoint.compressBytes(alloc, source, .{
         .synthesis = .{
             .max_expansions = 1,
             .max_nodes = 4,
@@ -332,7 +332,7 @@ test "zero synthesis budget stores one exact Lit for the complete tensor" {
     );
     defer alloc.free(source);
 
-    var compressed = try pipeline.compressBytes(
+    var compressed = try checkpoint.compressBytes(
         alloc,
         source,
         .{ .synthesis = .{ .max_expansions = 0 } },
@@ -355,7 +355,7 @@ test "zero synthesis budget stores one exact Lit for the complete tensor" {
         else => false,
     });
 
-    const restored = try pipeline.decompressBytes(
+    const restored = try checkpoint.decompressBytes(
         alloc,
         compressed.archive_bytes,
         .{},
@@ -372,7 +372,7 @@ test "decompression rejects checksum corruption and trailing bytes" {
         &.{ 1, 2, 3, 4 },
     );
     defer alloc.free(source);
-    var compressed = try pipeline.compressBytes(
+    var compressed = try checkpoint.compressBytes(
         alloc,
         source,
         .{ .synthesis = .{ .max_expansions = 0 } },
@@ -384,7 +384,7 @@ test "decompression rejects checksum corruption and trailing bytes" {
     corrupted[corrupted.len - 1] ^= 0x80;
     try std.testing.expectError(
         error.ChecksumMismatch,
-        pipeline.decompressBytes(alloc, corrupted, .{}),
+        checkpoint.decompressBytes(alloc, corrupted, .{}),
     );
 
     const trailing = try alloc.alloc(
@@ -399,7 +399,7 @@ test "decompression rejects checksum corruption and trailing bytes" {
     trailing[trailing.len - 1] = 0;
     try std.testing.expectError(
         error.TrailingBytes,
-        pipeline.decompressBytes(alloc, trailing, .{}),
+        checkpoint.decompressBytes(alloc, trailing, .{}),
     );
 }
 
@@ -432,7 +432,7 @@ test "decompression rejects record metadata that disagrees with prefix" {
 
     try std.testing.expectError(
         error.MetadataMismatch,
-        pipeline.decompressBytes(alloc, mismatched, .{}),
+        checkpoint.decompressBytes(alloc, mismatched, .{}),
     );
 }
 
@@ -464,11 +464,11 @@ test "prefix byte length bounds a mismatched record before execution" {
 
     try std.testing.expectError(
         error.OutputLimitExceeded,
-        pipeline.decompressBytes(alloc, mismatched, .{}),
+        checkpoint.decompressBytes(alloc, mismatched, .{}),
     );
 }
 
-test "pipeline enforces source, archive, and aggregate output limits" {
+test "checkpoint enforces source, archive, and aggregate output limits" {
     const alloc = std.testing.allocator;
     const source = try makeSafetensors(
         alloc,
@@ -479,7 +479,7 @@ test "pipeline enforces source, archive, and aggregate output limits" {
 
     try std.testing.expectError(
         error.SourceLimitExceeded,
-        pipeline.compressBytes(
+        checkpoint.compressBytes(
             alloc,
             source,
             .{ .max_source_bytes = source.len - 1 },
@@ -487,14 +487,14 @@ test "pipeline enforces source, archive, and aggregate output limits" {
     );
     try std.testing.expectError(
         error.ArchiveLimitExceeded,
-        pipeline.compressBytes(
+        checkpoint.compressBytes(
             alloc,
             source,
             .{ .max_archive_bytes = 0 },
         ),
     );
 
-    var compressed = try pipeline.compressBytes(
+    var compressed = try checkpoint.compressBytes(
         alloc,
         source,
         .{ .synthesis = .{ .max_expansions = 0 } },
@@ -503,7 +503,7 @@ test "pipeline enforces source, archive, and aggregate output limits" {
 
     try std.testing.expectError(
         error.ArchiveLimitExceeded,
-        pipeline.decompressBytes(
+        checkpoint.decompressBytes(
             alloc,
             compressed.archive_bytes,
             .{ .max_archive_bytes = compressed.archive_bytes.len - 1 },
@@ -511,7 +511,7 @@ test "pipeline enforces source, archive, and aggregate output limits" {
     );
     try std.testing.expectError(
         error.OutputLimitExceeded,
-        pipeline.decompressBytes(
+        checkpoint.decompressBytes(
             alloc,
             compressed.archive_bytes,
             .{ .max_output_bytes = source.len - 1 },
@@ -533,7 +533,7 @@ test "file APIs compress decompress and verify complete tensors" {
     defer alloc.free(source_path);
     const archive_path = try std.fmt.allocPrint(
         alloc,
-        ".zig-cache/tmp/{s}/model.brta",
+        ".zig-cache/tmp/{s}/model.brv",
         .{&tmp.sub_path},
     );
     defer alloc.free(archive_path);
@@ -545,7 +545,7 @@ test "file APIs compress decompress and verify complete tensors" {
     defer alloc.free(restored_path);
     const corrupt_path = try std.fmt.allocPrint(
         alloc,
-        ".zig-cache/tmp/{s}/corrupt.brta",
+        ".zig-cache/tmp/{s}/corrupt.brv",
         .{&tmp.sub_path},
     );
     defer alloc.free(corrupt_path);
@@ -575,7 +575,7 @@ test "file APIs compress decompress and verify complete tensors" {
     defer alloc.free(source_hardlink);
     const archive_hardlink = try std.fmt.allocPrint(
         alloc,
-        ".zig-cache/tmp/{s}/archive-hardlink.brta",
+        ".zig-cache/tmp/{s}/archive-hardlink.brv",
         .{&tmp.sub_path},
     );
     defer alloc.free(archive_hardlink);
@@ -595,7 +595,7 @@ test "file APIs compress decompress and verify complete tensors" {
     try writeFile(io, source_path, source);
     try std.testing.expectError(
         error.InputOutputPathConflict,
-        pipeline.compressFile(
+        checkpoint.compressFile(
             alloc,
             io,
             source_path,
@@ -608,7 +608,7 @@ test "file APIs compress decompress and verify complete tensors" {
     try std.testing.expectEqualSlices(u8, source, preserved_source);
     try std.testing.expectError(
         error.InputOutputPathConflict,
-        pipeline.compressFile(
+        checkpoint.compressFile(
             alloc,
             io,
             source_path,
@@ -626,7 +626,7 @@ test "file APIs compress decompress and verify complete tensors" {
     );
     try std.testing.expectError(
         error.InputOutputPathConflict,
-        pipeline.compressFile(
+        checkpoint.compressFile(
             alloc,
             io,
             source_path,
@@ -636,14 +636,14 @@ test "file APIs compress decompress and verify complete tensors" {
     );
 
     try writeFile(io, archive_path, "stale archive");
-    var serial = try pipeline.compressBytes(
+    var serial = try checkpoint.compressBytes(
         alloc,
         source,
         .{ .synthesis = .{ .max_expansions = 1 } },
     );
     defer serial.deinit(alloc);
 
-    var compressed = try pipeline.compressFile(
+    var compressed = try checkpoint.compressFile(
         alloc,
         io,
         source_path,
@@ -675,7 +675,7 @@ test "file APIs compress decompress and verify complete tensors" {
     );
     try std.testing.expectError(
         error.InputOutputPathConflict,
-        pipeline.decompressFile(
+        checkpoint.decompressFile(
             alloc,
             io,
             archive_path,
@@ -700,7 +700,7 @@ test "file APIs compress decompress and verify complete tensors" {
     );
     try std.testing.expectError(
         error.InputOutputPathConflict,
-        pipeline.decompressFile(
+        checkpoint.decompressFile(
             alloc,
             io,
             archive_path,
@@ -716,7 +716,7 @@ test "file APIs compress decompress and verify complete tensors" {
         preserved_hardlink,
     );
 
-    const verified = try pipeline.verifyFile(
+    const verified = try checkpoint.verifyFile(
         alloc,
         io,
         archive_path,
@@ -728,7 +728,7 @@ test "file APIs compress decompress and verify complete tensors" {
     try std.testing.expectEqual(@as(usize, 3), verified.tensor_count);
 
     try writeFile(io, restored_path, "stale output");
-    const decompressed = try pipeline.decompressFile(
+    const decompressed = try checkpoint.decompressFile(
         alloc,
         io,
         archive_path,
@@ -747,7 +747,7 @@ test "file APIs compress decompress and verify complete tensors" {
     try writeFile(io, wrong_source_path, wrong_source);
     try std.testing.expectError(
         error.SourceMismatch,
-        pipeline.verifyFile(
+        checkpoint.verifyFile(
             alloc,
             io,
             archive_path,
@@ -766,7 +766,7 @@ test "file APIs compress decompress and verify complete tensors" {
     try writeFile(io, corrupt_path, archive_bytes[0..truncated_at]);
     try std.testing.expectError(
         error.Truncated,
-        pipeline.decompressFile(
+        checkpoint.decompressFile(
             alloc,
             io,
             corrupt_path,
@@ -781,7 +781,7 @@ test "file APIs compress decompress and verify complete tensors" {
     try writeFile(io, corrupt_path, corrupted);
     try std.testing.expectError(
         error.ChecksumMismatch,
-        pipeline.decompressFile(
+        checkpoint.decompressFile(
             alloc,
             io,
             corrupt_path,

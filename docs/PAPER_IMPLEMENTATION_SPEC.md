@@ -157,7 +157,7 @@ Before the checkpoint's tensor searches, the encoder trains an input-local
 PHOG over a deterministic subset of complete tensors. Budget zero skips this
 step. At the one-expansion engineering default, a teacher searches up to six
 expansions on at most four tensors, while the requested searches remain at one
-expansion and disable the hard-coded float seed. Larger budgets use the
+expansion and disable the shallow float-field incumbent. Larger budgets use the
 engineering cap of 32; the manuscript setting is 256. The resulting immutable
 prior guides queue order and selects the one terminal-completed frontier. A
 caller-supplied prior overrides automatic calibration; it is encoder-only and
@@ -246,10 +246,10 @@ records and are not the unit of synthesis.
 File compression and decompression may process independent tensor records in
 parallel. The manuscript configuration uses 32 workers, each handling one
 complete tensor at a time. A completion queue schedules at most one task per
-worker and permits a bounded two-window lookahead, avoiding source-order
-head-of-line stalls without buffering the whole checkpoint. Emission remains
-source ordered, and parallel execution must produce the same canonical archive
-as one worker.
+worker with bounded two-window lookahead, avoiding source-order head-of-line
+stalls without buffering the whole checkpoint. Emission remains source
+ordered, and parallel execution must produce the same canonical archive as one
+worker.
 
 An implementation may internally bound memory by lowering a tensor program to
 streamable regions. When regions need independent subprograms, that structure
@@ -301,13 +301,15 @@ execute(Program) -> exact physical-word stream
 ```
 
 The archive module composes these seams but does not define DSL semantics.
-`synthesize` returns an owning program. The file encoder may instead call an
-explicit borrowing variant whose root `Lit` refers to the input tensor only
-until immediate record serialization; every structured program owns its leaf
-storage. Synthesis also returns the canonical bytecode selected for the
-winner, so the zero-budget terminal path does not repeat its serialized-size
-and serialization passes during archive framing. These lifetime and execution
-optimizations do not change the program bytes or the decoder interface.
+`synthesize` returns an owning program. File encoding and calibration may call
+explicit borrowing variants whose root `Lit` refers to the input tensor only
+while its source view is alive; every structured program owns its leaf storage.
+File synthesis also returns the canonical bytecode selected for the winner, so
+the zero-budget terminal path does not repeat its serialized-size and
+serialization passes during archive framing. Calibration requests only its
+exact length. A root `Lit` is exact by construction; structured winners are
+executed and checked. These optimizations do not change program bytes or the
+decoder interface.
 
 Required acceptance properties:
 
