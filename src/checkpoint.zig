@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const cpu_budget = @import("cpu_budget.zig");
 const dsl = @import("dsl.zig");
 const calibration = @import("calibration.zig");
 const safetensors = @import("safetensors.zig");
@@ -19,6 +20,7 @@ const Io = std.Io;
 pub const DEFAULT_WORKERS: usize = 32;
 const ONE_EXPANSION_TEACHER_TENSORS: usize = 4;
 const ONE_EXPANSION_TEACHER_BUDGET: usize = 6;
+const ONE_EXPANSION_TEACHER_SAMPLE: usize = 1 << 20;
 
 pub const CompressOptions = struct {
     synthesis: synthesizer.Options = .{ .seed_float_fields = false },
@@ -172,6 +174,8 @@ pub fn compressFile(
     source_file.release();
     source_file_owned = false;
     defer loaded.deinit(alloc);
+    var prefetch = Prefetcher.start(loaded.mmap);
+    defer prefetch.finish();
 
     const archive_file = try createDistinctOutputFile(
         io,
@@ -324,6 +328,7 @@ fn compressLoaded(
     options: CompressOptions,
 ) !CompressSummary {
     if (sink.written != 0) return error.NonEmptyOutputSink;
+    if (options.workers == 0) return error.InvalidWorkerCount;
     if (safetensors_prefix.len > options.max_prefix_bytes)
         return error.PrefixLimitExceeded;
     if (loaded.tensors.len > options.max_tensors)
@@ -343,6 +348,7 @@ fn compressLoaded(
     {
         var teacher = options.synthesis;
         var calibration_tensors = options.max_calibration_tensors;
+        var teacher_sample: usize = 0;
         if (teacher.max_expansions == 1) {
             teacher.max_expansions = ONE_EXPANSION_TEACHER_BUDGET;
             teacher.seed_float_fields = true;
@@ -351,10 +357,12 @@ fn compressLoaded(
                 calibration_tensors,
                 ONE_EXPANSION_TEACHER_TENSORS,
             );
+            teacher_sample = ONE_EXPANSION_TEACHER_SAMPLE;
         }
         const calibration_options = calibration.Options{
             .max_tensors = calibration_tensors,
             .synthesis = teacher,
+            .max_sample_elements = teacher_sample,
         };
         learned_prior = if (io) |threaded_io|
             try calibration.trainParallel(
@@ -399,11 +407,13 @@ fn compressLoaded(
             compression_options,
         );
     } else {
+        var core_budget = cpu_budget.Budget.init(options.workers - 1);
         for (loaded.tensors) |tensor| {
             var encoded = try encodeTensor(
                 alloc,
                 tensor,
                 compression_options,
+                &core_budget,
             );
             defer encoded.deinit(alloc);
             stats[initialized_stats] = try finishEncodedTensor(
@@ -465,7 +475,11 @@ fn encodeTensor(
     alloc: Allocator,
     tensor: safetensors.Tensor,
     options: CompressOptions,
+    core_budget: *cpu_budget.Budget,
 ) !EncodedTensor {
+    const previous_budget = cpu_budget.bind(core_budget);
+    defer _ = cpu_budget.bind(previous_budget);
+
     const elements = try tensor.view.numelChecked();
     const source_bytes = std.math.mul(
         usize,
@@ -526,12 +540,14 @@ fn encodeTensor(
 fn encodeTensorTask(
     tensor: safetensors.Tensor,
     options: CompressOptions,
+    core_budget: *cpu_budget.Budget,
 ) EncodeOutcome {
     const worker_alloc = std.heap.smp_allocator;
     return .{ .success = encodeTensor(
         worker_alloc,
         tensor,
         options,
+        core_budget,
     ) catch |err| return .{ .failure = err } };
 }
 
@@ -539,11 +555,18 @@ fn encodeIndexedTensorTask(
     index: usize,
     tensor: safetensors.Tensor,
     options: CompressOptions,
+    core_budget: *cpu_budget.Budget,
 ) IndexedEncodeOutcome {
     return .{
         .index = index,
-        .outcome = encodeTensorTask(tensor, options),
+        .outcome = encodeTensorTask(tensor, options, core_budget),
     };
+}
+
+fn writeRecord(sink: *OutputSink, record: tensor_archive.PreparedTensorRecord) !void {
+    try sink.writeAll(record.prefix);
+    try sink.writeAll(record.bytecode);
+    try sink.writeAll(&record.checksum);
 }
 
 fn finishEncodedTensor(
@@ -552,9 +575,15 @@ fn finishEncodedTensor(
     encoded: EncodedTensor,
     sink: *OutputSink,
 ) !TensorStat {
-    try sink.writeAll(encoded.record.prefix);
-    try sink.writeAll(encoded.record.bytecode);
-    try sink.writeAll(&encoded.record.checksum);
+    try writeRecord(sink, encoded.record);
+    return tensorStat(alloc, name, encoded);
+}
+
+fn tensorStat(
+    alloc: Allocator,
+    name: []const u8,
+    encoded: EncodedTensor,
+) !TensorStat {
     return .{
         .name = try alloc.dupe(u8, name),
         .source_bytes = encoded.source_bytes,
@@ -567,6 +596,95 @@ fn finishEncodedTensor(
     };
 }
 
+/// Drains finished records to the archive on a dedicated thread.
+///
+/// Appending a multi-gigabyte archive is half a second of kernel copying that
+/// the scheduler would otherwise spend blocked while its workers idle. Records
+/// are pushed in archive order into a bounded ring, so the bytes on disk do not
+/// depend on scheduling and encoding cannot run arbitrarily far ahead of I/O.
+const RecordWriter = struct {
+    io: Io,
+    sink: *OutputSink,
+    slots: []?EncodedTensor,
+    /// Null when no thread could start; pushes then write inline.
+    thread: ?std.Thread = null,
+    mutex: Io.Mutex = .init,
+    space: Io.Condition = .init,
+    ready: Io.Condition = .init,
+    head: usize = 0,
+    tail: usize = 0,
+    count: usize = 0,
+    closed: bool = false,
+    failure: ?anyerror = null,
+
+    fn start(self: *RecordWriter) void {
+        self.thread = std.Thread.spawn(.{}, run, .{self}) catch null;
+    }
+
+    fn push(self: *RecordWriter, value: EncodedTensor) !void {
+        var record = value;
+        errdefer record.deinit(std.heap.smp_allocator);
+        if (self.thread == null) {
+            defer record.deinit(std.heap.smp_allocator);
+            return writeRecord(self.sink, record.record);
+        }
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        while (self.count == self.slots.len and self.failure == null)
+            self.space.waitUncancelable(self.io, &self.mutex);
+        if (self.failure) |err| return err;
+        self.slots[self.tail] = record;
+        self.tail = (self.tail + 1) % self.slots.len;
+        self.count += 1;
+        self.ready.signal(self.io);
+    }
+
+    fn run(self: *RecordWriter) void {
+        while (true) {
+            self.mutex.lockUncancelable(self.io);
+            while (self.count == 0 and !self.closed)
+                self.ready.waitUncancelable(self.io, &self.mutex);
+            if (self.count == 0) {
+                self.mutex.unlock(self.io);
+                return;
+            }
+            var record = self.slots[self.head].?;
+            self.slots[self.head] = null;
+            self.head = (self.head + 1) % self.slots.len;
+            self.count -= 1;
+            self.space.signal(self.io);
+            self.mutex.unlock(self.io);
+
+            defer record.deinit(std.heap.smp_allocator);
+            writeRecord(self.sink, record.record) catch |err| {
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
+                if (self.failure == null) self.failure = err;
+                // Nothing will drain the ring now, so release every producer.
+                self.space.broadcast(self.io);
+                return;
+            };
+        }
+    }
+
+    /// Stop the thread, surface a write error, and release whatever the thread
+    /// never got to.
+    fn finish(self: *RecordWriter) !void {
+        const thread = self.thread orelse return;
+        self.mutex.lockUncancelable(self.io);
+        self.closed = true;
+        self.ready.signal(self.io);
+        self.mutex.unlock(self.io);
+        thread.join();
+        self.thread = null;
+        for (self.slots) |*slot| if (slot.*) |*record| {
+            record.deinit(std.heap.smp_allocator);
+            slot.* = null;
+        };
+        if (self.failure) |err| return err;
+    }
+};
+
 fn compressTensorsParallel(
     alloc: Allocator,
     io: Io,
@@ -577,6 +695,7 @@ fn compressTensorsParallel(
     options: CompressOptions,
 ) !void {
     const workers = @min(options.workers, tensors.len);
+    var core_budget = cpu_budget.Budget.init(options.workers - workers);
     const completion_buffer = try alloc.alloc(EncodeCompletion, workers);
     defer alloc.free(completion_buffer);
     var tasks = Io.Select(EncodeCompletion).init(io, completion_buffer);
@@ -595,11 +714,18 @@ fn compressTensorsParallel(
         }
     };
 
-    const lookahead = std.math.mul(
-        usize,
-        workers,
-        2,
-    ) catch std.math.maxInt(usize);
+    // Encoding may run one worker window ahead of emission and the writer
+    // holds another, so the number of encoded tensors alive at once matches
+    // the two windows this pipeline has always bounded itself to.
+    const slots = try alloc.alloc(?EncodedTensor, workers);
+    defer alloc.free(slots);
+    @memset(slots, null);
+    var writer = RecordWriter{ .io = io, .sink = sink, .slots = slots };
+    writer.start();
+    var writer_finished = false;
+    defer if (!writer_finished) writer.finish() catch {};
+
+    const lookahead = workers;
     var next_to_schedule: usize = 0;
     var next_to_emit: usize = 0;
     var running: usize = 0;
@@ -616,6 +742,7 @@ fn compressTensorsParallel(
                     next_to_schedule,
                     tensors[next_to_schedule],
                     options,
+                    &core_budget,
                 },
             );
             next_to_schedule += 1;
@@ -624,6 +751,8 @@ fn compressTensorsParallel(
 
         const completed = (try tasks.await()).done;
         running -= 1;
+        if (next_to_schedule == tensors.len)
+            core_budget.release(1);
         std.debug.assert(pending[completed.index] == null);
         pending[completed.index] = completed.outcome;
 
@@ -632,22 +761,27 @@ fn compressTensorsParallel(
         {
             var outcome = pending[next_to_emit].?;
             pending[next_to_emit] = null;
-            defer outcome.deinit(std.heap.smp_allocator);
             switch (outcome) {
                 .success => |encoded| {
-                    stats[initialized_stats.*] = try finishEncodedTensor(
+                    stats[initialized_stats.*] = tensorStat(
                         alloc,
                         tensors[next_to_emit].name,
                         encoded,
-                        sink,
-                    );
+                    ) catch |err| {
+                        outcome.deinit(std.heap.smp_allocator);
+                        return err;
+                    };
                     initialized_stats.* += 1;
+                    try writer.push(encoded);
                 },
                 .failure => |err| return err,
             }
             next_to_emit += 1;
         }
     }
+
+    writer_finished = true;
+    try writer.finish();
 }
 
 fn decodeArchiveToSink(
@@ -1137,6 +1271,41 @@ fn createDistinctOutputFile(
     try file.setLength(io, 0);
     return file;
 }
+
+/// Streams a mapping into the page cache ahead of the workers reading it.
+///
+/// Every byte of a checkpoint is read once, front to back, but demand paging
+/// turns that into scattered faults from a dozen worker threads at once. One
+/// thread walking the mapping in order lets the kernel prefetch in large
+/// batches, which is most of the difference between a warm and a cold run. It
+/// only ever advises pages the process already maps, so failing is harmless.
+const Prefetcher = struct {
+    thread: ?std.Thread = null,
+
+    const CHUNK: usize = 64 << 20;
+
+    fn start(mapping: ?std.Io.File.MemoryMap) Prefetcher {
+        const map = mapping orelse return .{};
+        return .{ .thread = std.Thread.spawn(.{}, run, .{map.memory}) catch null };
+    }
+
+    fn run(bytes: []align(std.heap.page_size_min) u8) void {
+        var offset: usize = 0;
+        while (offset < bytes.len) : (offset += CHUNK) {
+            const span = @min(CHUNK, bytes.len - offset);
+            std.posix.madvise(
+                @alignCast(bytes.ptr + offset),
+                span,
+                std.posix.MADV.WILLNEED,
+            ) catch return;
+        }
+    }
+
+    fn finish(self: *Prefetcher) void {
+        if (self.thread) |thread| thread.join();
+        self.thread = null;
+    }
+};
 
 fn fileDevice(file: std.Io.File) !?u64 {
     return switch (comptime builtin.os.tag) {

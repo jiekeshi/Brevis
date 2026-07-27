@@ -478,6 +478,14 @@ test "checkpoint enforces source, archive, and aggregate output limits" {
     defer alloc.free(source);
 
     try std.testing.expectError(
+        error.InvalidWorkerCount,
+        checkpoint.compressBytes(
+            alloc,
+            source,
+            .{ .workers = 0, .max_calibration_tensors = 0 },
+        ),
+    );
+    try std.testing.expectError(
         error.SourceLimitExceeded,
         checkpoint.compressBytes(
             alloc,

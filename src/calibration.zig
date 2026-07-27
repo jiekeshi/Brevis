@@ -25,6 +25,11 @@ pub const Options = struct {
     /// Search limits and grammar bounds used to obtain each exact program.
     /// `rule_model` is always forced to null during calibration.
     synthesis: synthesizer.Options = .{},
+    /// Upper bound on the words each observed tensor contributes. The prior is
+    /// a search-ordering policy over production contexts, so a bounded prefix
+    /// carries the same statistics far more cheaply. Zero observes whole
+    /// tensors.
+    max_sample_elements: usize = 0,
     /// Configuration embedded in the returned learned prior.
     prior_config: grammar_prior.Config = .{},
 };
@@ -80,7 +85,7 @@ pub fn train(
 
     for (selected) |index| {
         const tensor = tensors[index];
-        const target = try physicalStream(tensor.view);
+        const target = try sampleStream(tensor.view, options.max_sample_elements);
 
         var synthesis = try synthesizer.synthesizeUnserialized(
             alloc,
@@ -149,7 +154,7 @@ pub fn trainParallel(
         select.async(
             .synthesis,
             synthesizeTask,
-            .{ index, tensors[index], uniform_options },
+            .{ index, tensors[index], uniform_options, options.max_sample_elements },
         );
         pending += 1;
     }
@@ -165,13 +170,16 @@ pub fn trainParallel(
                     select.async(
                         .synthesis,
                         synthesizeTask,
-                        .{ index, tensors[index], uniform_options },
+                        .{ index, tensors[index], uniform_options, options.max_sample_elements },
                     );
                     launched += 1;
                     pending += 1;
                 }
                 const tensor = tensors[success.tensor_index];
-                const target = try physicalStream(tensor.view);
+                const target = try sampleStream(
+                    tensor.view,
+                    options.max_sample_elements,
+                );
                 try counts.observeProgram(
                     alloc,
                     success.synthesis.program,
@@ -235,9 +243,10 @@ fn synthesizeTask(
     tensor_index: usize,
     tensor: safetensors.Tensor,
     options: synthesizer.Options,
+    max_sample_elements: usize,
 ) SynthesisOutcome {
     const alloc = std.heap.smp_allocator;
-    const target = physicalStream(tensor.view) catch |err|
+    const target = sampleStream(tensor.view, max_sample_elements) catch |err|
         return .{ .failure = err };
     return .{ .success = .{
         .tensor_index = tensor_index,
@@ -265,6 +274,14 @@ fn finish(
         .budget_exhausted_tensors = totals.budget_exhausted_tensors,
         .literal_fallback_tensors = totals.literal_fallback_tensors,
     };
+}
+
+fn sampleStream(view: types.TensorView, max_elements: usize) !types.Stream {
+    var stream = try physicalStream(view);
+    if (max_elements == 0 or stream.count <= max_elements) return stream;
+    stream.count = max_elements;
+    stream.data = stream.data[0 .. max_elements * view.dtype.elemSize()];
+    return stream;
 }
 
 fn physicalStream(view: types.TensorView) !types.Stream {

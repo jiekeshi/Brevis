@@ -13,6 +13,7 @@
 //! * Both encoders are lossless and bit-exact by construction.
 
 const std = @import("std");
+const cpu_budget = @import("cpu_budget.zig");
 const types = @import("types.zig");
 const Allocator = types.Allocator;
 const Stream = types.Stream;
@@ -171,6 +172,96 @@ fn histogramBySort(alloc: Allocator, stream: Stream) !Histogram {
     return .{ .pairs = pairs };
 }
 
+const WIDE_SLOTS: usize = 65_536;
+/// Below this a shard cannot repay a thread's startup and its share of the
+/// reduction sweep.
+const WIDE_PARALLEL_SHARD: usize = 4 << 20;
+const MAX_COUNT_HELPERS: usize = 15;
+
+/// Accumulate `stream`'s 16-bit words into `totals`, which need not be zeroed.
+///
+/// Two u32 lanes give enough independent accumulators to hide the
+/// store-to-load latency of repeated symbols while keeping the counting tables
+/// at 512 KiB, which measures faster than four 64-bit lanes. Blocking bounds
+/// every lane below 2^31, so a degenerate stream that puts all of a 16 GiB
+/// tensor in one slot still cannot wrap a counter.
+fn countWordsInto(
+    data: []const u8,
+    from: usize,
+    to: usize,
+    lanes: []u32,
+    totals: []u64,
+) void {
+    const block: usize = 1 << 31;
+    @memset(totals, 0);
+    const c0 = lanes[0..WIDE_SLOTS];
+    const c1 = lanes[WIDE_SLOTS .. 2 * WIDE_SLOTS];
+    var base = from;
+    while (base < to) : (base += block) {
+        @memset(lanes, 0);
+        const stop = @min(base + block, to);
+        var i = base;
+        while (stop - i >= 2) : (i += 2) {
+            c0[std.mem.readInt(u16, data[(i + 0) * 2 ..][0..2], .little)] += 1;
+            c1[std.mem.readInt(u16, data[(i + 1) * 2 ..][0..2], .little)] += 1;
+        }
+        while (i < stop) : (i += 1)
+            c0[std.mem.readInt(u16, data[i * 2 ..][0..2], .little)] += 1;
+        for (totals, c0, c1) |*total, a, b| total.* += @as(u64, a) + b;
+    }
+}
+
+/// Split the count across whatever cores the tensor scheduler is not using.
+/// Counts are integers, so the merged result is identical to counting serially
+/// regardless of how many shards ran.
+fn countWords(alloc: Allocator, stream: Stream, totals: []u64) !void {
+    const n = stream.count;
+    const helpers = if (n / WIDE_PARALLEL_SHARD < 2)
+        0
+    else
+        cpu_budget.claim(@min(n / WIDE_PARALLEL_SHARD - 1, MAX_COUNT_HELPERS));
+    defer cpu_budget.release(helpers);
+
+    // Every thread's tables and partial totals are allocated here, because the
+    // caller's allocator need not be thread-safe.
+    const lanes = try alloc.alloc(u32, 2 * WIDE_SLOTS * (helpers + 1));
+    defer alloc.free(lanes);
+    const partials = try alloc.alloc(u64, WIDE_SLOTS * helpers);
+    defer alloc.free(partials);
+    const laneSet = struct {
+        fn at(all: []u32, index: usize) []u32 {
+            return all[2 * WIDE_SLOTS * index ..][0 .. 2 * WIDE_SLOTS];
+        }
+    }.at;
+
+    // Helper `k` takes shard `k`; this thread takes everything from the first
+    // shard that did not start, so a failed spawn only costs parallelism.
+    var threads: [MAX_COUNT_HELPERS]std.Thread = undefined;
+    const per_shard = n / (helpers + 1);
+    var spawned: usize = 0;
+    while (spawned < helpers) : (spawned += 1) {
+        threads[spawned] = std.Thread.spawn(.{}, countWordsInto, .{
+            stream.data,
+            per_shard * spawned,
+            per_shard * (spawned + 1),
+            laneSet(lanes, spawned),
+            partials[WIDE_SLOTS * spawned ..][0..WIDE_SLOTS],
+        }) catch break;
+    }
+    countWordsInto(
+        stream.data,
+        per_shard * spawned,
+        n,
+        laneSet(lanes, helpers),
+        totals,
+    );
+    for (threads[0..spawned]) |thread| thread.join();
+    for (0..spawned) |shard| {
+        const partial = partials[WIDE_SLOTS * shard ..][0..WIDE_SLOTS];
+        for (totals, partial) |*total, value| total.* += value;
+    }
+}
+
 pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
     const bpe_pow2 = types.roundUpToPow2(stream.bits_per_elem);
     if (bpe_pow2 != 8 and stream.count < SMALL_STREAM) return histogramBySort(alloc, stream);
@@ -204,31 +295,14 @@ pub fn buildHistogram(alloc: Allocator, stream: Stream) !Histogram {
         return .{ .pairs = pairs };
     }
     if (bpe_pow2 == 16) {
-        const slots: usize = 65_536;
-        const counts = try alloc.alloc(u64, slots * 4);
-        defer alloc.free(counts);
-        @memset(counts, 0);
-        const c0 = counts[0..slots];
-        const c1 = counts[slots .. 2 * slots];
-        const c2 = counts[2 * slots .. 3 * slots];
-        const c3 = counts[3 * slots .. 4 * slots];
-        var i: usize = 0;
-        const n = stream.count;
-        while (n - i >= 4) : (i += 4) {
-            c0[std.mem.readInt(u16, stream.data[(i + 0) * 2 ..][0..2], .little)] += 1;
-            c1[std.mem.readInt(u16, stream.data[(i + 1) * 2 ..][0..2], .little)] += 1;
-            c2[std.mem.readInt(u16, stream.data[(i + 2) * 2 ..][0..2], .little)] += 1;
-            c3[std.mem.readInt(u16, stream.data[(i + 3) * 2 ..][0..2], .little)] += 1;
-        }
-        while (i < n) : (i += 1)
-            c0[std.mem.readInt(u16, stream.data[i * 2 ..][0..2], .little)] += 1;
+        const totals = try alloc.alloc(u64, WIDE_SLOTS);
+        defer alloc.free(totals);
+        try countWords(alloc, stream, totals);
         var unique: usize = 0;
-        for (c0, c1, c2, c3) |a, b, c, d|
-            unique += @intFromBool(a + b + c + d > 0);
+        for (totals) |total| unique += @intFromBool(total > 0);
         const pairs = try alloc.alloc(Histogram.Pair, unique);
         var j: usize = 0;
-        for (c0, c1, c2, c3, 0..) |a, b, c, d, symbol| {
-            const total = a + b + c + d;
+        for (totals, 0..) |total, symbol| {
             if (total > 0) {
                 pairs[j] = .{ .sym = @intCast(symbol), .count = total };
                 j += 1;
