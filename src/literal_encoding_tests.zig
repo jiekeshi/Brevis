@@ -28,6 +28,15 @@ fn expectWireAndDecode(
     input: Stream,
     encoding: literal.OwnedEncoding,
 ) !void {
+    var prepared = try literal.prepareBest(alloc, input);
+    defer prepared.deinit(alloc);
+    var direct: std.ArrayList(u8) = .empty;
+    defer direct.deinit(alloc);
+    try prepared.emitBody(alloc, &direct);
+    try std.testing.expectEqual(encoding.tag, prepared.tag());
+    try std.testing.expectEqual(encoding.body.len, prepared.wireSize());
+    try std.testing.expectEqualSlices(u8, encoding.body, direct.items);
+
     var emitted: std.ArrayList(u8) = .empty;
     defer emitted.deinit(alloc);
 
@@ -93,10 +102,33 @@ test "small nonnegative values choose bitpack" {
     defer input.deinit(alloc);
     for (0..input.count) |index| input.setU32(index, @intCast(index & 1));
 
+    literal.testing.resetWidthScan();
     var encoding = try literal.encodeBest(alloc, input);
     defer encoding.deinit(alloc);
 
     try std.testing.expectEqual(literal.Tag.bitpack, encoding.tag);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        literal.testing.widthScanElements(),
+    );
+    try expectWireAndDecode(alloc, input, encoding);
+}
+
+test "histogram validation avoids a separate narrow-field scan" {
+    const alloc = std.testing.allocator;
+    var input = try Stream.init(alloc, 128, 7);
+    defer input.deinit(alloc);
+    for (0..input.count) |index|
+        input.setU32(index, @intCast(index & 0x7f));
+
+    literal.testing.resetValidationScan();
+    var encoding = try literal.encodeBest(alloc, input);
+    defer encoding.deinit(alloc);
+
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        literal.testing.validationScanElements(),
+    );
     try expectWireAndDecode(alloc, input, encoding);
 }
 
@@ -111,6 +143,25 @@ test "balanced wide binary alphabet chooses canonical Huffman" {
     defer encoding.deinit(alloc);
 
     try std.testing.expectEqual(literal.Tag.huffman, encoding.tag);
+    try expectWireAndDecode(alloc, input, encoding);
+}
+
+test "a losing rANS candidate is sized without materializing its payload" {
+    const alloc = std.testing.allocator;
+    var input = try Stream.init(alloc, 4096, 16);
+    defer input.deinit(alloc);
+    for (0..input.count) |index|
+        input.setU32(index, if (index < 1712) 0xffff else 0);
+
+    literal.testing.resetRansPayloadEncodes();
+    var encoding = try literal.encodeBest(alloc, input);
+    defer encoding.deinit(alloc);
+
+    try std.testing.expectEqual(literal.Tag.huffman, encoding.tag);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        literal.testing.ransPayloadEncodes(),
+    );
     try expectWireAndDecode(alloc, input, encoding);
 }
 
@@ -203,11 +254,8 @@ test "Huffman decoder rejects an inapplicable alphabet before allocation" {
     );
 }
 
-test "public decoder rejects a valid Huffman body when a smaller codec wins" {
+test "public decoder accepts a valid Huffman body when a smaller codec wins" {
     const alloc = std.testing.allocator;
-    // One zero encoded by a valid, canonical one-symbol Huffman table. The
-    // Huffman representation itself is unambiguous, but raw costs only two
-    // bytes and is therefore the globally canonical literal body.
     const non_minimal = [_]u8{
         @intFromEnum(literal.Tag.huffman),
         1, 0, 0, 0, // entry count
@@ -216,10 +264,9 @@ test "public decoder rejects a valid Huffman body when a smaller codec wins" {
         0, // the one-bit canonical code, followed by zero padding
     };
 
-    try std.testing.expectError(
-        error.NonCanonicalLiteralEncoding,
-        literal.decodeBody(alloc, 8, 1, &non_minimal),
-    );
+    var decoded = try literal.decodeBody(alloc, 8, 1, &non_minimal);
+    defer decoded.deinit(alloc);
+    try std.testing.expectEqual(@as(u32, 0), decoded.getU32(0));
 }
 
 test "bitpacked literal rejects non-zero tail padding" {

@@ -167,6 +167,34 @@ test "source-backed record checksum remains bound to program output" {
     );
 }
 
+test "BRTA v2 pins version and little-endian XXH3 checksum" {
+    const alloc = std.testing.allocator;
+    try std.testing.expectEqual(@as(u8, 2), archive.VERSION);
+
+    var tensor = try literalTensor(alloc, .u8, &.{0}, &.{});
+    defer tensor.deinit(alloc);
+    const frame = try archive.encodeTensorRecordForSource(
+        alloc,
+        "empty",
+        tensor,
+        &.{},
+    );
+    defer alloc.free(frame);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0xc2, 0x94, 0xd3, 0x38, 0x05, 0x80, 0x06, 0x2d },
+        frame[frame.len - archive.CHECKSUM_BYTES ..],
+    );
+
+    const header = try archive.encodeHeader(alloc, &safetensors_prefix, 0);
+    defer alloc.free(header);
+    header[archive.MAGIC.len] = 1;
+    try std.testing.expectError(
+        error.UnsupportedVersion,
+        archive.parseHeader(header, .{}),
+    );
+}
+
 test "prepared canonical program bytes produce the same record" {
     const alloc = std.testing.allocator;
     var tensor = try literalTensor(alloc, .u16, &.{2}, &.{ 0x1234, 0xabcd });
@@ -195,6 +223,43 @@ test "prepared canonical program bytes produce the same record" {
     defer alloc.free(prepared);
 
     try std.testing.expectEqualSlices(u8, canonical, prepared);
+}
+
+test "prepared record segments concatenate to the canonical frame" {
+    const alloc = std.testing.allocator;
+    var tensor = try literalTensor(alloc, .u16, &.{2}, &.{ 0x1234, 0xabcd });
+    defer tensor.deinit(alloc);
+    const source = [_]u8{ 0x34, 0x12, 0xcd, 0xab };
+    const bytecode = try @import("program_format.zig").serialize(
+        alloc,
+        tensor.root,
+    );
+    defer alloc.free(bytecode);
+
+    const canonical = try archive.encodePreparedTensorRecordForSource(
+        alloc,
+        "x",
+        tensor,
+        bytecode,
+        &source,
+    );
+    defer alloc.free(canonical);
+    var segments = try archive.prepareTensorRecordForSource(
+        alloc,
+        "x",
+        tensor,
+        bytecode,
+        &source,
+    );
+    defer segments.deinit(alloc);
+
+    var joined: std.ArrayList(u8) = .empty;
+    defer joined.deinit(alloc);
+    try joined.appendSlice(alloc, segments.prefix);
+    try joined.appendSlice(alloc, segments.bytecode);
+    try joined.appendSlice(alloc, &segments.checksum);
+    try std.testing.expectEqual(segments.encodedLen(), joined.items.len);
+    try std.testing.expectEqualSlices(u8, canonical, joined.items);
 }
 
 test "verified record API returns the checked stream without a second execution" {
@@ -406,7 +471,7 @@ test "record shape clamps program allocations before tensor binding" {
     try appendTestUleb(alloc, &body, 1); // shape = [1]
     try appendTestUleb(alloc, &body, million_zero_program.len);
     try body.appendSlice(alloc, &million_zero_program);
-    try body.appendNTimes(alloc, 0, 32); // checksum, never reached
+    try body.appendNTimes(alloc, 0, archive.CHECKSUM_BYTES);
 
     var frame: std.ArrayList(u8) = .empty;
     defer frame.deinit(alloc);

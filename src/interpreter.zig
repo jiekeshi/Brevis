@@ -6,6 +6,7 @@
 //! scratch space is the largest child rather than the sum of all children.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const dsl = @import("dsl.zig");
 const semantics = @import("semantics.zig");
 const types = @import("types.zig");
@@ -294,18 +295,109 @@ fn writeInto(
                     child_index,
                     program.children.len,
                 );
-                for (0..merge_type.len) |i| {
-                    const shifted = child.getU32(i) << @intCast(shift);
-                    const output_index = offset + i;
-                    output.setU32(output_index, if (child_index == 0)
-                        shifted
-                    else
-                        output.getU32(output_index) | shifted);
-                }
+                mergeChildInto(
+                    output,
+                    offset,
+                    child,
+                    shift,
+                    child_index == 0,
+                );
             }
             break :blk merge_type.len;
         },
     };
+}
+
+fn mergeChildInto(
+    output: *Stream,
+    offset: usize,
+    child: Stream,
+    shift: u8,
+    initialize: bool,
+) void {
+    if (builtin.cpu.arch.endian() == .little) {
+        switch (output.elemBytes()) {
+            1 => mergeChildOutput(u8, output, offset, child, shift, initialize),
+            2 => mergeChildOutput(u16, output, offset, child, shift, initialize),
+            else => mergeChildOutput(u32, output, offset, child, shift, initialize),
+        }
+        return;
+    }
+
+    for (0..child.count) |i| {
+        const shifted = child.getU32(i) << @intCast(shift);
+        const output_index = offset + i;
+        output.setU32(output_index, if (initialize)
+            shifted
+        else
+            output.getU32(output_index) | shifted);
+    }
+}
+
+fn mergeChildOutput(
+    comptime Output: type,
+    output: *Stream,
+    offset: usize,
+    child: Stream,
+    shift: u8,
+    initialize: bool,
+) void {
+    switch (child.elemBytes()) {
+        1 => mergeChildTyped(u8, Output, output, offset, child, shift, initialize),
+        2 => mergeChildTyped(u16, Output, output, offset, child, shift, initialize),
+        else => mergeChildTyped(u32, Output, output, offset, child, shift, initialize),
+    }
+}
+
+fn mergeChildTyped(
+    comptime Child: type,
+    comptime Output: type,
+    output: *Stream,
+    offset: usize,
+    child: Stream,
+    shift: u8,
+    initialize: bool,
+) void {
+    const lanes = std.simd.suggestVectorLength(u8) orelse 16;
+    const ChildVector = @Vector(lanes, Child);
+    const OutputVector = @Vector(lanes, Output);
+    const ShiftVector = @Vector(lanes, std.math.Log2Int(Output));
+    const shift_vector: ShiftVector = @splat(@intCast(shift));
+    var i: usize = 0;
+
+    while (i + lanes <= child.count) : (i += lanes) {
+        const child_byte = i * @sizeOf(Child);
+        const child_words = std.mem.bytesToValue(
+            ChildVector,
+            child.data[child_byte..][0..@sizeOf(ChildVector)],
+        );
+        const widened: OutputVector = if (Child == Output)
+            child_words
+        else
+            @intCast(child_words);
+        const shifted = widened << shift_vector;
+        const output_byte = (offset + i) * @sizeOf(Output);
+        var result = if (initialize) shifted else blk: {
+            const current = std.mem.bytesToValue(
+                OutputVector,
+                output.data[output_byte..][0..@sizeOf(OutputVector)],
+            );
+            break :blk current | shifted;
+        };
+        @memcpy(
+            output.data[output_byte..][0..@sizeOf(OutputVector)],
+            std.mem.asBytes(&result),
+        );
+    }
+
+    while (i < child.count) : (i += 1) {
+        const shifted = child.getU32(i) << @intCast(shift);
+        const output_index = offset + i;
+        output.setU32(output_index, if (initialize)
+            shifted
+        else
+            output.getU32(output_index) | shifted);
+    }
 }
 
 fn validateRegion(output: Stream, offset: usize, count: usize) ExecuteError!void {

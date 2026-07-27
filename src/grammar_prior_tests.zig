@@ -215,6 +215,20 @@ test "context includes deterministic normalized difference entropy" {
     );
 }
 
+test "context features sample the full target" {
+    var data: [512]u8 = @splat(0);
+    @memset(data[256..], 1);
+    const target = types.Stream{
+        .data = &data,
+        .count = data.len,
+        .bits_per_elem = 8,
+        .owns_data = false,
+    };
+
+    const context = prior_mod.Context.fromTarget(target, .u8, null, 0, 0);
+    try std.testing.expectEqual(@as(u8, 2), context.zero_bucket);
+}
+
 test "canonical prior bytes are insertion-order independent and round trip" {
     const alloc = std.testing.allocator;
     var target = try streamFromWords(alloc, 8, &.{ 9, 8, 9, 8 });

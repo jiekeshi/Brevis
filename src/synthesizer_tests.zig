@@ -423,7 +423,7 @@ test "empty target remains a typed exact literal and dtype mismatches fail" {
     );
 }
 
-test "PHOG changes bounded exploration order but exact bytes still select" {
+test "PHOG guides one-expansion structural completion" {
     const alloc = std.testing.allocator;
     var target = try types.Stream.init(alloc, 64, 32);
     defer target.deinit(alloc);
@@ -442,10 +442,11 @@ test "PHOG changes bounded exploration order but exact bytes still select" {
     defer child_targets.deinit(alloc);
     const children = try alloc.alloc(dsl.Program, child_targets.streams.len);
     var initialized: usize = 0;
-    errdefer {
+    var children_owned = true;
+    errdefer if (children_owned) {
         for (children[0..initialized]) |*child| child.deinit(alloc);
         alloc.free(children);
-    }
+    };
     for (child_targets.streams, children) |child_target, *child| {
         child.* = try dsl.Program.literalFromStream(alloc, child_target);
         initialized += 1;
@@ -454,6 +455,7 @@ test "PHOG changes bounded exploration order but exact bytes still select" {
         .{ .float_fields = .f32 },
         children,
     );
+    children_owned = false;
     defer training_program.deinit(alloc);
 
     var counts = grammar_prior.Counts.init();
@@ -472,7 +474,7 @@ test "PHOG changes bounded exploration order but exact bytes still select" {
     defer learned.deinit(alloc);
 
     const bounded_options: synthesizer.Options = .{
-        .max_expansions = 6,
+        .max_expansions = 1,
         .max_nodes = 8,
         .seed_float_fields = false,
         .grammar_options = .{
@@ -502,6 +504,8 @@ test "PHOG changes bounded exploration order but exact bytes still select" {
     );
     defer guided.deinit(alloc);
 
+    try std.testing.expectEqual(@as(usize, 1), guided.expanded);
+    try std.testing.expectEqual(@as(usize, 2), guided.completed_candidates);
     try std.testing.expect(switch (uniform.program.kind) {
         .literal => true,
         else => false,
@@ -569,4 +573,54 @@ test "decomposition budget prunes amplifying targets but keeps Lit complete" {
     var decoded = try interpreter.execute(alloc, result.program);
     defer decoded.deinit(alloc);
     try expectStreamsEqual(target, decoded);
+}
+
+test "lazy frontier matches the canonical search golden" {
+    const alloc = std.testing.allocator;
+    var target = try types.Stream.init(alloc, 96, 16);
+    defer target.deinit(alloc);
+    for (0..target.count) |index| {
+        const block: u32 = @intCast(index / 8);
+        const offset: u32 = @intCast(index % 8);
+        target.setU32(index, (block * 257) ^ (offset * 31));
+    }
+
+    var result = try synthesizer.synthesize(alloc, target, .u16, .{
+        .max_expansions = 96,
+        .max_nodes = 10,
+        .seed_float_fields = false,
+        .grammar_options = .{
+            .max_depth = 3,
+            .max_repeat_period = 16,
+            .max_concat_splits = 3,
+            .max_map_constants = 2,
+            .max_rotations = 2,
+            .max_field_splits = 2,
+        },
+    });
+    defer result.deinit(alloc);
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(
+        result.serialized_program,
+        &digest,
+        .{},
+    );
+    try std.testing.expectEqual(@as(usize, 96), result.expanded);
+    try std.testing.expectEqual(@as(usize, 91), result.completed_candidates);
+    try std.testing.expectEqual(@as(usize, 86), result.serialized_bytes);
+    try std.testing.expectEqual(
+        synthesizer.SearchStatus.budget_exhausted,
+        result.status,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{
+            0x8f, 0xb0, 0x7d, 0x99, 0x2a, 0x1b, 0xde, 0x14,
+            0x2c, 0x6d, 0xa9, 0x75, 0x11, 0x29, 0xa5, 0x7c,
+            0xc9, 0x07, 0x98, 0xa6, 0x09, 0x3e, 0xdc, 0x4d,
+            0x12, 0x8e, 0x0c, 0xb8, 0x85, 0xd5, 0xf1, 0xb9,
+        },
+        &digest,
+    );
 }

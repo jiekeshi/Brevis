@@ -1,11 +1,13 @@
-//! In-memory and atomic-file end-to-end pipeline for the paper implementation.
+//! In-memory and file end-to-end pipeline for the paper implementation.
 //!
 //! The unit of synthesis and archival is exactly one complete safetensors
 //! tensor. This module intentionally has no block, template, sampling, or
 //! re-ranking layer.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const dsl = @import("dsl.zig");
+const paper_calibration = @import("paper_calibration.zig");
 const safetensors = @import("safetensors.zig");
 const synthesizer = @import("synthesizer.zig");
 const tensor_archive = @import("tensor_archive.zig");
@@ -15,9 +17,12 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 pub const DEFAULT_WORKERS: usize = 32;
+const ONE_EXPANSION_TEACHER_TENSORS: usize = 4;
+const ONE_EXPANSION_TEACHER_BUDGET: usize = 6;
 
 pub const CompressOptions = struct {
     synthesis: synthesizer.Options = .{},
+    max_calibration_tensors: usize = paper_calibration.DEFAULT_TENSORS,
     workers: usize = DEFAULT_WORKERS,
     max_source_bytes: usize = types.defaultLargeByteLimit,
     max_prefix_bytes: usize = 64 * 1024 * 1024,
@@ -135,8 +140,8 @@ pub fn compressBytes(
     };
 }
 
-/// Mmap a safetensors source when available, synthesize and write one complete
-/// tensor frame at a time, then atomically replace `archive_path`.
+/// Mmap a safetensors source when available, then synthesize and write one
+/// complete tensor frame at a time.
 pub fn compressFile(
     alloc: Allocator,
     io: Io,
@@ -144,6 +149,9 @@ pub fn compressFile(
     archive_path: []const u8,
     options: CompressOptions,
 ) !CompressSummary {
+    if (std.mem.eql(u8, source_path, archive_path))
+        return error.InputOutputPathConflict;
+
     var source_file = try loadFileBytes(
         alloc,
         io,
@@ -168,14 +176,14 @@ pub fn compressFile(
     source_file_owned = false;
     defer loaded.deinit(alloc);
 
-    var atomic = try std.Io.Dir.cwd().createFileAtomic(
+    const archive_file = try createDistinctOutputFile(
         io,
         archive_path,
-        .{ .replace = true },
+        source_file.identity,
     );
-    defer atomic.deinit(io);
+    defer archive_file.close(io);
     var file_buffer: [64 * 1024]u8 = undefined;
-    var file_writer = atomic.file.writer(io, &file_buffer);
+    var file_writer = archive_file.writer(io, &file_buffer);
     var sink = OutputSink.file(
         alloc,
         &file_writer,
@@ -194,8 +202,6 @@ pub fn compressFile(
     );
     errdefer summary.deinit(alloc);
     try file_writer.flush();
-    try atomic.file.sync(io);
-    try atomic.replace(io);
     return summary;
 }
 
@@ -225,7 +231,7 @@ pub fn decompressBytes(
     return output.toOwnedSlice(alloc);
 }
 
-/// Decode one verified tensor at a time into an atomic output file.
+/// Decode one verified tensor at a time into an output file.
 pub fn decompressFile(
     alloc: Allocator,
     io: Io,
@@ -233,6 +239,9 @@ pub fn decompressFile(
     output_path: []const u8,
     limits: DecompressLimits,
 ) !DecodeSummary {
+    if (std.mem.eql(u8, archive_path, output_path))
+        return error.InputOutputPathConflict;
+
     var archive_file = try loadFileBytes(
         alloc,
         io,
@@ -242,14 +251,14 @@ pub fn decompressFile(
     );
     defer archive_file.deinit(alloc, io);
 
-    var atomic = try std.Io.Dir.cwd().createFileAtomic(
+    const output_file = try createDistinctOutputFile(
         io,
         output_path,
-        .{ .replace = true },
+        archive_file.identity,
     );
-    defer atomic.deinit(io);
+    defer output_file.close(io);
     var file_buffer: [64 * 1024]u8 = undefined;
-    var file_writer = atomic.file.writer(io, &file_buffer);
+    var file_writer = output_file.writer(io, &file_buffer);
     var sink = OutputSink.file(
         alloc,
         &file_writer,
@@ -265,8 +274,6 @@ pub fn decompressFile(
         io,
     );
     try file_writer.flush();
-    try atomic.file.sync(io);
-    try atomic.replace(io);
     return summary;
 }
 
@@ -330,6 +337,45 @@ fn compressLoaded(
         loaded.tensors,
     );
 
+    var calibration: ?paper_calibration.Result = null;
+    defer if (calibration) |*result| result.deinit(alloc);
+    var compression_options = options;
+    if (compression_options.synthesis.rule_model == null and
+        compression_options.synthesis.max_expansions != 0 and
+        options.max_calibration_tensors != 0)
+    {
+        var teacher = options.synthesis;
+        var calibration_tensors = options.max_calibration_tensors;
+        if (teacher.max_expansions == 1) {
+            teacher.max_expansions = ONE_EXPANSION_TEACHER_BUDGET;
+            teacher.seed_float_fields = true;
+            compression_options.synthesis.seed_float_fields = false;
+            calibration_tensors = @min(
+                calibration_tensors,
+                ONE_EXPANSION_TEACHER_TENSORS,
+            );
+        }
+        const calibration_options = paper_calibration.Options{
+            .max_tensors = calibration_tensors,
+            .synthesis = teacher,
+        };
+        calibration = if (io) |threaded_io|
+            try paper_calibration.trainParallel(
+                alloc,
+                threaded_io,
+                loaded.tensors,
+                calibration_options,
+                options.workers,
+            )
+        else
+            try paper_calibration.train(
+                alloc,
+                loaded.tensors,
+                calibration_options,
+            );
+        compression_options.synthesis.rule_model = &calibration.?.prior;
+    }
+
     const stats = try alloc.alloc(TensorStat, loaded.tensors.len);
     var initialized_stats: usize = 0;
     errdefer {
@@ -353,11 +399,15 @@ fn compressLoaded(
             stats,
             &initialized_stats,
             sink,
-            options,
+            compression_options,
         );
     } else {
         for (loaded.tensors) |tensor| {
-            var encoded = try encodeTensor(alloc, tensor, options);
+            var encoded = try encodeTensor(
+                alloc,
+                tensor,
+                compression_options,
+            );
             defer encoded.deinit(alloc);
             stats[initialized_stats] = try finishEncodedTensor(
                 alloc,
@@ -377,7 +427,8 @@ fn compressLoaded(
 }
 
 const EncodedTensor = struct {
-    frame: []u8,
+    record: tensor_archive.PreparedTensorRecord,
+    bytecode: []u8,
     source_bytes: usize,
     serialized_program_bytes: usize,
     expanded: usize,
@@ -386,8 +437,9 @@ const EncodedTensor = struct {
     used_literal_fallback: bool,
 
     fn deinit(self: *EncodedTensor, alloc: Allocator) void {
-        alloc.free(self.frame);
-        self.frame = &.{};
+        self.record.deinit(alloc);
+        alloc.free(self.bytecode);
+        self.bytecode = &.{};
     }
 };
 
@@ -401,6 +453,15 @@ const EncodeOutcome = union(enum) {
             .failure => {},
         }
     }
+};
+
+const IndexedEncodeOutcome = struct {
+    index: usize,
+    outcome: EncodeOutcome,
+};
+
+const EncodeCompletion = union(enum) {
+    done: IndexedEncodeOutcome,
 };
 
 fn encodeTensor(
@@ -431,7 +492,8 @@ fn encodeTensor(
         tensor.view.dtype,
         options.synthesis,
     );
-    defer alloc.free(synthesis.serialized_program);
+    var bytecode_owned = true;
+    defer if (bytecode_owned) alloc.free(synthesis.serialized_program);
     var root_owned = true;
     defer if (root_owned) synthesis.program.deinit(alloc);
 
@@ -444,14 +506,17 @@ fn encodeTensor(
     root_owned = false;
     defer tensor_program.deinit(alloc);
 
+    const record = try tensor_archive.prepareTensorRecordForSource(
+        alloc,
+        tensor.name,
+        tensor_program,
+        synthesis.serialized_program,
+        tensor.view.data,
+    );
+    bytecode_owned = false;
     return .{
-        .frame = try tensor_archive.encodePreparedTensorRecordForSource(
-            alloc,
-            tensor.name,
-            tensor_program,
-            synthesis.serialized_program,
-            tensor.view.data,
-        ),
+        .record = record,
+        .bytecode = synthesis.serialized_program,
         .source_bytes = source_bytes,
         .serialized_program_bytes = synthesis.serialized_bytes,
         .expanded = synthesis.expanded,
@@ -473,17 +538,30 @@ fn encodeTensorTask(
     ) catch |err| return .{ .failure = err } };
 }
 
+fn encodeIndexedTensorTask(
+    index: usize,
+    tensor: safetensors.Tensor,
+    options: CompressOptions,
+) IndexedEncodeOutcome {
+    return .{
+        .index = index,
+        .outcome = encodeTensorTask(tensor, options),
+    };
+}
+
 fn finishEncodedTensor(
     alloc: Allocator,
     name: []const u8,
     encoded: EncodedTensor,
     sink: *OutputSink,
 ) !TensorStat {
-    try sink.writeAll(encoded.frame);
+    try sink.writeAll(encoded.record.prefix);
+    try sink.writeAll(encoded.record.bytecode);
+    try sink.writeAll(&encoded.record.checksum);
     return .{
         .name = try alloc.dupe(u8, name),
         .source_bytes = encoded.source_bytes,
-        .archive_record_bytes = encoded.frame.len,
+        .archive_record_bytes = encoded.record.encodedLen(),
         .serialized_program_bytes = encoded.serialized_program_bytes,
         .expanded = encoded.expanded,
         .completed_candidates = encoded.completed_candidates,
@@ -501,47 +579,76 @@ fn compressTensorsParallel(
     sink: *OutputSink,
     options: CompressOptions,
 ) !void {
-    const window = @min(options.workers, tensors.len);
-    const futures = try alloc.alloc(Io.Future(EncodeOutcome), window);
-    defer alloc.free(futures);
-    const active = try alloc.alloc(bool, window);
-    defer alloc.free(active);
-    @memset(active, false);
-    defer for (futures, active) |*future, is_active| {
-        if (is_active) {
-            var outcome = future.cancel(io);
+    const workers = @min(options.workers, tensors.len);
+    const completion_buffer = try alloc.alloc(EncodeCompletion, workers);
+    defer alloc.free(completion_buffer);
+    var tasks = Io.Select(EncodeCompletion).init(io, completion_buffer);
+    defer while (tasks.cancel()) |completion| {
+        var outcome = completion.done.outcome;
+        outcome.deinit(std.heap.smp_allocator);
+    };
+
+    const pending = try alloc.alloc(?EncodeOutcome, tensors.len);
+    defer alloc.free(pending);
+    @memset(pending, null);
+    defer for (pending) |entry| {
+        if (entry) |value| {
+            var outcome = value;
             outcome.deinit(std.heap.smp_allocator);
         }
     };
-    for (futures, active, tensors[0..window]) |*future, *is_active, tensor| {
-        future.* = io.async(encodeTensorTask, .{ tensor, options });
-        is_active.* = true;
-    }
 
-    for (tensors, 0..) |tensor, index| {
-        const slot = index % window;
-        var outcome = futures[slot].await(io);
-        active[slot] = false;
-        defer outcome.deinit(std.heap.smp_allocator);
-        switch (outcome) {
-            .success => |encoded| {
-                stats[initialized_stats.*] = try finishEncodedTensor(
-                    alloc,
-                    tensor.name,
-                    encoded,
-                    sink,
-                );
-                initialized_stats.* += 1;
-            },
-            .failure => |err| return err,
-        }
-        const next = index + window;
-        if (next < tensors.len) {
-            futures[slot] = io.async(
-                encodeTensorTask,
-                .{ tensors[next], options },
+    const lookahead = std.math.mul(
+        usize,
+        workers,
+        2,
+    ) catch std.math.maxInt(usize);
+    var next_to_schedule: usize = 0;
+    var next_to_emit: usize = 0;
+    var running: usize = 0;
+
+    while (next_to_emit < tensors.len) {
+        while (running < workers and
+            next_to_schedule < tensors.len and
+            next_to_schedule - next_to_emit < lookahead)
+        {
+            tasks.async(
+                .done,
+                encodeIndexedTensorTask,
+                .{
+                    next_to_schedule,
+                    tensors[next_to_schedule],
+                    options,
+                },
             );
-            active[slot] = true;
+            next_to_schedule += 1;
+            running += 1;
+        }
+
+        const completed = (try tasks.await()).done;
+        running -= 1;
+        std.debug.assert(pending[completed.index] == null);
+        pending[completed.index] = completed.outcome;
+
+        while (next_to_emit < tensors.len and
+            pending[next_to_emit] != null)
+        {
+            var outcome = pending[next_to_emit].?;
+            pending[next_to_emit] = null;
+            defer outcome.deinit(std.heap.smp_allocator);
+            switch (outcome) {
+                .success => |encoded| {
+                    stats[initialized_stats.*] = try finishEncodedTensor(
+                        alloc,
+                        tensors[next_to_emit].name,
+                        encoded,
+                        sink,
+                    );
+                    initialized_stats.* += 1;
+                },
+                .failure => |err| return err,
+            }
+            next_to_emit += 1;
         }
     }
 }
@@ -638,6 +745,15 @@ const DecodeOutcome = union(enum) {
     }
 };
 
+const IndexedDecodeOutcome = struct {
+    index: usize,
+    outcome: DecodeOutcome,
+};
+
+const DecodeCompletion = union(enum) {
+    done: IndexedDecodeOutcome,
+};
+
 fn decodeExpectedRecord(
     alloc: Allocator,
     frame: []const u8,
@@ -693,6 +809,18 @@ fn decodeRecordTask(
     ) catch |err| return .{ .failure = err } };
 }
 
+fn decodeIndexedRecordTask(
+    index: usize,
+    frame: []const u8,
+    expected: *const safetensors.HeaderTensor,
+    limits: tensor_archive.DecodeLimits,
+) IndexedDecodeOutcome {
+    return .{
+        .index = index,
+        .outcome = decodeRecordTask(frame, expected, limits),
+    };
+}
+
 fn decodeRecordsParallel(
     alloc: Allocator,
     io: Io,
@@ -702,56 +830,81 @@ fn decodeRecordsParallel(
     limits: DecompressLimits,
     sink: *OutputSink,
 ) !void {
-    const window = @min(limits.workers, expected_tensors.len);
-    const futures = try alloc.alloc(Io.Future(DecodeOutcome), window);
-    defer alloc.free(futures);
-    const active = try alloc.alloc(bool, window);
-    defer alloc.free(active);
-    @memset(active, false);
-    defer for (futures, active) |*future, is_active| {
-        if (is_active) {
-            var outcome = future.cancel(io);
-            outcome.deinit(std.heap.smp_allocator);
-        }
-    };
-    for (
-        futures,
-        active,
-        expected_tensors[0..window],
-    ) |*future, *is_active, *expected| {
-        const frame = try tensor_archive.nextTensorRecordFrame(
+    const frames = try alloc.alloc([]const u8, expected_tensors.len);
+    defer alloc.free(frames);
+    for (frames) |*frame| {
+        frame.* = try tensor_archive.nextTensorRecordFrame(
             encoded,
             position,
             limits.archive,
         );
-        future.* = io.async(
-            decodeRecordTask,
-            .{ frame, expected, limits.archive },
-        );
-        is_active.* = true;
     }
 
-    for (expected_tensors, 0..) |_, index| {
-        const slot = index % window;
-        var outcome = futures[slot].await(io);
-        active[slot] = false;
-        defer outcome.deinit(std.heap.smp_allocator);
-        switch (outcome) {
-            .success => |verified| try sink.writeAll(verified.decoded.data),
-            .failure => |err| return err,
+    const workers = @min(limits.workers, expected_tensors.len);
+    const completion_buffer = try alloc.alloc(DecodeCompletion, workers);
+    defer alloc.free(completion_buffer);
+    var tasks = Io.Select(DecodeCompletion).init(io, completion_buffer);
+    defer while (tasks.cancel()) |completion| {
+        var outcome = completion.done.outcome;
+        outcome.deinit(std.heap.smp_allocator);
+    };
+
+    const pending = try alloc.alloc(?DecodeOutcome, expected_tensors.len);
+    defer alloc.free(pending);
+    @memset(pending, null);
+    defer for (pending) |entry| {
+        if (entry) |value| {
+            var outcome = value;
+            outcome.deinit(std.heap.smp_allocator);
         }
-        const next = index + window;
-        if (next < expected_tensors.len) {
-            const frame = try tensor_archive.nextTensorRecordFrame(
-                encoded,
-                position,
-                limits.archive,
+    };
+
+    const lookahead = std.math.mul(
+        usize,
+        workers,
+        2,
+    ) catch std.math.maxInt(usize);
+    var next_to_schedule: usize = 0;
+    var next_to_emit: usize = 0;
+    var running: usize = 0;
+
+    while (next_to_emit < expected_tensors.len) {
+        while (running < workers and
+            next_to_schedule < expected_tensors.len and
+            next_to_schedule - next_to_emit < lookahead)
+        {
+            tasks.async(
+                .done,
+                decodeIndexedRecordTask,
+                .{
+                    next_to_schedule,
+                    frames[next_to_schedule],
+                    &expected_tensors[next_to_schedule],
+                    limits.archive,
+                },
             );
-            futures[slot] = io.async(
-                decodeRecordTask,
-                .{ frame, &expected_tensors[next], limits.archive },
-            );
-            active[slot] = true;
+            next_to_schedule += 1;
+            running += 1;
+        }
+
+        const completed = (try tasks.await()).done;
+        running -= 1;
+        std.debug.assert(pending[completed.index] == null);
+        pending[completed.index] = completed.outcome;
+
+        while (next_to_emit < expected_tensors.len and
+            pending[next_to_emit] != null)
+        {
+            var outcome = pending[next_to_emit].?;
+            pending[next_to_emit] = null;
+            defer outcome.deinit(std.heap.smp_allocator);
+            switch (outcome) {
+                .success => |verified| try sink.writeAll(
+                    verified.decoded.data,
+                ),
+                .failure => |err| return err,
+            }
+            next_to_emit += 1;
         }
     }
 }
@@ -891,6 +1044,7 @@ const OutputSink = struct {
 const FileBytes = struct {
     bytes: []u8,
     mmap: ?std.Io.File.MemoryMap = null,
+    identity: FileIdentity,
 
     fn release(self: *FileBytes) void {
         self.bytes = &.{};
@@ -917,6 +1071,10 @@ fn loadFileBytes(
     const file = try std.Io.Dir.cwd().openFile(io, path, .{});
     defer file.close(io);
     const initial_stat = try file.stat(io);
+    const identity: FileIdentity = .{
+        .device = try fileDevice(file),
+        .inode = initial_stat.inode,
+    };
     const file_len = std.math.cast(usize, initial_stat.size) orelse
         return error.IntegerOverflow;
     try enforceLimit(file_len, limit, limit_kind);
@@ -931,7 +1089,11 @@ fn loadFileBytes(
         const final_stat = try file.stat(io);
         if (final_stat.size != initial_stat.size)
             return error.FileChangedDuringRead;
-        return .{ .bytes = mapping.memory, .mmap = mapping };
+        return .{
+            .bytes = mapping.memory,
+            .mmap = mapping,
+            .identity = identity,
+        };
     } else |_| {
         const bytes = try alloc.alloc(u8, file_len);
         errdefer alloc.free(bytes);
@@ -941,8 +1103,106 @@ fn loadFileBytes(
         const final_stat = try file.stat(io);
         if (final_stat.size != initial_stat.size)
             return error.FileChangedDuringRead;
-        return .{ .bytes = bytes };
+        return .{ .bytes = bytes, .identity = identity };
     }
+}
+
+const FileIdentity = struct {
+    device: ?u64,
+    inode: std.Io.File.INode,
+
+    fn eql(a: FileIdentity, b: FileIdentity) bool {
+        if (a.inode != b.inode) return false;
+        if (a.device) |device|
+            if (b.device) |other| return device == other;
+        return true;
+    }
+};
+
+fn createDistinctOutputFile(
+    io: Io,
+    path: []const u8,
+    input_identity: FileIdentity,
+) !std.Io.File {
+    const file = try std.Io.Dir.cwd().createFile(
+        io,
+        path,
+        .{ .truncate = false },
+    );
+    errdefer file.close(io);
+    const stat = try file.stat(io);
+    const output_identity: FileIdentity = .{
+        .device = try fileDevice(file),
+        .inode = stat.inode,
+    };
+    if (input_identity.eql(output_identity))
+        return error.InputOutputPathConflict;
+    try file.setLength(io, 0);
+    return file;
+}
+
+fn fileDevice(file: std.Io.File) !?u64 {
+    return switch (comptime builtin.os.tag) {
+        .linux => linuxFileDevice(file),
+        .windows => windowsFileDevice(file),
+        .wasi => wasiFileDevice(file),
+        else => posixFileDevice(file),
+    };
+}
+
+fn linuxFileDevice(file: std.Io.File) !?u64 {
+    const linux = std.os.linux;
+    var stat = std.mem.zeroes(linux.Statx);
+    while (true) switch (linux.errno(linux.statx(
+        file.handle,
+        "",
+        linux.AT.EMPTY_PATH,
+        linux.STATX.BASIC_STATS,
+        &stat,
+    ))) {
+        .SUCCESS => return @as(u64, stat.dev_major) << 32 | stat.dev_minor,
+        .INTR => continue,
+        else => |err| return std.posix.unexpectedErrno(err),
+    };
+}
+
+fn windowsFileDevice(file: std.Io.File) !?u64 {
+    const windows = std.os.windows;
+    var io_status: windows.IO_STATUS_BLOCK = undefined;
+    var volume: windows.FILE.FS_VOLUME_INFORMATION = undefined;
+    switch (windows.ntdll.NtQueryVolumeInformationFile(
+        file.handle,
+        &io_status,
+        &volume,
+        @sizeOf(windows.FILE.FS_VOLUME_INFORMATION),
+        .Volume,
+    )) {
+        .SUCCESS, .BUFFER_OVERFLOW => return volume.VolumeSerialNumber,
+        else => |status| return windows.unexpectedStatus(status),
+    }
+}
+
+fn wasiFileDevice(file: std.Io.File) !?u64 {
+    const wasi = std.os.wasi;
+    var stat: wasi.filestat_t = undefined;
+    while (true) switch (wasi.fd_filestat_get(file.handle, &stat)) {
+        .SUCCESS => return stat.dev,
+        .INTR => continue,
+        else => return error.Unexpected,
+    };
+}
+
+fn posixFileDevice(file: std.Io.File) !?u64 {
+    if (comptime std.posix.Stat == void) return null;
+    var stat = std.mem.zeroes(std.posix.Stat);
+    while (true) switch (std.posix.errno(std.posix.system.fstat(
+        file.handle,
+        &stat,
+    ))) {
+        .SUCCESS => return @intCast(stat.dev),
+        .INTR => continue,
+        else => |err| return std.posix.unexpectedErrno(err),
+    };
 }
 
 fn enforceLimit(

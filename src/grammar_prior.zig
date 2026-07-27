@@ -91,12 +91,14 @@ pub const Context = struct {
         var distinct_count: usize = 0;
         var zero_count: usize = 0;
         var repeated_count: usize = 0;
-        var previous: u32 = 0;
-        for (0..sample_count) |index| {
+        for (0..sample_count) |ordinal| {
+            const index = sampleIndex(target.count, sample_count, ordinal);
             const value = target.getU32(index) & target.mask();
             zero_count += @intFromBool(value == 0);
-            if (index > 0) repeated_count += @intFromBool(value == previous);
-            previous = value;
+            if (ordinal > 0)
+                repeated_count += @intFromBool(
+                    value == (target.getU32(index - 1) & target.mask()),
+                );
 
             var seen = false;
             for (distinct_values[0..distinct_count]) |known| {
@@ -599,7 +601,7 @@ fn collectObservations(
     if (choice == .literal) {
         if (program.children.len != 0) return error.InvalidProgramArity;
         const literal = program.kind.literal;
-        if (!streamsEqual(literal, target)) return error.ProgramTargetMismatch;
+        if (!literal.eql(target)) return error.ProgramTargetMismatch;
     }
 
     var child_targets = try grammar.childTargets(
@@ -671,15 +673,6 @@ fn choiceForProgram(program: dsl.Program) !grammar.Choice {
     };
 }
 
-fn streamsEqual(left: Stream, right: Stream) bool {
-    if (left.bits_per_elem != right.bits_per_elem or
-        left.count != right.count)
-        return false;
-    for (0..left.count) |index|
-        if (left.getU32(index) != right.getU32(index)) return false;
-    return true;
-}
-
 fn validateAdmitted(admitted: []const ProductionId) ScoreError!void {
     if (admitted.len == 0) return error.EmptyLegalSet;
     if (admitted.len > PRODUCTION_COUNT) return error.DuplicateProduction;
@@ -728,11 +721,11 @@ fn differenceEntropyBucket(target: Stream, sample_count: usize) u8 {
     var values: [SAMPLE_MAX - 1]u32 = undefined;
     var counts: [SAMPLE_MAX - 1]u16 = undefined;
     var distinct: usize = 0;
-    var previous = target.getU32(0) & target.mask();
-    for (1..sample_count) |index| {
+    for (1..sample_count) |ordinal| {
+        const index = sampleIndex(target.count, sample_count, ordinal);
         const value = target.getU32(index) & target.mask();
+        const previous = target.getU32(index - 1) & target.mask();
         const difference = (value -% previous) & target.mask();
-        previous = value;
 
         var slot: ?usize = null;
         for (values[0..distinct], 0..) |known, candidate| {
@@ -763,6 +756,14 @@ fn differenceEntropyBucket(target: Stream, sample_count: usize) u8 {
         @as(u64, 3),
         (entropy_q10 * 4) / maximum_q10,
     ));
+}
+
+fn sampleIndex(count: usize, sample_count: usize, ordinal: usize) usize {
+    if (sample_count <= 1) return 0;
+    return @intCast(
+        (@as(u128, ordinal) * @as(u128, count - 1)) /
+            @as(u128, sample_count - 1),
+    );
 }
 
 fn streamStorageIsReadable(stream: Stream) bool {

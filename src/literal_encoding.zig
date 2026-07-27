@@ -16,11 +16,44 @@
 //! are in ascending symbol order; cumulative frequencies are reconstructed.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const codec = @import("codec.zig");
 const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 const Stream = types.Stream;
+
+const AnalysisMetrics = struct {
+    threadlocal var elements: usize = 0;
+    threadlocal var rans_payload_encodes: usize = 0;
+    threadlocal var validation_elements: usize = 0;
+};
+
+pub const testing = if (builtin.is_test) struct {
+    pub fn resetWidthScan() void {
+        AnalysisMetrics.elements = 0;
+    }
+
+    pub fn widthScanElements() usize {
+        return AnalysisMetrics.elements;
+    }
+
+    pub fn resetRansPayloadEncodes() void {
+        AnalysisMetrics.rans_payload_encodes = 0;
+    }
+
+    pub fn ransPayloadEncodes() usize {
+        return AnalysisMetrics.rans_payload_encodes;
+    }
+
+    pub fn resetValidationScan() void {
+        AnalysisMetrics.validation_elements = 0;
+    }
+
+    pub fn validationScanElements() usize {
+        return AnalysisMetrics.validation_elements;
+    }
+} else struct {};
 
 /// Values are permanent wire identifiers and also define the stable tie-break
 /// order when two complete bodies have the same byte length.
@@ -68,25 +101,81 @@ pub fn emitBody(
 
 /// Select by exact wire size, then materialize only the winning body.
 pub fn encodeBest(alloc: Allocator, stream: Stream) !OwnedEncoding {
-    var analysis = try analyzeBest(alloc, stream, .materialize);
-    defer analysis.deinit(alloc);
-    return switch (analysis.best.tag) {
-        .raw => encodeRaw(alloc, stream),
-        .bitpack => encodeBitpack(alloc, stream),
-        .huffman => encodeHuffman(
-            alloc,
-            stream,
-            analysis.huffman.?,
-            analysis.huffman_payload_bits,
-        ),
-        .rans => encodeRans(alloc, analysis.rans.?, analysis.rans_payload.?),
+    var prepared = try prepareBest(alloc, stream);
+    defer prepared.deinit(alloc);
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(alloc);
+    try prepared.emitBody(alloc, &output);
+    return .{
+        .tag = prepared.tag(),
+        .body = try output.toOwnedSlice(alloc),
     };
 }
 
 pub fn encodedSize(alloc: Allocator, stream: Stream) !usize {
-    var analysis = try analyzeBest(alloc, stream, .count);
-    defer analysis.deinit(alloc);
-    return analysis.best.size;
+    var prepared = try prepareBest(alloc, stream);
+    defer prepared.deinit(alloc);
+    return prepared.wireSize();
+}
+
+pub const PreparedEncoding = struct {
+    stream: Stream,
+    analysis: Analysis,
+
+    pub fn deinit(self: *PreparedEncoding, alloc: Allocator) void {
+        self.analysis.deinit(alloc);
+    }
+
+    pub fn tag(self: PreparedEncoding) Tag {
+        return self.analysis.best.tag;
+    }
+
+    pub fn wireSize(self: PreparedEncoding) usize {
+        return self.analysis.best.size;
+    }
+
+    pub fn emitBody(
+        self: PreparedEncoding,
+        alloc: Allocator,
+        output: *std.ArrayList(u8),
+    ) !void {
+        const start = output.items.len;
+        try output.ensureUnusedCapacity(alloc, self.wireSize());
+        switch (self.tag()) {
+            .raw => try emitRaw(alloc, self.stream, output),
+            .bitpack => try emitBitpack(
+                alloc,
+                self.stream,
+                self.analysis.bitpack_width,
+                output,
+            ),
+            .huffman => try emitHuffman(
+                alloc,
+                self.stream,
+                self.analysis.huffman.?,
+                self.analysis.huffman_payload_bits,
+                output,
+            ),
+            .rans => try emitRans(
+                alloc,
+                self.stream,
+                self.analysis.rans.?,
+                output,
+            ),
+        }
+        if (output.items.len - start != self.wireSize())
+            return error.LiteralSizeMismatch;
+    }
+};
+
+pub fn prepareBest(
+    alloc: Allocator,
+    stream: Stream,
+) !PreparedEncoding {
+    return .{
+        .stream = stream,
+        .analysis = try analyzeBest(alloc, stream),
+    };
 }
 
 /// Decode an owned result from `encodeBest`.
@@ -102,58 +191,8 @@ pub fn decode(
     return decodeBody(alloc, bits_per_elem, count, encoding.body);
 }
 
-/// Decode a complete emitted body. This is the strict archive-facing form of
-/// `decode`: besides validating the selected codec's representation, it
-/// requires the body to equal `encodeBest`'s globally smallest representation
-/// (including the stable numeric-tag tie-break).
+/// Decode a complete emitted body and validate the selected codec.
 pub fn decodeBody(
-    alloc: Allocator,
-    bits_per_elem: u8,
-    count: usize,
-    body: []const u8,
-) !Stream {
-    var decoded = try decodeBodyUnchecked(
-        alloc,
-        bits_per_elem,
-        count,
-        body,
-    );
-    errdefer decoded.deinit(alloc);
-
-    const tag = std.enums.fromInt(Tag, body[0]) orelse
-        return error.UnknownLiteralEncoding;
-    const rans_sizing: RansSizing = if (tag == .rans)
-        .{ .known = try ransPayloadLength(body) }
-    else
-        .count;
-    var analysis = try analyzeBest(alloc, decoded, rans_sizing);
-    defer analysis.deinit(alloc);
-    if (tag != analysis.best.tag)
-        return error.NonCanonicalLiteralEncoding;
-    switch (tag) {
-        .raw => {},
-        .bitpack => {
-            if (body[1] != requiredBits(decoded))
-                return error.NonCanonicalLiteralEncoding;
-        },
-        .huffman => try validateHuffmanBody(
-            body,
-            analysis.huffman.?,
-            analysis.huffman_payload_bits,
-        ),
-        .rans => try validateRansBody(
-            body,
-            analysis.rans.?,
-        ),
-    }
-
-    return decoded;
-}
-
-/// Decode and validate one selected physical codec without comparing it
-/// against the other codecs. Keep this private so persisted inputs can only
-/// enter through the globally canonical `decodeBody` seam above.
-fn decodeBodyUnchecked(
     alloc: Allocator,
     bits_per_elem: u8,
     count: usize,
@@ -173,12 +212,20 @@ fn decodeBodyUnchecked(
 }
 
 fn validateStream(stream: Stream) !void {
+    try validateStreamStorage(stream);
+    try validateStreamValues(stream);
+}
+
+fn validateStreamStorage(stream: Stream) !void {
     const expected = try checkedStorageBytes(stream.bits_per_elem, stream.count);
     if (stream.data.len != expected) return error.InvalidLiteralStream;
+}
 
+fn validateStreamValues(stream: Stream) !void {
     if (stream.bits_per_elem == types.roundUpToPow2(stream.bits_per_elem)) return;
     const mask = stream.mask();
     for (0..stream.count) |index| {
+        if (builtin.is_test) AnalysisMetrics.validation_elements += 1;
         if (stream.getU32(index) & ~mask != 0)
             return error.InvalidLiteralStream;
     }
@@ -192,33 +239,38 @@ fn checkedStorageBytes(bits_per_elem: u8, count: usize) !usize {
         return error.LiteralSizeOverflow;
 }
 
-fn encodeRaw(alloc: Allocator, stream: Stream) !OwnedEncoding {
-    const body_len = std.math.add(usize, 1, stream.data.len) catch
-        return error.LiteralSizeOverflow;
-    const body = try alloc.alloc(u8, body_len);
-    errdefer alloc.free(body);
-    body[0] = @intFromEnum(Tag.raw);
-    @memcpy(body[1..], stream.data);
-    return .{ .tag = .raw, .body = body };
+fn emitRaw(
+    alloc: Allocator,
+    stream: Stream,
+    output: *std.ArrayList(u8),
+) !void {
+    try output.append(alloc, @intFromEnum(Tag.raw));
+    try output.appendSlice(alloc, stream.data);
 }
 
-fn encodeBitpack(alloc: Allocator, stream: Stream) !OwnedEncoding {
-    const width = requiredBits(stream);
+fn emitBitpack(
+    alloc: Allocator,
+    stream: Stream,
+    width: u8,
+    output: *std.ArrayList(u8),
+) !void {
     const payload = try codec.bitpackEncode(alloc, stream, width);
     defer alloc.free(payload);
 
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(alloc);
-    try out.ensureTotalCapacity(alloc, 2 + payload.len);
-    try out.append(alloc, @intFromEnum(Tag.bitpack));
-    try out.append(alloc, width);
-    try out.appendSlice(alloc, payload);
-    return .{ .tag = .bitpack, .body = try out.toOwnedSlice(alloc) };
+    try output.append(alloc, @intFromEnum(Tag.bitpack));
+    try output.append(alloc, width);
+    try output.appendSlice(alloc, payload);
 }
 
 fn requiredBits(stream: Stream) u8 {
     var combined: u32 = 0;
-    for (0..stream.count) |index| combined |= stream.getU32(index);
+    const top_bit = @as(u32, 1) <<
+        @intCast(stream.bits_per_elem - 1);
+    for (0..stream.count) |index| {
+        if (builtin.is_test) AnalysisMetrics.elements += 1;
+        combined |= stream.getU32(index);
+        if (combined & top_bit != 0) return stream.bits_per_elem;
+    }
     return if (combined == 0) 1 else @intCast(32 - @clz(combined));
 }
 
@@ -229,30 +281,22 @@ const Best = struct {
 
 const Analysis = struct {
     best: Best,
+    bitpack_width: u8 = 1,
     huffman: ?codec.HuffmanTable = null,
     huffman_payload_bits: u64 = 0,
     rans: ?codec.RansTable = null,
-    rans_payload: ?[]u8 = null,
 
     fn deinit(self: *Analysis, alloc: Allocator) void {
         if (self.huffman) |*table| table.deinit(alloc);
         if (self.rans) |*table| table.deinit(alloc);
-        if (self.rans_payload) |payload| alloc.free(payload);
     }
-};
-
-const RansSizing = union(enum) {
-    materialize,
-    count,
-    known: usize,
 };
 
 fn analyzeBest(
     alloc: Allocator,
     stream: Stream,
-    rans_sizing: RansSizing,
 ) !Analysis {
-    try validateStream(stream);
+    try validateStreamStorage(stream);
 
     var analysis = Analysis{
         .best = .{
@@ -263,25 +307,20 @@ fn analyzeBest(
     errdefer analysis.deinit(alloc);
     if (stream.count == 0) return analysis;
 
-    const width = requiredBits(stream);
-    const bit_count = std.math.mul(
-        usize,
-        stream.count,
-        @as(usize, width),
-    ) catch return error.LiteralSizeOverflow;
-    const packed_bytes = try addSize(bit_count, 7) / 8;
-    selectSmaller(
-        &analysis.best.tag,
-        &analysis.best.size,
-        .bitpack,
-        try addSize(2, packed_bytes),
-    );
-
     var histogram = codec.buildHistogram(alloc, stream) catch |err| switch (err) {
-        error.AlphabetTooLarge => return analysis,
+        error.AlphabetTooLarge => {
+            try validateStreamValues(stream);
+            analysis.bitpack_width = requiredBits(stream);
+            try analyzeBitpack(stream, &analysis);
+            return analysis;
+        },
         else => return err,
     };
     defer histogram.deinit(alloc);
+    if (histogram.requiredBits() > stream.bits_per_elem)
+        return error.InvalidLiteralStream;
+    analysis.bitpack_width = histogram.requiredBits();
+    try analyzeBitpack(stream, &analysis);
 
     if (codec.huffmanFromHist(
         alloc,
@@ -343,22 +382,11 @@ fn analyzeBest(
             lower_payload,
         ) catch std.math.maxInt(usize);
         if (lower_size < analysis.best.size) {
-            const payload_size = switch (rans_sizing) {
-                .materialize => blk: {
-                    analysis.rans_payload = try codec.ransEncode(
-                        alloc,
-                        stream,
-                        analysis.rans.?,
-                    );
-                    break :blk analysis.rans_payload.?.len;
-                },
-                .count => try codec.ransEncodedSize(
-                    alloc,
-                    stream,
-                    analysis.rans.?,
-                ),
-                .known => |size| size,
-            };
+            const payload_size = try codec.ransEncodedSize(
+                alloc,
+                stream,
+                analysis.rans.?,
+            );
             selectSmaller(
                 &analysis.best.tag,
                 &analysis.best.size,
@@ -369,6 +397,21 @@ fn analyzeBest(
     }
 
     return analysis;
+}
+
+fn analyzeBitpack(stream: Stream, analysis: *Analysis) !void {
+    const bit_count = std.math.mul(
+        usize,
+        stream.count,
+        @as(usize, analysis.bitpack_width),
+    ) catch return error.LiteralSizeOverflow;
+    const packed_bytes = try addSize(bit_count, 7) / 8;
+    selectSmaller(
+        &analysis.best.tag,
+        &analysis.best.size,
+        .bitpack,
+        try addSize(2, packed_bytes),
+    );
 }
 
 fn addSize(left: usize, right: usize) !usize {
@@ -391,29 +434,27 @@ fn selectSmaller(
     }
 }
 
-fn encodeHuffman(
+fn emitHuffman(
     alloc: Allocator,
     stream: Stream,
     table: codec.HuffmanTable,
     payload_bits: u64,
-) !OwnedEncoding {
-    const payload = try codec.huffmanEncode(alloc, stream, table);
-    defer alloc.free(payload);
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(alloc);
-    try out.append(alloc, @intFromEnum(Tag.huffman));
-    try appendU32(alloc, &out, @intCast(table.entries.len));
+    output: *std.ArrayList(u8),
+) !void {
+    const payload_bytes = std.math.cast(
+        usize,
+        (std.math.add(u64, payload_bits, 7) catch
+            return error.LiteralSizeOverflow) / 8,
+    ) orelse return error.LiteralSizeOverflow;
+    try output.append(alloc, @intFromEnum(Tag.huffman));
+    try appendU32(alloc, output, @intCast(table.entries.len));
     for (table.entries) |entry| {
-        try appendU32(alloc, &out, entry.sym);
-        try out.append(alloc, entry.len);
+        try appendU32(alloc, output, entry.sym);
+        try output.append(alloc, entry.len);
     }
-    try appendU64(alloc, &out, payload_bits);
-    try out.appendSlice(alloc, payload);
-    return .{
-        .tag = .huffman,
-        .body = try out.toOwnedSlice(alloc),
-    };
+    try appendU64(alloc, output, payload_bits);
+    const payload = output.addManyAsSliceAssumeCapacity(payload_bytes);
+    try codec.huffmanEncodeIntoSlice(alloc, stream, table, payload);
 }
 
 fn huffmanPayloadBits(
@@ -446,88 +487,25 @@ fn huffmanPayloadBits(
     return bits;
 }
 
-fn encodeRans(
+fn emitRans(
     alloc: Allocator,
+    stream: Stream,
     table: codec.RansTable,
-    payload: []const u8,
-) !OwnedEncoding {
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(alloc);
-    try out.append(alloc, @intFromEnum(Tag.rans));
-    try appendU32(alloc, &out, @intCast(table.symbols.len));
-    for (table.symbols, table.info) |symbol, info| {
-        try appendU32(alloc, &out, symbol);
-        try appendU32(alloc, &out, info.freq);
-    }
-    try appendU64(alloc, &out, @intCast(payload.len));
-    try out.appendSlice(alloc, payload);
-    return .{
-        .tag = .rans,
-        .body = try out.toOwnedSlice(alloc),
-    };
-}
-
-fn validateHuffmanBody(
-    body: []const u8,
-    table: codec.HuffmanTable,
-    payload_bits: u64,
+    output: *std.ArrayList(u8),
 ) !void {
-    var reader = Reader{ .bytes = body };
-    if (try reader.byte() != @intFromEnum(Tag.huffman))
-        return error.NonCanonicalLiteralEncoding;
-    if (try reader.readU32() != table.entries.len)
-        return error.NonCanonicalLiteralEncoding;
-    for (table.entries) |entry| {
-        if (try reader.readU32() != entry.sym or
-            try reader.byte() != entry.len)
-            return error.NonCanonicalLiteralEncoding;
-    }
-    if (try reader.readU64() != payload_bits)
-        return error.NonCanonicalLiteralEncoding;
-    const payload_bytes = std.math.cast(
-        usize,
-        (std.math.add(u64, payload_bits, 7) catch
-            return error.LiteralSizeOverflow) / 8,
-    ) orelse return error.LiteralSizeOverflow;
-    _ = try reader.take(payload_bytes);
-    try reader.finish();
-}
+    const payload = try codec.ransEncode(alloc, stream, table);
+    defer alloc.free(payload);
+    if (builtin.is_test)
+        AnalysisMetrics.rans_payload_encodes += 1;
 
-fn validateRansBody(
-    body: []const u8,
-    table: codec.RansTable,
-) !void {
-    var reader = Reader{ .bytes = body };
-    if (try reader.byte() != @intFromEnum(Tag.rans))
-        return error.NonCanonicalLiteralEncoding;
-    if (try reader.readU32() != table.symbols.len)
-        return error.NonCanonicalLiteralEncoding;
+    try output.append(alloc, @intFromEnum(Tag.rans));
+    try appendU32(alloc, output, @intCast(table.symbols.len));
     for (table.symbols, table.info) |symbol, info| {
-        if (try reader.readU32() != symbol or
-            try reader.readU32() != info.freq)
-            return error.NonCanonicalLiteralEncoding;
+        try appendU32(alloc, output, symbol);
+        try appendU32(alloc, output, info.freq);
     }
-    const payload_len = std.math.cast(usize, try reader.readU64()) orelse
-        return error.LiteralSizeOverflow;
-    _ = try reader.take(payload_len);
-    try reader.finish();
-    // decodeRans already required exact payload consumption and terminal RANS_L,
-    // the inverse conditions of the deterministic encoder.
-}
-
-fn ransPayloadLength(body: []const u8) !usize {
-    var reader = Reader{ .bytes = body };
-    if (try reader.byte() != @intFromEnum(Tag.rans))
-        return error.CorruptLiteralEncoding;
-    const entry_count: usize = @intCast(try reader.readU32());
-    const entries_bytes = std.math.mul(usize, entry_count, 8) catch
-        return error.LiteralSizeOverflow;
-    _ = try reader.take(entries_bytes);
-    const payload_len = std.math.cast(usize, try reader.readU64()) orelse
-        return error.LiteralSizeOverflow;
-    _ = try reader.take(payload_len);
-    try reader.finish();
-    return payload_len;
+    try appendU64(alloc, output, @intCast(payload.len));
+    try output.appendSlice(alloc, payload);
 }
 
 fn decodeRaw(

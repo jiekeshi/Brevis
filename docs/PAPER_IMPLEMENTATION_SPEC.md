@@ -101,8 +101,11 @@ Raw and bit-packed bodies are applicable to every valid literal. As a bounded
 resource extension, Huffman and rANS are applicable only when the literal has
 at most 65,536 distinct physical words. Crossing that cap cannot make a tensor
 unrepresentable: it deterministically removes those two table-based candidates
-and leaves the universal raw/bit-packed path. The same rule is applied during
-canonical decoding.
+and leaves the universal raw/bit-packed path.
+
+The encoder performs this global minimization once. The decoder validates the
+selected codec and reconstructs its stream; it does not recompress the stream
+to prove that no other literal codec would have been smaller.
 
 This separation ensures that:
 
@@ -130,13 +133,38 @@ The synthesizer:
 6. stops at the expansion budget or an empty queue;
 7. returns the smallest correct program encountered.
 
-The rule prior changes exploration order only. It must not change:
+When a partial state cannot fit the remaining expansion budget, the
+implementation retains the PHOG/A*-preferred open state. At budget exhaustion
+it completes every remaining hole in that one state with `Lit`, evaluates the
+result by exact canonical size, and compares it with the incumbent. This
+bounded terminal completion is what lets a learned prior affect a one-expansion
+search without pretending that the recursively completed nodes were expanded.
+
+The engineering default is one expansion per tensor. The manuscript
+configuration explicitly requests 512; changing the engineering default does
+not change the manuscript setting or the search semantics at a fixed budget.
+
+The rule prior changes exploration order and, at budget exhaustion, selects the
+one open frontier completed with `Lit`. It must not change:
 
 - production applicability;
 - literal encoding;
 - exact serialized size;
 - correctness checks;
 - final comparison between complete candidates.
+
+Before the checkpoint's tensor searches, the encoder trains an input-local
+PHOG over a deterministic subset of complete tensors. Budget zero skips this
+step. At the one-expansion engineering default, a teacher searches up to six
+expansions on at most four tensors, while the requested searches remain at one
+expansion and disable the hard-coded float seed. Larger budgets use the
+engineering cap of 32; the manuscript setting is 256. The resulting immutable
+prior guides queue order and selects the one terminal-completed frontier. A
+caller-supplied prior overrides automatic calibration; it is encoder-only and
+never enters the archive.
+Independent calibration searches may run concurrently. Rule observations are
+reduced exactly, so worker count cannot change the prior or aggregate search
+statistics.
 
 The target-directed proposal generator uses a semantics-preserving normal form.
 It omits identity maps, one-bit aliases, uniform period-one repeats already
@@ -217,10 +245,11 @@ records and are not the unit of synthesis.
 
 File compression and decompression may process independent tensor records in
 parallel. The manuscript configuration uses 32 workers, each handling one
-complete tensor at a time. The implementation keeps a source-ordered sliding
-window no larger than the worker count and reuses a slot as soon as its result
-is emitted. Parallel execution must preserve source record order and produce
-the same canonical archive as one worker.
+complete tensor at a time. A completion queue schedules at most one task per
+worker and permits a bounded two-window lookahead, avoiding source-order
+head-of-line stalls without buffering the whole checkpoint. Emission remains
+source ordered, and parallel execution must produce the same canonical archive
+as one worker.
 
 An implementation may internally bound memory by lowering a tensor program to
 streamable regions. When regions need independent subprograms, that structure

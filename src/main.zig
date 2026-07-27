@@ -34,7 +34,7 @@ const Arguments = struct {
     positional: std.ArrayList([]const u8) = .empty,
     prior_path: ?[]const u8 = null,
     max_tensors: usize = paper_calibration.DEFAULT_TENSORS,
-    synthesis: synthesizer.Options = .{},
+    synthesis: synthesizer.Options = .{ .seed_float_fields = false },
     resources: ResourceLimits = .{},
     workers: usize = pipeline.DEFAULT_WORKERS,
     saw_prior: bool = false,
@@ -102,6 +102,8 @@ fn run(
 
     var args = try parseArguments(alloc, argv[1..]);
     defer args.deinit(alloc);
+    if (!args.saw_workers)
+        args.workers = std.Thread.getCpuCount() catch pipeline.DEFAULT_WORKERS;
     try validateArguments(args);
 
     switch (args.command) {
@@ -112,6 +114,7 @@ fn run(
             args.positional.items[0],
             args.positional.items[1],
             args.prior_path,
+            args.max_tensors,
             args.synthesis,
             args.resources,
             args.workers,
@@ -143,6 +146,7 @@ fn run(
             args.max_tensors,
             args.synthesis,
             args.resources,
+            args.workers,
         ),
         .config => try commandConfig(
             out,
@@ -261,10 +265,12 @@ fn validateArguments(args: Arguments) !void {
     }
     if (args.saw_prior and args.command != .compress)
         return error.InvalidArguments;
-    if (args.saw_tensors and args.command != .calibrate)
+    if (args.saw_tensors and
+        args.command != .compress and
+        args.command != .calibrate)
+    {
         return error.InvalidArguments;
-    if (args.saw_workers and args.command == .calibrate)
-        return error.InvalidArguments;
+    }
     if (args.saw_search_option and
         args.command != .compress and
         args.command != .calibrate and
@@ -299,6 +305,7 @@ fn commandCompress(
     source_path: []const u8,
     archive_path: []const u8,
     prior_path: ?[]const u8,
+    max_calibration_tensors: usize,
     base_options: synthesizer.Options,
     resources: ResourceLimits,
     workers: usize,
@@ -318,6 +325,7 @@ fn commandCompress(
         archive_path,
         .{
             .synthesis = synthesis,
+            .max_calibration_tensors = max_calibration_tensors,
             .workers = workers,
             .max_source_bytes = resources.max_total_bytes,
             .max_prefix_bytes = resources.max_prefix_bytes,
@@ -361,7 +369,11 @@ fn commandCompress(
             completed,
             budget_exhausted,
             fallback,
-            prior_path orelse "uniform",
+            prior_path orelse if (base_options.max_expansions != 0 and
+                max_calibration_tensors != 0)
+                "checkpoint-local"
+            else
+                "uniform",
         },
     );
 }
@@ -419,6 +431,7 @@ fn commandCalibrate(
     max_tensors: usize,
     synthesis: synthesizer.Options,
     resources: ResourceLimits,
+    workers: usize,
 ) !void {
     var loaded = try safetensors.loadFromPathWithLimits(
         alloc,
@@ -432,13 +445,15 @@ fn commandCalibrate(
     );
     defer loaded.deinit(alloc);
 
-    var result = try paper_calibration.train(
+    var result = try paper_calibration.trainParallel(
         alloc,
+        io,
         loaded.tensors,
         .{
             .max_tensors = max_tensors,
             .synthesis = synthesis,
         },
+        workers,
     );
     defer result.deinit(alloc);
     const encoded = try result.serialize(alloc);
@@ -483,9 +498,9 @@ fn commandConfig(
     try json.objectField("literal_fallback");
     try json.write(true);
     try json.objectField("phog_role");
-    try json.write("queue_order_only");
+    try json.write("queue_order_and_terminal_frontier");
     try json.objectField("archive");
-    try json.write("BRTA-v1");
+    try json.write("BRTA-v2");
     try json.objectField("workers");
     try json.write(workers);
     try json.objectField("max_expansions");
@@ -594,7 +609,7 @@ fn usage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         \\Brevis — exact whole-tensor program synthesis
         \\
-        \\  brevis compress   <model.safetensors> <model.brta> [--prior model.brgp] [search options]
+        \\  brevis compress   <model.safetensors> <model.brta> [--prior model.brgp] [--tensors N] [search options]
         \\  brevis decompress <model.brta> <restored.safetensors>
         \\  brevis verify     <model.brta> <model.safetensors>
         \\  brevis calibrate  <model.safetensors> <model.brgp> [--tensors N] [search options]
@@ -611,7 +626,7 @@ fn usage(writer: *std.Io.Writer) !void {
         \\  --max-rotations N
         \\  --max-field-splits N
         \\
-        \\Parallel file execution:
+        \\Parallel file execution and calibration:
         \\  --workers N
         \\
         \\Resource limits (bytes):
@@ -630,6 +645,8 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
         "model.brta",
         "--prior",
         "model.brgp",
+        "--tensors",
+        "7",
         "--max-expansions",
         "0",
         "--max-depth",
@@ -657,6 +674,7 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
         args.synthesis.grammar_options.max_concat_splits,
     );
     try std.testing.expectEqualStrings("model.brgp", args.prior_path.?);
+    try std.testing.expectEqual(@as(usize, 7), args.max_tensors);
     try std.testing.expectEqual(
         @as(usize, 1048576),
         args.resources.max_tensor_bytes,
@@ -677,6 +695,15 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
             "fixed",
         }),
     );
+}
+
+test "CLI defaults leave one-expansion search to PHOG" {
+    const alloc = std.testing.allocator;
+    var args = try parseArguments(alloc, &.{"config"});
+    defer args.deinit(alloc);
+    try validateArguments(args);
+    try std.testing.expectEqual(@as(usize, 1), args.synthesis.max_expansions);
+    try std.testing.expect(!args.synthesis.seed_float_fields);
 }
 
 test "CLI rejects command-specific flags and an impossible node cap" {
@@ -737,10 +764,8 @@ test "CLI rejects command-specific flags and an impossible node cap" {
         "4",
     });
     defer calibration_workers.deinit(alloc);
-    try std.testing.expectError(
-        error.InvalidArguments,
-        validateArguments(calibration_workers),
-    );
+    try validateArguments(calibration_workers);
+    try std.testing.expectEqual(@as(usize, 4), calibration_workers.workers);
 }
 
 test "CLI decoder defaults cap one materialized tensor and can be tightened" {

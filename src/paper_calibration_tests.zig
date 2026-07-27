@@ -180,6 +180,60 @@ test "training is canonical and ignores any caller supplied rule model" {
     try std.testing.expect(std.mem.indexOf(u8, uniform_bytes, &data) == null);
 }
 
+test "parallel training matches serial prior and search statistics" {
+    const alloc = std.testing.allocator;
+    var repeat_data = [_]u8{ 1, 2, 1, 2, 1, 2, 1, 2 };
+    var constant_data = [_]u8{ 9, 9, 9, 9, 9, 9 };
+    var literal_data = [_]u8{ 8, 3, 5, 1, 7 };
+    const repeat_shape = [_]u64{repeat_data.len};
+    const constant_shape = [_]u64{constant_data.len};
+    const literal_shape = [_]u64{literal_data.len};
+    const tensors = [_]safetensors.Tensor{
+        tensor("repeat", &repeat_data, &repeat_shape, .u8),
+        tensor("constant", &constant_data, &constant_shape, .u8),
+        tensor("literal", &literal_data, &literal_shape, .u8),
+    };
+    const options: calibration.Options = .{
+        .max_tensors = tensors.len,
+        .synthesis = .{
+            .max_expansions = 64,
+            .max_nodes = 8,
+            .grammar_options = .{ .max_depth = 1 },
+        },
+    };
+
+    var serial = try calibration.train(alloc, &tensors, options);
+    defer serial.deinit(alloc);
+    var parallel = try calibration.trainParallel(
+        alloc,
+        std.testing.io,
+        &tensors,
+        options,
+        2,
+    );
+    defer parallel.deinit(alloc);
+    const serial_bytes = try serial.serialize(alloc);
+    defer alloc.free(serial_bytes);
+    const parallel_bytes = try parallel.serialize(alloc);
+    defer alloc.free(parallel_bytes);
+
+    try std.testing.expectEqualSlices(u8, serial_bytes, parallel_bytes);
+    try std.testing.expectEqual(serial.observed_tensors, parallel.observed_tensors);
+    try std.testing.expectEqual(serial.expanded, parallel.expanded);
+    try std.testing.expectEqual(
+        serial.completed_candidates,
+        parallel.completed_candidates,
+    );
+    try std.testing.expectEqual(
+        serial.budget_exhausted_tensors,
+        parallel.budget_exhausted_tensors,
+    );
+    try std.testing.expectEqual(
+        serial.literal_fallback_tensors,
+        parallel.literal_fallback_tensors,
+    );
+}
+
 test "max_tensors covers dtype and physical-size strata deterministically" {
     const alloc = std.testing.allocator;
     var first_data = [_]u8{ 0, 0, 0, 0 };

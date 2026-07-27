@@ -1,9 +1,5 @@
 zig-out/
 .zig-cache/
-*.brv
-__pycache__/
-*.pyc
 .DS_Store
-eval/cache/
 
 .claude

@@ -147,7 +147,7 @@ test "literal raw words use canonical storage widths and ULEB128 lengths" {
     try expectCanonicalRoundtrip(alloc, program);
 }
 
-test "empty Lit round trips and non-minimal literal bodies are rejected" {
+test "empty Lit round trips and valid non-minimal literal bodies decode" {
     const alloc = std.testing.allocator;
     var empty = try dsl.Program.literal(alloc, 8, &.{});
     defer empty.deinit(alloc);
@@ -158,10 +158,11 @@ test "empty Lit round trips and non-minimal literal bodies are rejected" {
         0x01, 0x08, 0x03, 0x04, 0x00,
         0x00, 0x00, 0x00,
     };
-    try std.testing.expectError(
-        error.NonCanonicalLiteral,
-        format.deserialize(alloc, &non_minimal_raw, .{}),
-    );
+    var decoded = try format.deserialize(alloc, &non_minimal_raw, .{});
+    defer decoded.deinit(alloc);
+    const literal = decoded.kind.literal;
+    try std.testing.expectEqual(@as(usize, 3), literal.count);
+    try std.testing.expect(literal.isUniform());
 }
 
 test "decoder rejects trailing overlong unknown and truncated encodings" {
@@ -226,7 +227,7 @@ test "decoder rejects trailing overlong unknown and truncated encodings" {
         );
 }
 
-test "decoder validates header integer and literal canonicality" {
+test "decoder validates header integers and literal bodies" {
     const alloc = std.testing.allocator;
 
     const bad_magic = [_]u8{ 'N', 'O', 'P', 'E', 0x01, 0x01 };
@@ -258,7 +259,7 @@ test "decoder validates header integer and literal canonicality" {
         0x08,
     };
     try std.testing.expectError(
-        error.NonCanonicalLiteral,
+        error.InvalidLiteral,
         format.deserialize(alloc, &high_padding_bits, .{}),
     );
 }

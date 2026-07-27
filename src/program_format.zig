@@ -87,7 +87,7 @@ pub const DecodeError = Allocator.Error || error{
     UnknownScanOp,
     UnknownMergeOp,
     UnknownDtype,
-    NonCanonicalLiteral,
+    InvalidLiteral,
     InvalidProgram,
     NodeLimitExceeded,
     DepthLimitExceeded,
@@ -123,7 +123,7 @@ pub fn serializedSize(alloc: Allocator, program: dsl.Program) !usize {
     return emitter.count;
 }
 
-/// Decode exactly one canonical program. The whole tree is parsed first, then
+/// Decode exactly one version-1 program. The whole tree is parsed first, then
 /// its semantic type is checked through `Program.typeOf`.
 pub fn deserialize(
     alloc: Allocator,
@@ -181,10 +181,18 @@ const Emitter = struct {
         self.count = next;
     }
 
-    fn countBytes(self: *Emitter, count: usize) !void {
-        std.debug.assert(self.output == null);
-        self.count = std.math.add(usize, self.count, count) catch
-            return error.LengthOverflow;
+    fn writeLiteral(
+        self: *Emitter,
+        encoding: literal_encoding.PreparedEncoding,
+    ) !void {
+        const next = std.math.add(
+            usize,
+            self.count,
+            encoding.wireSize(),
+        ) catch return error.LengthOverflow;
+        if (self.output) |output|
+            try encoding.emitBody(self.allocator, output);
+        self.count = next;
     }
 
     fn writeUleb128(self: *Emitter, value: u64) !void {
@@ -213,22 +221,13 @@ fn emitNode(emitter: *Emitter, program: dsl.Program) !void {
             try emitter.writeUleb128(try usizeToU64(literal.count));
 
             try validateLiteralWords(literal);
-            if (emitter.output != null) {
-                var encoding = try literal_encoding.encodeBest(
-                    emitter.allocator,
-                    literal,
-                );
-                defer encoding.deinit(emitter.allocator);
-                try emitter.writeUleb128(try usizeToU64(encoding.body.len));
-                try emitter.writeAll(encoding.body);
-            } else {
-                const body_len = try literal_encoding.encodedSize(
-                    emitter.allocator,
-                    literal,
-                );
-                try emitter.writeUleb128(try usizeToU64(body_len));
-                try emitter.countBytes(body_len);
-            }
+            var encoding = try literal_encoding.prepareBest(
+                emitter.allocator,
+                literal,
+            );
+            defer encoding.deinit(emitter.allocator);
+            try emitter.writeUleb128(try usizeToU64(encoding.wireSize()));
+            try emitter.writeLiteral(encoding);
         },
         .constant => |constant_value| {
             try emitter.writeByte(@intFromEnum(NodeWireId.constant));
@@ -475,7 +474,7 @@ fn readLiteral(
         body,
     ) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => return error.NonCanonicalLiteral,
+        else => return error.InvalidLiteral,
     };
     errdefer stream.deinit(alloc);
 

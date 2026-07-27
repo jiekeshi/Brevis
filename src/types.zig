@@ -158,6 +158,40 @@ pub const Stream = struct {
         return (@as(u32, 1) << @intCast(self.bits_per_elem)) - 1;
     }
 
+    pub fn eql(self: Stream, other: Stream) bool {
+        if (self.bits_per_elem != other.bits_per_elem or
+            self.count != other.count)
+            return false;
+        const byte_len = self.count * self.elemBytes();
+        return std.mem.eql(
+            u8,
+            self.data[0..byte_len],
+            other.data[0..byte_len],
+        );
+    }
+
+    pub fn isUniform(self: Stream) bool {
+        if (self.count <= 1) return true;
+        const stride = self.elemBytes();
+        const byte_len = self.count * stride;
+        return std.mem.eql(
+            u8,
+            self.data[0 .. byte_len - stride],
+            self.data[stride..byte_len],
+        );
+    }
+
+    pub fn hasPeriod(self: Stream, period: usize) bool {
+        if (period == 0 or period > self.count) return false;
+        const offset = period * self.elemBytes();
+        const byte_len = self.count * self.elemBytes();
+        return std.mem.eql(
+            u8,
+            self.data[0 .. byte_len - offset],
+            self.data[offset..byte_len],
+        );
+    }
+
     pub fn dupe(self: Stream, alloc: Allocator) !Stream {
         return .{
             .data = try alloc.dupe(u8, self.data),

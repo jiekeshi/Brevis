@@ -35,6 +35,24 @@ fn tailPaddingMask(bit_count: usize) u8 {
     return (@as(u8, 1) << @intCast(8 - used)) - 1;
 }
 
+test "histogram carries the source bit width summary" {
+    const alloc = std.testing.allocator;
+    var input = try Stream.init(alloc, 4, 16);
+    defer input.deinit(alloc);
+    for ([_]u32{ 0, 3, 255, 0x8000 }, 0..) |word, index|
+        input.setU32(index, word);
+
+    var histogram = try codec.buildHistogram(alloc, input);
+    defer histogram.deinit(alloc);
+    try std.testing.expectEqual(@as(u8, 16), histogram.requiredBits());
+
+    var empty = try Stream.init(alloc, 0, 16);
+    defer empty.deinit(alloc);
+    var empty_histogram = try codec.buildHistogram(alloc, empty);
+    defer empty_histogram.deinit(alloc);
+    try std.testing.expectEqual(@as(u8, 1), empty_histogram.requiredBits());
+}
+
 test "bitpack round trips every width and rejects truncation" {
     const alloc = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(0xB17C_0DEC);
@@ -178,6 +196,19 @@ test "canonical Huffman tables and payloads round trip deterministically" {
         const second_payload = try codec.huffmanEncode(alloc, input, second);
         defer alloc.free(second_payload);
         try std.testing.expectEqualSlices(u8, first_payload, second_payload);
+        const slice_payload = try alloc.alloc(u8, first_payload.len);
+        defer alloc.free(slice_payload);
+        try codec.huffmanEncodeIntoSlice(
+            alloc,
+            input,
+            first,
+            slice_payload,
+        );
+        try std.testing.expectEqualSlices(
+            u8,
+            first_payload,
+            slice_payload,
+        );
 
         var decoded = try codec.huffmanDecode(
             alloc,

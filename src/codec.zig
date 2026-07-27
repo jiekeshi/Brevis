@@ -128,6 +128,12 @@ pub const Histogram = struct {
     pairs: []Pair,
     pub const Pair = struct { sym: u32, count: u64 };
 
+    pub fn requiredBits(self: Histogram) u8 {
+        if (self.pairs.len == 0) return 1;
+        const maximum = self.pairs[self.pairs.len - 1].sym;
+        return if (maximum == 0) 1 else @intCast(32 - @clz(maximum));
+    }
+
     pub fn deinit(self: *Histogram, alloc: Allocator) void {
         alloc.free(self.pairs);
         self.pairs = &.{};
@@ -367,6 +373,86 @@ fn walkLengths(node: anytype, depth: u8, lengths: *std.AutoHashMap(u32, u8)) !vo
 
 /// Generate canonical codes from sorted (sym,len) table.
 pub fn huffmanEncode(alloc: Allocator, stream: Stream, table: HuffmanTable) ![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(alloc);
+    try output.ensureTotalCapacity(alloc, stream.count);
+    try huffmanEncodeInto(alloc, stream, table, &output);
+    return output.toOwnedSlice(alloc);
+}
+
+fn huffmanEncodeInto(
+    alloc: Allocator,
+    stream: Stream,
+    table: HuffmanTable,
+    output: *std.ArrayList(u8),
+) !void {
+    var writer = BitWriter.init(alloc, output);
+    try huffmanEncodeWithWriter(alloc, stream, table, &writer);
+}
+
+pub fn huffmanEncodeIntoSlice(
+    alloc: Allocator,
+    stream: Stream,
+    table: HuffmanTable,
+    output: []u8,
+) !void {
+    var writer = FixedBitWriter{ .output = output };
+    try huffmanEncodeWithWriter(alloc, stream, table, &writer);
+    if (writer.position != output.len)
+        return error.HuffmanPayloadSizeMismatch;
+}
+
+const FixedBitWriter = struct {
+    output: []u8,
+    position: usize = 0,
+    cur: u64 = 0,
+    n: u8 = 0,
+
+    inline fn writeBits(
+        self: *FixedBitWriter,
+        value: u64,
+        nbits: u8,
+    ) !void {
+        const masked = value & ((@as(u64, 1) << @intCast(nbits)) - 1);
+        self.cur |= masked << @intCast(64 - self.n - nbits);
+        self.n += nbits;
+        while (self.n >= 8) {
+            self.output[self.position] = @intCast(self.cur >> 56);
+            self.position += 1;
+            self.cur <<= 8;
+            self.n -= 8;
+        }
+    }
+
+    fn flush(self: *FixedBitWriter) !void {
+        if (self.n == 0) return;
+        self.output[self.position] = @intCast(self.cur >> 56);
+        self.position += 1;
+        self.cur = 0;
+        self.n = 0;
+    }
+};
+
+inline fn writeHuffmanSymbol(
+    writer: anytype,
+    packed_codes: []const u64,
+    symbol: u32,
+) !void {
+    const packed_code = packed_codes[symbol];
+    const len: u8 = @intCast(packed_code >> 32);
+    if (len == 0) return error.SymbolNotInTable;
+    try writer.writeBits(
+        packed_code & std.math.maxInt(u32),
+        len,
+    );
+}
+
+fn huffmanEncodeWithWriter(
+    alloc: Allocator,
+    stream: Stream,
+    table: HuffmanTable,
+    writer: anytype,
+) !void {
     const max_sym: u32 = blk: {
         var m: u32 = 0;
         for (table.entries) |e| if (e.sym > m) {
@@ -375,12 +461,8 @@ pub fn huffmanEncode(alloc: Allocator, stream: Stream, table: HuffmanTable) ![]u
         break :blk m;
     };
     const direct_path: bool = max_sym <= 0xFFFF;
-    var code_arr: []u64 = &.{};
-    var len_arr: []u8 = &.{};
-    defer if (direct_path) {
-        alloc.free(code_arr);
-        alloc.free(len_arr);
-    };
+    var packed_codes: []u64 = &.{};
+    defer if (direct_path) alloc.free(packed_codes);
     const Code = struct { bits: u64, len: u8 };
     var code_map: std.AutoHashMap(u32, Code) = .init(alloc);
     defer code_map.deinit();
@@ -392,16 +474,15 @@ pub fn huffmanEncode(alloc: Allocator, stream: Stream, table: HuffmanTable) ![]u
         table.entries[0].len;
     if (direct_path) {
         const n_slots: usize = @as(usize, max_sym) + 1;
-        code_arr = try alloc.alloc(u64, n_slots);
-        len_arr = try alloc.alloc(u8, n_slots);
-        @memset(len_arr, 0);
+        packed_codes = try alloc.alloc(u64, n_slots);
+        @memset(packed_codes, 0);
         for (table.entries) |e| {
             if (e.len > previous_len) {
                 code <<= @intCast(e.len - previous_len);
                 previous_len = e.len;
             }
-            code_arr[e.sym] = code;
-            len_arr[e.sym] = e.len;
+            packed_codes[e.sym] = (@as(u64, e.len) << 32) |
+                @as(u32, @truncate(code));
             code += 1;
         }
     } else {
@@ -415,29 +496,37 @@ pub fn huffmanEncode(alloc: Allocator, stream: Stream, table: HuffmanTable) ![]u
         }
     }
 
-    var out: std.ArrayList(u8) = .empty;
-    try out.ensureTotalCapacity(alloc, stream.count); // ~1 byte/elem upper bound is loose; fine for grow
-    defer out.deinit(alloc);
-    var bw = BitWriter.init(alloc, &out);
-
     if (direct_path) {
-        for (0..stream.count) |i| {
-            const sym = stream.getU32(i);
-            const len = len_arr[sym];
-            if (len == 0) return error.SymbolNotInTable;
-            try bw.writeBits(code_arr[sym], len);
+        switch (types.roundUpToPow2(stream.bits_per_elem)) {
+            8 => for (stream.data[0..stream.count]) |symbol|
+                try writeHuffmanSymbol(writer, packed_codes, symbol),
+            16 => for (0..stream.count) |i| {
+                const symbol = std.mem.readInt(
+                    u16,
+                    stream.data[i * 2 ..][0..2],
+                    .little,
+                );
+                try writeHuffmanSymbol(writer, packed_codes, symbol);
+            },
+            32 => for (0..stream.count) |i| {
+                const symbol = std.mem.readInt(
+                    u32,
+                    stream.data[i * 4 ..][0..4],
+                    .little,
+                );
+                try writeHuffmanSymbol(writer, packed_codes, symbol);
+            },
+            else => unreachable,
         }
     } else {
         for (0..stream.count) |i| {
             const sym = stream.getU32(i);
             const symbol_code = code_map.get(sym) orelse
                 return error.SymbolNotInTable;
-            try bw.writeBits(symbol_code.bits, symbol_code.len);
+            try writer.writeBits(symbol_code.bits, symbol_code.len);
         }
     }
-    try bw.flush();
-
-    return out.toOwnedSlice(alloc);
+    try writer.flush();
 }
 
 pub fn huffmanDecode(alloc: Allocator, payload: []const u8, table: HuffmanTable, count: usize, bits_per_elem: u8) !Stream {

@@ -290,6 +290,17 @@ test "every proposed semantic expansion reconstructs its target exactly" {
 
     const choices = try grammar.propose(alloc, repeated, .f32, 0, .{});
     defer alloc.free(choices);
+    const fast_choices = try grammar.proposeKnownValid(
+        alloc,
+        repeated,
+        .f32,
+        0,
+        .{},
+    );
+    defer alloc.free(fast_choices);
+    try std.testing.expectEqual(choices.len, fast_choices.len);
+    for (choices, fast_choices) |choice, fast_choice|
+        try std.testing.expect(std.meta.eql(choice, fast_choice));
     const proposed_families = grammar.families(choices);
     const legal_families = grammar.legal(repeated, .f32, 0, .{});
     try std.testing.expectEqualSlices(
@@ -312,6 +323,42 @@ test "every proposed semantic expansion reconstructs its target exactly" {
             .{},
         ));
         try expectChoiceReconstructs(alloc, choice, repeated, .f32);
+
+        const checked_storage = try grammar.childTargetStorageBytes(
+            choice,
+            repeated,
+            .f32,
+        );
+        try std.testing.expectEqual(
+            checked_storage,
+            try grammar.childTargetStorageBytesForProposal(
+                choice,
+                repeated,
+                .f32,
+            ),
+        );
+        var checked = try grammar.childTargets(
+            alloc,
+            choice,
+            repeated,
+            .f32,
+        );
+        defer checked.deinit(alloc);
+        var fast = try grammar.childTargetsForProposal(
+            alloc,
+            choice,
+            repeated,
+            .f32,
+        );
+        defer fast.deinit(alloc);
+        try std.testing.expectEqual(checked.streams.len, fast.streams.len);
+        const shapes = grammar.childShapesForProposal(choice, repeated);
+        try std.testing.expectEqual(fast.streams.len, shapes.len);
+        for (checked.streams, fast.streams, shapes.slice()) |expected, actual, shape| {
+            try expectStreamsEqual(expected, actual);
+            try std.testing.expectEqual(actual.bits_per_elem, shape.bits);
+            try std.testing.expectEqual(actual.count, shape.count);
+        }
     }
 
     const required = [_]grammar.ProductionId{

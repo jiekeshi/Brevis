@@ -63,8 +63,10 @@ byte-plane or bit-plane form. This removes redundant derivations without
 changing the semantic language or archive format.
 
 Search begins with `Lit(target)` as the incumbent. It expands the leftmost hole,
-checks every complete candidate by executing it, and continues after the first
-completion.
+compares complete candidates by canonical serialized size, and continues after
+the first completion. For nonzero search budgets, only the final winner is
+executed and checked against the exact target. Zero-budget search returns the
+already-exact root literal directly.
 
 The winner is the smallest correct complete program encountered, measured by exact canonical serialized bytes. A budget limit bounds work; it is not a claim of finding the globally shortest possible program.
 
@@ -92,9 +94,12 @@ without changing DSL legality or the universal `Lit` fallback.
 
 An optional probabilistic higher-order grammar (PHOG) assigns description costs to legal productions. Context includes tree position, dtype, width, length, and bounded target features.
 
-The PHOG changes queue order only. It cannot add or remove a production, alter a decomposition, change a literal encoding, affect correctness checks, or replace exact byte size as the final objective.
+The PHOG orders the queue and selects the one open frontier completed with
+`Lit` when the expansion budget is exhausted. It cannot add or remove a
+production, alter a decomposition, change a literal encoding, affect
+correctness checks, or replace exact byte size as the final objective.
 
-Without a learned prior, legal productions receive a uniform cost. With enough budget, uniform and learned ordering compare completed candidates by the same canonical bytes.
+An empty or unmatched prior gives legal productions a uniform cost. With enough budget, uniform and learned ordering compare completed candidates by the same canonical bytes.
 
 ## Physical cost and canonical literals
 
@@ -111,7 +116,7 @@ Raw and bitpack are total. To bound table-building memory, Huffman and rANS are
 defined as applicable only up to 65,536 distinct physical words; larger
 alphabets deterministically retain the raw/bitpack fallback.
 
-Equal-size literal encodings use a stable wire-tag order. The decoder rejects malformed or non-canonical literal bodies, including invalid tables, padding, lengths, and rANS state.
+Equal-size literal encodings use a stable wire-tag order. The decoder validates the selected codec's tables, padding, lengths, and rANS state without rerunning all encoder-side codec analyses.
 
 `serializedSize(program)` and `serialize(program)` share the same emitter and literal selection path. The reported cost therefore matches the bytes that are actually written.
 
@@ -119,18 +124,21 @@ Equal-size literal encodings use a stable wire-tag order. The decoder rejects ma
 
 Semantic programs use canonical `BRPG` version 1 bytecode. Node, operation, and dtype IDs are explicit stable wire values rather than in-memory enum ordinals.
 
-Whole-tensor archives use `BRTA` version 1. The archive header stores the original safetensors prefix, followed by one length-delimited record for each tensor.
+Whole-tensor archives use `BRTA` version 2. The archive header stores the original safetensors prefix, followed by one length-delimited record for each tensor.
 
-Each record contains the tensor name, dtype, shape, canonical program bytecode, and SHA-256 of the decoded physical bytes. Records are independently executable and contain no cross-record references.
+Each record contains the tensor name, dtype, shape, canonical program bytecode,
+and an XXH3-64 checksum of the decoded physical bytes. The checksum detects
+accidental corruption; it is not a cryptographic authenticator. Records are
+independently executable and contain no cross-record references.
 
 Decoding follows this path:
 
 ```text
-BRTA v1
+BRTA v2
   -> validate limits and safetensors metadata
   -> decode and type-check one BRPG v1 program per tensor
   -> execute the program
-  -> verify the tensor SHA-256
+  -> verify the tensor XXH3-64 checksum
   -> restore the original prefix and tensor bytes
 ```
 
@@ -143,15 +151,30 @@ only; it does not cross-bind records to the embedded safetensors metadata.
 
 ## Input-local calibration
 
-Calibration learns an encoder-only PHOG prior from complete tensor programs. It runs uniform synthesis on a deterministic subset that covers dtype and logarithmic physical-size strata before filling from source-order endpoints, and records productions only after exact program validation.
+For every nonzero search budget, compression learns an encoder-only PHOG prior
+from the loaded checkpoint before running its tensor A* searches. Calibration
+uses a deterministic subset that covers dtype and logarithmic physical-size
+strata before filling from source-order endpoints, and records productions only
+after exact program validation. Budget zero remains a strict no-calibration,
+no-search terminal path.
 
-The default cap is the paper's 256 tensors per checkpoint. A zero cap or empty corpus produces a valid empty prior.
+At the engineering default of one expansion, a small teacher searches up to six
+expansions on at most four tensors. The real tensor searches still expand
+exactly one state, with the learned PHOG choosing the frontier whose remaining
+holes are completed by `Lit`. Larger requested budgets use up to 32 calibration
+tensors by default; `compress --tensors N` changes the cap, the manuscript
+setting is 256, and zero disables automatic calibration.
 
 Counts use three context backoff levels, additive smoothing, and a configurable
 learned/uniform mixture. The default uses the smoothed learned distribution
 directly (`lambda = 1`); unseen contexts remain uniform.
 
-Prior bytes are canonical and insertion-order independent. They influence compression search order only and are never required for decompression.
+Prior bytes are canonical and insertion-order independent. They influence
+compression search order and bounded terminal-frontier selection, and are never
+required for decompression.
+File compression and the standalone `calibrate` command synthesize calibration
+tensors concurrently, then merge exact rule counts on one thread. The resulting
+prior and search statistics are identical across worker counts.
 
 ## Command line
 
@@ -175,16 +198,19 @@ Compress and restore a safetensors file:
 ./zig-out/bin/brevis verify model.brta model.safetensors
 ```
 
-The file pipeline uses 32 tensor workers by default, matching the manuscript
-configuration. Set `--workers 1` for single-core measurements or choose an
-explicit count for scaling experiments. Workers synthesize or execute
-independent complete-tensor programs through a sliding window no larger than
-the worker count. Records are still written in source order, so archive bytes
-are deterministic across worker counts.
+The CLI defaults to the detected hardware-thread count. Set `--workers 1` for
+single-core measurements or choose an explicit count for scaling experiments;
+the manuscript setting is 32. Workers synthesize or execute independent
+complete-tensor programs through a bounded completion queue. A two-window
+lookahead prevents source-order head-of-line stalls, while records are still
+written in source order and remain deterministic across worker counts.
 
-Train a prior locally, then use it for queue ordering:
+Every nonzero search budget calibrates from the input checkpoint. A separately
+persisted prior overrides that checkpoint-local model:
 
 ```bash
+./zig-out/bin/brevis compress model.safetensors model.brta \
+  --max-expansions 512 --tensors 256 --workers 32
 ./zig-out/bin/brevis calibrate model.safetensors model.brgp --tensors 256
 ./zig-out/bin/brevis compress model.safetensors model.brta --prior model.brgp
 ```
@@ -193,7 +219,7 @@ The main compute controls are:
 
 | Option | Default | Meaning |
 | --- | ---: | --- |
-| `--max-expansions` | `512` | Maximum expanded partial programs per tensor. |
+| `--max-expansions` | `1` | Maximum expanded partial programs per tensor. |
 | `--max-nodes` | `64` | Maximum nodes in a completed program. |
 | `--max-depth` | `4` | Maximum grammar depth. |
 | `--max-repeat-period` | `32` | Largest proposed minimal repeat period. |
@@ -201,12 +227,13 @@ The main compute controls are:
 | `--max-map-constants` | `2` | Maximum representative XOR/add constants. |
 | `--max-rotations` | `3` | Maximum proposed rotation amounts. |
 | `--max-field-splits` | `3` | Maximum proposed contiguous-field splits. |
-| `--workers` | `32` | Maximum concurrent complete-tensor jobs in file compression, decompression, and verification. |
+| `--tensors` | `32` | Maximum checkpoint tensors used for input-local PHOG calibration; the one-expansion teacher caps this at 4. |
+| `--workers` | hardware threads | Maximum concurrent tensor jobs in calibration, compression, decompression, and verification. |
 
 These limits trade search coverage for time and memory. They do not weaken the exact fallback or decoding checks.
 Use `--max-expansions 0` to measure the canonical terminal-codec path and
-`--max-expansions 1` for a low-cost bounded-search pilot. The manuscript setting
-remains the 512-expansion default and should be reported separately from both.
+`--max-expansions 1` for the fast shallow-search path. Reproduce the manuscript
+setting explicitly with `--max-expansions 512 --tensors 256 --workers 32`.
 The CLI enforces finite safety ceilings of 64 repeat-period elements, 16
 Concat splits, and 8 proposals for each constant, rotation, and field-split
 family.
@@ -221,17 +248,15 @@ The byte-resource controls, accepted by all commands, are:
 
 The defaults cap any single decoder materialization at 512 MiB. Raise them
 explicitly for trusted models containing larger tensors. SafeTensors limits
-are enforced before format-specific metadata allocations, and output files
-are written through synchronized atomic replacement. Parallel file paths keep
-at most one completed record per active worker before ordered output, so peak
-memory scales with the worker count and active tensor sizes rather than the
-complete checkpoint. Each emitted source-order result immediately reuses its
-window slot, avoiding a fixed batch barrier. Compression preserves source
-record order, and a root `Lit` may borrow its tensor bytes until that record is
-serialized. The zero-budget terminal path serializes the canonical program
-once and passes those bytes directly to archive framing. The public
-`synthesize` API remains owning; only the file pipeline uses the explicit
-borrowing seam.
+are enforced before format-specific metadata allocations. File commands
+truncate and stream directly to their destination; an error may therefore
+leave a partial file. Parallel paths bound scheduled work to two worker
+windows, so peak memory scales with the lookahead and active tensor sizes
+rather than the complete checkpoint. Compression preserves source record
+order, and a root `Lit` may borrow its tensor bytes until that record is
+serialized. The zero-budget terminal path prepares the canonical encoding once
+and writes its bytecode directly into archive framing. The public `synthesize`
+API remains owning; only the file pipeline uses the explicit borrowing seam.
 
 Canonical program readers additionally default to 512 MiB of output/literal
 storage and 4 GiB of cumulative interpreter byte-work, so a small deeply
@@ -267,7 +292,7 @@ src/literal_encoding.zig         raw, bitpack, Huffman, and rANS lowering
 src/codec.zig                    physical entropy-codec primitives
 src/program_format.zig           canonical BRPG v1 serialization
 src/interpreter.zig              validated program execution
-src/tensor_archive.zig           whole-tensor BRTA v1 framing and checksums
+src/tensor_archive.zig           whole-tensor BRTA v2 framing and checksums
 src/safetensors.zig              strict safetensors parsing and writing
 src/paper_pipeline.zig           end-to-end compression and decompression
 src/paper_calibration.zig        deterministic input-local prior training
@@ -280,15 +305,12 @@ The central public seams are `synthesize`, `writeProgram`, `readProgram`, and `e
 
 ## Compatibility
 
-`BRTA` version 1 is intentionally incompatible with legacy schema 5 and 6 archives. The paper-aligned reader does not retain the old mutable bytecode, block framing, or back-reference model.
+`BRTA` version 2 is intentionally incompatible with version 1 and legacy
+schema 5 and 6 archives. Decode an older archive with its matching Brevis
+revision before recompressing it. The paper-aligned reader does not retain the
+old mutable bytecode, block framing, or back-reference model.
 
 To migrate an old archive, decode it with the matching legacy Brevis revision, recover the safetensors file, then compress that file with this version.
-
-## Evaluation status
-
-Files under [`eval/`](eval/) belong to the earlier implementation and are retained only as historical artifacts. They do not validate this paper-aligned core and cannot support performance or compression claims about `BRTA` version 1.
-
-New quantitative claims require a fresh harness tied to canonical `BRTA` archives, the exact source revision, full input hashes, declared search limits, and byte-for-byte round-trip verification.
 
 ## License
 

@@ -29,8 +29,9 @@ pub const SynthesisResult = synthesizer.Result;
 pub const ProgramDecodeLimits = program_format.DecodeLimits;
 
 /// Find the smallest exact program encountered within the configured finite
-/// search budget. The optional PHOG lives in `options.rule_model` and affects
-/// queue order only.
+/// search budget. The optional PHOG in `options.rule_model` orders the queue
+/// and selects the bounded terminal-completion frontier; exact size still
+/// decides between completed candidates.
 pub fn synthesize(
     alloc: std.mem.Allocator,
     target: types.Stream,

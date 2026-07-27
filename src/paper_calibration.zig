@@ -12,8 +12,9 @@ const synthesizer = @import("synthesizer.zig");
 const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
-pub const DEFAULT_TENSORS: usize = 256;
+pub const DEFAULT_TENSORS: usize = 32;
 const DTYPE_COUNT: usize = std.enums.values(types.Dtype).len;
 const SIZE_BUCKET_COUNT: usize = 64;
 
@@ -75,10 +76,7 @@ pub fn train(
         options.max_tensors,
     );
     defer alloc.free(selected);
-    var expanded: usize = 0;
-    var completed_candidates: usize = 0;
-    var budget_exhausted_tensors: usize = 0;
-    var literal_fallback_tensors: usize = 0;
+    var totals: Totals = .{};
 
     for (selected) |index| {
         const tensor = tensors[index];
@@ -101,32 +99,171 @@ pub fn train(
             tensor.view.dtype,
             1,
         );
+        try totals.add(synthesis);
+    }
 
-        expanded = std.math.add(
+    return finish(alloc, &counts, options.prior_config, selected.len, totals);
+}
+
+pub fn trainParallel(
+    alloc: Allocator,
+    io: Io,
+    tensors: []const safetensors.Tensor,
+    options: Options,
+    workers: usize,
+) !Result {
+    if (workers == 0) return error.InvalidWorkerCount;
+    if (workers == 1 or tensors.len <= 1 or options.max_tensors <= 1)
+        return train(alloc, tensors, options);
+    try options.prior_config.validate();
+
+    const selected = try selectTensorIndices(
+        alloc,
+        tensors,
+        options.max_tensors,
+    );
+    defer alloc.free(selected);
+
+    var uniform_options = options.synthesis;
+    uniform_options.rule_model = null;
+    var counts = grammar_prior.Counts.init();
+    defer counts.deinit(alloc);
+    var totals: Totals = .{};
+
+    const Completion = union(enum) {
+        synthesis: SynthesisOutcome,
+    };
+    const window = @min(workers, selected.len);
+    const buffer = try alloc.alloc(Completion, window);
+    defer alloc.free(buffer);
+    var select = Io.Select(Completion).init(io, buffer);
+    defer while (select.cancel()) |completion_value| {
+        var completion = completion_value;
+        completion.synthesis.deinit(std.heap.smp_allocator);
+    };
+
+    var launched: usize = 0;
+    var pending: usize = 0;
+    while (launched < window) : (launched += 1) {
+        const index = selected[launched];
+        select.async(
+            .synthesis,
+            synthesizeTask,
+            .{ index, tensors[index], uniform_options },
+        );
+        pending += 1;
+    }
+
+    while (pending != 0) {
+        var completion = try select.await();
+        pending -= 1;
+        defer completion.synthesis.deinit(std.heap.smp_allocator);
+        switch (completion.synthesis) {
+            .success => |*success| {
+                if (launched < selected.len) {
+                    const index = selected[launched];
+                    select.async(
+                        .synthesis,
+                        synthesizeTask,
+                        .{ index, tensors[index], uniform_options },
+                    );
+                    launched += 1;
+                    pending += 1;
+                }
+                const tensor = tensors[success.tensor_index];
+                const target = try physicalStream(tensor.view);
+                try counts.observeProgram(
+                    alloc,
+                    success.synthesis.program,
+                    target,
+                    tensor.view.dtype,
+                    1,
+                );
+                try totals.add(success.synthesis);
+            },
+            .failure => |err| return err,
+        }
+    }
+
+    return finish(alloc, &counts, options.prior_config, selected.len, totals);
+}
+
+const Totals = struct {
+    expanded: usize = 0,
+    completed_candidates: usize = 0,
+    budget_exhausted_tensors: usize = 0,
+    literal_fallback_tensors: usize = 0,
+
+    fn add(self: *Totals, synthesis: synthesizer.Result) !void {
+        self.expanded = std.math.add(
             usize,
-            expanded,
+            self.expanded,
             synthesis.expanded,
         ) catch return error.IntegerOverflow;
-        completed_candidates = std.math.add(
+        self.completed_candidates = std.math.add(
             usize,
-            completed_candidates,
+            self.completed_candidates,
             synthesis.completed_candidates,
         ) catch return error.IntegerOverflow;
-        budget_exhausted_tensors += @intFromBool(
+        self.budget_exhausted_tensors += @intFromBool(
             synthesis.status == .budget_exhausted,
         );
-        literal_fallback_tensors += @intFromBool(
+        self.literal_fallback_tensors += @intFromBool(
             synthesis.used_literal_fallback,
         );
     }
+};
 
+const SelectedSynthesis = struct {
+    tensor_index: usize,
+    synthesis: synthesizer.Result,
+};
+
+const SynthesisOutcome = union(enum) {
+    success: SelectedSynthesis,
+    failure: anyerror,
+
+    fn deinit(self: *SynthesisOutcome, alloc: Allocator) void {
+        switch (self.*) {
+            .success => |*success| success.synthesis.deinit(alloc),
+            .failure => {},
+        }
+    }
+};
+
+fn synthesizeTask(
+    tensor_index: usize,
+    tensor: safetensors.Tensor,
+    options: synthesizer.Options,
+) SynthesisOutcome {
+    const alloc = std.heap.smp_allocator;
+    const target = physicalStream(tensor.view) catch |err|
+        return .{ .failure = err };
+    return .{ .success = .{
+        .tensor_index = tensor_index,
+        .synthesis = synthesizer.synthesize(
+            alloc,
+            target,
+            tensor.view.dtype,
+            options,
+        ) catch |err| return .{ .failure = err },
+    } };
+}
+
+fn finish(
+    alloc: Allocator,
+    counts: *const grammar_prior.Counts,
+    config: grammar_prior.Config,
+    observed_tensors: usize,
+    totals: Totals,
+) !Result {
     return .{
-        .prior = try counts.toPrior(alloc, options.prior_config),
-        .observed_tensors = selected.len,
-        .expanded = expanded,
-        .completed_candidates = completed_candidates,
-        .budget_exhausted_tensors = budget_exhausted_tensors,
-        .literal_fallback_tensors = literal_fallback_tensors,
+        .prior = try counts.toPrior(alloc, config),
+        .observed_tensors = observed_tensors,
+        .expanded = totals.expanded,
+        .completed_candidates = totals.completed_candidates,
+        .budget_exhausted_tensors = totals.budget_exhausted_tensors,
+        .literal_fallback_tensors = totals.literal_fallback_tensors,
     };
 }
 

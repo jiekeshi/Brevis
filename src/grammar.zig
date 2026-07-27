@@ -229,7 +229,16 @@ pub fn propose(
     options: Options,
 ) (Allocator.Error || dsl.ValidationError)![]Choice {
     try validateTarget(target);
+    return proposeKnownValid(alloc, target, dtype, hole_depth, options);
+}
 
+pub fn proposeKnownValid(
+    alloc: Allocator,
+    target: Stream,
+    dtype: Dtype,
+    hole_depth: u8,
+    options: Options,
+) Allocator.Error![]Choice {
     var choices: std.ArrayList(Choice) = .empty;
     errdefer choices.deinit(alloc);
     try choices.ensureTotalCapacity(alloc, MAX_PROPOSALS);
@@ -316,6 +325,73 @@ pub fn propose(
     return choices.toOwnedSlice(alloc);
 }
 
+pub const ChildShape = struct {
+    bits: u8,
+    count: usize,
+};
+
+pub const ChildShapes = struct {
+    items: [32]ChildShape = undefined,
+    len: usize = 0,
+
+    fn append(self: *ChildShapes, bits: u8, count: usize) void {
+        self.items[self.len] = .{ .bits = bits, .count = count };
+        self.len += 1;
+    }
+
+    pub fn slice(self: *const ChildShapes) []const ChildShape {
+        return self.items[0..self.len];
+    }
+};
+
+pub fn childShapesForProposal(choice: Choice, target: Stream) ChildShapes {
+    var result: ChildShapes = .{};
+    switch (choice) {
+        .literal, .constant => {},
+        .repeat => |times| result.append(
+            target.bits_per_elem,
+            target.count / times,
+        ),
+        .map_xor,
+        .map_add_mod,
+        .map_zigzag,
+        .map_gray,
+        .map_rotate_left,
+        .map_bit_reverse,
+        => result.append(target.bits_per_elem, target.count),
+        .scan_xor, .scan_add_mod => result.append(
+            target.bits_per_elem,
+            target.count - 1,
+        ),
+        .concat => |split| {
+            result.append(target.bits_per_elem, split);
+            result.append(target.bits_per_elem, target.count - split);
+        },
+        .merge_fields => |low_bits| {
+            result.append(low_bits, target.count);
+            result.append(target.bits_per_elem - low_bits, target.count);
+        },
+        .merge_float_fields => |dtype| {
+            const fields = dtype.floatFields().?;
+            result.append(1, target.count);
+            result.append(fields.exp, target.count);
+            result.append(fields.mant, target.count);
+        },
+        .merge_bit_planes => {
+            for (0..target.bits_per_elem) |_|
+                result.append(1, target.count);
+        },
+        .merge_byte_planes => {
+            const full_bytes = target.bits_per_elem / 8;
+            for (0..full_bytes) |_|
+                result.append(8, target.count);
+            if (target.bits_per_elem % 8 != 0)
+                result.append(target.bits_per_elem % 8, target.count);
+        },
+    }
+    return result;
+}
+
 pub const ChildTargets = struct {
     streams: []Stream,
 
@@ -339,10 +415,27 @@ pub fn childTargetStorageBytes(
     dtype: Dtype,
 ) (dsl.ValidationError || error{ InvalidChoice, IntegerOverflow })!usize {
     try validateTarget(target);
+    return childTargetStorageBytesImpl(choice, target, dtype, true);
+}
+
+pub fn childTargetStorageBytesForProposal(
+    choice: Choice,
+    target: Stream,
+    dtype: Dtype,
+) (dsl.ValidationError || error{ InvalidChoice, IntegerOverflow })!usize {
+    return childTargetStorageBytesImpl(choice, target, dtype, false);
+}
+
+fn childTargetStorageBytesImpl(
+    choice: Choice,
+    target: Stream,
+    dtype: Dtype,
+    verify_match: bool,
+) (dsl.ValidationError || error{ InvalidChoice, IntegerOverflow })!usize {
     const elem_bytes = target.elemBytes();
     return switch (choice) {
         .literal => 0,
-        .constant => |word| if (uniformWord(target) == word)
+        .constant => |word| if (!verify_match or uniformWord(target) == word)
             0
         else
             error.InvalidChoice,
@@ -350,9 +443,8 @@ pub fn childTargetStorageBytes(
             if (times < 2 or target.count == 0 or target.count % times != 0)
                 return error.InvalidChoice;
             const period = target.count / times;
-            for (period..target.count) |index|
-                if (target.getU32(index) != target.getU32(index % period))
-                    return error.InvalidChoice;
+            if (verify_match and !target.hasPeriod(period))
+                return error.InvalidChoice;
             break :blk std.math.mul(usize, period, elem_bytes) catch
                 return error.IntegerOverflow;
         },
@@ -399,16 +491,38 @@ pub fn childTargets(
     dtype: Dtype,
 ) ChildTargetError!ChildTargets {
     try validateTarget(target);
+    return childTargetsImpl(alloc, choice, target, dtype, true);
+}
 
+pub fn childTargetsForProposal(
+    alloc: Allocator,
+    choice: Choice,
+    target: Stream,
+    dtype: Dtype,
+) ChildTargetError!ChildTargets {
+    return childTargetsImpl(alloc, choice, target, dtype, false);
+}
+
+fn childTargetsImpl(
+    alloc: Allocator,
+    choice: Choice,
+    target: Stream,
+    dtype: Dtype,
+    verify_match: bool,
+) ChildTargetError!ChildTargets {
     return switch (choice) {
         .literal => emptyTargets(alloc),
         .constant => |word| blk: {
-            if (uniformWord(target) != word) return error.InvalidChoice;
+            if (verify_match and uniformWord(target) != word)
+                return error.InvalidChoice;
             break :blk emptyTargets(alloc);
         },
         .repeat => |times| blk: {
-            const period = (try decomposition.repeat(alloc, target, times)) orelse
-                return error.InvalidChoice;
+            const period = if (verify_match)
+                (try decomposition.repeat(alloc, target, times)) orelse
+                    return error.InvalidChoice
+            else
+                try repeatTargetForProposal(alloc, target, times);
             break :blk oneTarget(alloc, period);
         },
         .concat => |split| concatTargets(alloc, target, split),
@@ -447,6 +561,23 @@ pub fn childTargets(
             choice.mergeOperation().?,
         ),
     };
+}
+
+fn repeatTargetForProposal(
+    alloc: Allocator,
+    target: Stream,
+    times: u32,
+) (Allocator.Error || dsl.ValidationError || error{InvalidChoice})!Stream {
+    if (times < 2 or target.count == 0 or target.count % times != 0)
+        return error.InvalidChoice;
+    const period_count = target.count / times;
+    const period = try Stream.initUninitialized(
+        alloc,
+        period_count,
+        target.bits_per_elem,
+    );
+    @memcpy(period.data, target.data[0..period.data.len]);
+    return period;
 }
 
 fn emptyTargets(alloc: Allocator) Allocator.Error!ChildTargets {
@@ -545,13 +676,16 @@ fn copyRange(
     start: usize,
     end: usize,
 ) (Allocator.Error || dsl.ValidationError)!Stream {
-    var output = try Stream.initUninitialized(
+    const output = try Stream.initUninitialized(
         alloc,
         end - start,
         target.bits_per_elem,
     );
-    for (start..end, 0..) |source, destination|
-        output.setU32(destination, target.getU32(source));
+    const elem_bytes = target.elemBytes();
+    @memcpy(
+        output.data,
+        target.data[start * elem_bytes .. end * elem_bytes],
+    );
     return output;
 }
 
@@ -688,14 +822,7 @@ fn minimalRepeatTimes(target: Stream, requested_period: usize) ?u32 {
     );
     for (1..limit + 1) |period| {
         if (target.count % period != 0) continue;
-        var exact = true;
-        for (period..target.count) |index| {
-            if (target.getU32(index) != target.getU32(index % period)) {
-                exact = false;
-                break;
-            }
-        }
-        if (!exact) continue;
+        if (!target.hasPeriod(period)) continue;
         return std.math.cast(u32, target.count / period);
     }
     return null;
@@ -703,10 +830,7 @@ fn minimalRepeatTimes(target: Stream, requested_period: usize) ?u32 {
 
 fn uniformWord(target: Stream) ?u32 {
     if (target.count == 0) return null;
-    const word = target.getU32(0);
-    for (1..target.count) |index|
-        if (target.getU32(index) != word) return null;
-    return word;
+    return if (target.isUniform()) target.getU32(0) else null;
 }
 
 fn bounded(requested: usize, hard_max: usize) usize {

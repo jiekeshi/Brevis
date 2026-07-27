@@ -12,9 +12,9 @@ const types = @import("types.zig");
 const Allocator = std.mem.Allocator;
 
 pub const MAGIC = [_]u8{ 'B', 'R', 'T', 'A' };
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 const RECORD_TAG: u8 = 1;
-const CHECKSUM_BYTES = std.crypto.hash.sha2.Sha256.digest_length;
+pub const CHECKSUM_BYTES: usize = 8;
 const MIN_RECORD_BODY_BYTES = 1 + 1 + 1 + 1 + 1 + CHECKSUM_BYTES;
 const MIN_FRAMED_RECORD_BYTES = 1 + MIN_RECORD_BODY_BYTES;
 
@@ -115,6 +115,22 @@ pub const TensorInput = struct {
     tensor_program: dsl.TensorProgram,
 };
 
+pub const PreparedTensorRecord = struct {
+    prefix: []u8,
+    bytecode: []const u8,
+    checksum: [CHECKSUM_BYTES]u8,
+
+    pub fn encodedLen(self: PreparedTensorRecord) usize {
+        return self.prefix.len + self.bytecode.len + self.checksum.len;
+    }
+
+    pub fn deinit(self: *PreparedTensorRecord, alloc: Allocator) void {
+        alloc.free(self.prefix);
+        self.prefix = &.{};
+        self.bytecode = &.{};
+    }
+};
+
 /// Fully owned convenience result. It remains valid after the encoded archive
 /// byte slice is released.
 pub const Parsed = struct {
@@ -163,7 +179,7 @@ pub fn encodeTensorRecord(
         alloc,
         name,
         tensor_program,
-        sha256(decoded.data),
+        xxh3(decoded.data),
     );
 }
 
@@ -187,7 +203,7 @@ pub fn encodeTensorRecordForSource(
         alloc,
         name,
         tensor_program,
-        sha256(source),
+        xxh3(source),
     );
 }
 
@@ -199,6 +215,24 @@ pub fn encodePreparedTensorRecordForSource(
     bytecode: []const u8,
     source: []const u8,
 ) ![]u8 {
+    var prepared = try prepareTensorRecordForSource(
+        alloc,
+        name,
+        tensor_program,
+        bytecode,
+        source,
+    );
+    defer prepared.deinit(alloc);
+    return materializePreparedTensorRecord(alloc, prepared);
+}
+
+pub fn prepareTensorRecordForSource(
+    alloc: Allocator,
+    name: []const u8,
+    tensor_program: dsl.TensorProgram,
+    bytecode: []const u8,
+    source: []const u8,
+) !PreparedTensorRecord {
     const tensor_type = try tensor_program.validate();
     const expected_bytes = std.math.mul(
         usize,
@@ -206,12 +240,12 @@ pub fn encodePreparedTensorRecordForSource(
         tensor_type.dtype.elemSize(),
     ) catch return error.IntegerOverflow;
     if (source.len != expected_bytes) return error.TensorLengthMismatch;
-    return encodeTensorRecordWithBytecode(
+    return prepareTensorRecordWithChecksum(
         alloc,
         name,
         tensor_program,
         bytecode,
-        sha256(source),
+        xxh3(source),
     );
 }
 
@@ -240,6 +274,38 @@ fn encodeTensorRecordWithBytecode(
     bytecode: []const u8,
     checksum: [CHECKSUM_BYTES]u8,
 ) ![]u8 {
+    var prepared = try prepareTensorRecordWithChecksum(
+        alloc,
+        name,
+        tensor_program,
+        bytecode,
+        checksum,
+    );
+    defer prepared.deinit(alloc);
+    return materializePreparedTensorRecord(alloc, prepared);
+}
+
+fn materializePreparedTensorRecord(
+    alloc: Allocator,
+    prepared: PreparedTensorRecord,
+) Allocator.Error![]u8 {
+    const output = try alloc.alloc(u8, prepared.encodedLen());
+    var offset: usize = 0;
+    @memcpy(output[offset..][0..prepared.prefix.len], prepared.prefix);
+    offset += prepared.prefix.len;
+    @memcpy(output[offset..][0..prepared.bytecode.len], prepared.bytecode);
+    offset += prepared.bytecode.len;
+    @memcpy(output[offset..][0..prepared.checksum.len], &prepared.checksum);
+    return output;
+}
+
+fn prepareTensorRecordWithChecksum(
+    alloc: Allocator,
+    name: []const u8,
+    tensor_program: dsl.TensorProgram,
+    bytecode: []const u8,
+    checksum: [CHECKSUM_BYTES]u8,
+) !PreparedTensorRecord {
     var body_len: usize = 2;
     body_len = try addSize(body_len, uleb128Size(try usizeToU64(name.len)));
     body_len = try addSize(body_len, name.len);
@@ -256,16 +322,17 @@ fn encodeTensorRecordWithBytecode(
     body_len = try addSize(body_len, bytecode.len);
     body_len = try addSize(body_len, checksum.len);
 
-    var frame: std.ArrayList(u8) = .empty;
-    errdefer frame.deinit(alloc);
-    try frame.ensureTotalCapacity(
-        alloc,
-        try addSize(
-            uleb128Size(try usizeToU64(body_len)),
-            body_len,
-        ),
+    const prefix_len = try addSize(
+        uleb128Size(try usizeToU64(body_len)),
+        body_len - bytecode.len - checksum.len,
     );
-    var frame_emitter = Emitter{ .allocator = alloc, .output = &frame };
+    var prefix: std.ArrayList(u8) = .empty;
+    errdefer prefix.deinit(alloc);
+    try prefix.ensureTotalCapacity(
+        alloc,
+        prefix_len,
+    );
+    var frame_emitter = Emitter{ .allocator = alloc, .output = &prefix };
     try frame_emitter.writeUleb128(try usizeToU64(body_len));
     try frame_emitter.writeByte(RECORD_TAG);
     try frame_emitter.writeUleb128(try usizeToU64(name.len));
@@ -275,9 +342,12 @@ fn encodeTensorRecordWithBytecode(
     for (tensor_program.shape) |dimension|
         try frame_emitter.writeUleb128(dimension);
     try frame_emitter.writeUleb128(try usizeToU64(bytecode.len));
-    try frame_emitter.writeAll(bytecode);
-    try frame_emitter.writeAll(&checksum);
-    return frame.toOwnedSlice(alloc);
+    std.debug.assert(prefix.items.len == prefix_len);
+    return .{
+        .prefix = try prefix.toOwnedSlice(alloc),
+        .bytecode = bytecode,
+        .checksum = checksum,
+    };
 }
 
 /// Convenience builder over the two streaming encoding operations.
@@ -452,7 +522,7 @@ pub fn executeVerified(
 ) ArchiveError!types.Stream {
     var decoded = try interpreter.executeTensor(alloc, record.tensor_program);
     errdefer decoded.deinit(alloc);
-    if (!std.mem.eql(u8, &sha256(decoded.data), &record.checksum))
+    if (!std.mem.eql(u8, &xxh3(decoded.data), &record.checksum))
         return error.ChecksumMismatch;
     return decoded;
 }
@@ -464,7 +534,7 @@ fn executeVerifiedForRecordLifetime(
     switch (record.tensor_program.root.kind) {
         .literal => |literal| {
             if (record.tensor_program.root.children.len == 0) {
-                if (!std.mem.eql(u8, &sha256(literal.data), &record.checksum))
+                if (!std.mem.eql(u8, &xxh3(literal.data), &record.checksum))
                     return error.ChecksumMismatch;
                 var view = literal;
                 view.owns_data = false;
@@ -582,11 +652,14 @@ fn validateSafetensorsPrefix(prefix: []const u8) ArchiveError!void {
     if (declared != prefix.len - 8) return error.InvalidSafetensorsPrefix;
 }
 
-fn sha256(bytes: []const u8) [CHECKSUM_BYTES]u8 {
-    var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update(bytes);
+fn xxh3(bytes: []const u8) [CHECKSUM_BYTES]u8 {
     var digest: [CHECKSUM_BYTES]u8 = undefined;
-    hash.final(&digest);
+    std.mem.writeInt(
+        u64,
+        &digest,
+        std.hash.XxHash3.hash(0, bytes),
+        .little,
+    );
     return digest;
 }
 

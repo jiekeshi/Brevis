@@ -1,6 +1,10 @@
 const std = @import("std");
 const dsl = @import("dsl.zig");
+const grammar_prior = @import("grammar_prior.zig");
+const paper_calibration = @import("paper_calibration.zig");
 const pipeline = @import("paper_pipeline.zig");
+const safetensors = @import("safetensors.zig");
+const synthesizer = @import("synthesizer.zig");
 const tensor_archive = @import("tensor_archive.zig");
 
 const multi_header =
@@ -120,6 +124,203 @@ test "multiple whole tensors round trip byte-for-byte with one record each" {
     );
     defer alloc.free(restored);
     try std.testing.expectEqualSlices(u8, source, restored);
+}
+
+test "compression learns a checkpoint-local prior unless one is supplied" {
+    const alloc = std.testing.allocator;
+    try std.testing.expectEqual(
+        paper_calibration.DEFAULT_TENSORS,
+        (pipeline.CompressOptions{}).max_calibration_tensors,
+    );
+    const header =
+        \\{"first":{"dtype":"U8","shape":[8],"data_offsets":[0,8]},"second":{"dtype":"U8","shape":[8],"data_offsets":[8,16]}}
+    ;
+    const source = try makeSafetensors(
+        alloc,
+        header,
+        &.{ 7, 7, 7, 7, 7, 7, 7, 7, 1, 2, 1, 2, 1, 2, 1, 2 },
+    );
+    defer alloc.free(source);
+    const synthesis = synthesizer.Options{
+        .max_expansions = 16,
+        .max_nodes = 8,
+        .grammar_options = .{ .max_depth = 1 },
+    };
+
+    const calibration_source = try alloc.dupe(u8, source);
+    var loaded = try safetensors.loadFromBytes(alloc, calibration_source);
+    defer loaded.deinit(alloc);
+    var trained = try paper_calibration.train(alloc, loaded.tensors, .{
+        .max_tensors = 1,
+        .synthesis = synthesis,
+    });
+    defer trained.deinit(alloc);
+    try std.testing.expect(!trained.prior.isEmpty());
+
+    var automatic = try pipeline.compressBytes(alloc, source, .{
+        .synthesis = synthesis,
+        .max_calibration_tensors = 1,
+    });
+    defer automatic.deinit(alloc);
+
+    var guided_synthesis = synthesis;
+    guided_synthesis.rule_model = &trained.prior;
+    var explicit = try pipeline.compressBytes(alloc, source, .{
+        .synthesis = guided_synthesis,
+        .max_calibration_tensors = 0,
+    });
+    defer explicit.deinit(alloc);
+    try std.testing.expectEqualSlices(
+        u8,
+        explicit.archive_bytes,
+        automatic.archive_bytes,
+    );
+    for (explicit.tensors, automatic.tensors) |expected, actual| {
+        try std.testing.expectEqual(expected.expanded, actual.expanded);
+        try std.testing.expectEqual(
+            expected.completed_candidates,
+            actual.completed_candidates,
+        );
+    }
+
+    var invalid_prior: grammar_prior.Prior = .{
+        .config = .{ .learned_denominator = 0 },
+    };
+    defer invalid_prior.deinit(alloc);
+    var invalid_synthesis = synthesis;
+    invalid_synthesis.rule_model = &invalid_prior;
+    try std.testing.expectError(
+        error.InvalidConfig,
+        pipeline.compressBytes(alloc, source, .{
+            .synthesis = invalid_synthesis,
+            .max_calibration_tensors = 0,
+        }),
+    );
+}
+
+test "one expansion uses a learned PHOG completion instead of the float seed" {
+    const alloc = std.testing.allocator;
+    const header =
+        \\{"weights":{"dtype":"F32","shape":[256],"data_offsets":[0,1024]}}
+    ;
+    var data: [1024]u8 = undefined;
+    for (0..256) |index| {
+        const word: u32 = if (index & 1 == 0) 0x3f80_0000 else 0xbf80_0000;
+        std.mem.writeInt(u32, data[index * 4 ..][0..4], word, .little);
+    }
+    const source = try makeSafetensors(alloc, header, &data);
+    defer alloc.free(source);
+
+    const requested = synthesizer.Options{
+        .max_expansions = 1,
+        .max_nodes = 8,
+        .grammar_options = .{
+            .max_depth = 1,
+            .max_repeat_period = 8,
+            .max_concat_splits = 0,
+            .max_map_constants = 0,
+            .max_rotations = 0,
+            .max_field_splits = 0,
+        },
+    };
+    var automatic = try pipeline.compressBytes(alloc, source, .{
+        .synthesis = requested,
+        .max_calibration_tensors = 1,
+    });
+    defer automatic.deinit(alloc);
+
+    const calibration_source = try alloc.dupe(u8, source);
+    var loaded = try safetensors.loadFromBytes(alloc, calibration_source);
+    defer loaded.deinit(alloc);
+    var teacher_options = requested;
+    teacher_options.max_expansions = 6;
+    teacher_options.seed_float_fields = true;
+    var trained = try paper_calibration.train(alloc, loaded.tensors, .{
+        .max_tensors = 1,
+        .synthesis = teacher_options,
+    });
+    defer trained.deinit(alloc);
+
+    var guided_options = requested;
+    guided_options.seed_float_fields = false;
+    guided_options.rule_model = &trained.prior;
+    var explicit = try pipeline.compressBytes(alloc, source, .{
+        .synthesis = guided_options,
+        .max_calibration_tensors = 0,
+    });
+    defer explicit.deinit(alloc);
+
+    try std.testing.expectEqualSlices(
+        u8,
+        explicit.archive_bytes,
+        automatic.archive_bytes,
+    );
+    var parsed = try tensor_archive.parseStructural(
+        alloc,
+        automatic.archive_bytes,
+        .{},
+    );
+    defer parsed.deinit(alloc);
+    try std.testing.expect(switch (parsed.records[0].tensor_program.root.kind) {
+        .repeat => true,
+        else => false,
+    });
+}
+
+test "one-expansion PHOG learns float fields from a seeded teacher" {
+    const alloc = std.testing.allocator;
+    const header =
+        \\{"weights":{"dtype":"F32","shape":[256],"data_offsets":[0,1024]}}
+    ;
+    var data: [1024]u8 = undefined;
+    for (0..256) |index| {
+        const sign: u32 = @intCast((index & 1) << 31);
+        const mantissa: u32 = @intCast(index * 7919);
+        std.mem.writeInt(
+            u32,
+            data[index * 4 ..][0..4],
+            sign | 0x3f80_0000 | mantissa,
+            .little,
+        );
+    }
+    const source = try makeSafetensors(alloc, header, &data);
+    defer alloc.free(source);
+
+    var compressed = try pipeline.compressBytes(alloc, source, .{
+        .synthesis = .{
+            .max_expansions = 1,
+            .max_nodes = 4,
+            .grammar_options = .{
+                .max_depth = 1,
+                .max_repeat_period = 0,
+                .max_concat_splits = 0,
+                .max_map_constants = 0,
+                .max_rotations = 0,
+                .max_field_splits = 0,
+            },
+        },
+        .max_calibration_tensors = 1,
+    });
+    defer compressed.deinit(alloc);
+
+    var parsed = try tensor_archive.parseStructural(
+        alloc,
+        compressed.archive_bytes,
+        .{},
+    );
+    defer parsed.deinit(alloc);
+    try std.testing.expect(switch (parsed.records[0].tensor_program.root.kind) {
+        .merge => |operation| switch (operation) {
+            .float_fields => true,
+            else => false,
+        },
+        else => false,
+    });
+    try std.testing.expectEqual(@as(usize, 1), compressed.tensors[0].expanded);
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        compressed.tensors[0].completed_candidates,
+    );
 }
 
 test "zero synthesis budget stores one exact Lit for the complete tensor" {
@@ -318,7 +519,7 @@ test "pipeline enforces source, archive, and aggregate output limits" {
     );
 }
 
-test "file APIs atomically compress decompress and verify complete tensors" {
+test "file APIs compress decompress and verify complete tensors" {
     const alloc = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -360,6 +561,24 @@ test "file APIs atomically compress decompress and verify complete tensors" {
         .{&tmp.sub_path},
     );
     defer alloc.free(wrong_source_path);
+    const source_dot_alias = try std.fmt.allocPrint(
+        alloc,
+        ".zig-cache/tmp/{s}/./source.safetensors",
+        .{&tmp.sub_path},
+    );
+    defer alloc.free(source_dot_alias);
+    const source_hardlink = try std.fmt.allocPrint(
+        alloc,
+        ".zig-cache/tmp/{s}/source-hardlink.safetensors",
+        .{&tmp.sub_path},
+    );
+    defer alloc.free(source_hardlink);
+    const archive_hardlink = try std.fmt.allocPrint(
+        alloc,
+        ".zig-cache/tmp/{s}/archive-hardlink.brta",
+        .{&tmp.sub_path},
+    );
+    defer alloc.free(archive_hardlink);
 
     const data = [_]u8{
         0x00, 0x00, 0x80, 0x3f,
@@ -374,11 +593,53 @@ test "file APIs atomically compress decompress and verify complete tensors" {
     const source = try makeSafetensors(alloc, multi_header, &data);
     defer alloc.free(source);
     try writeFile(io, source_path, source);
+    try std.testing.expectError(
+        error.InputOutputPathConflict,
+        pipeline.compressFile(
+            alloc,
+            io,
+            source_path,
+            source_path,
+            .{},
+        ),
+    );
+    const preserved_source = try readFile(alloc, io, source_path);
+    defer alloc.free(preserved_source);
+    try std.testing.expectEqualSlices(u8, source, preserved_source);
+    try std.testing.expectError(
+        error.InputOutputPathConflict,
+        pipeline.compressFile(
+            alloc,
+            io,
+            source_path,
+            source_dot_alias,
+            .{},
+        ),
+    );
+    try std.Io.Dir.hardLink(
+        .cwd(),
+        source_path,
+        .cwd(),
+        source_hardlink,
+        io,
+        .{},
+    );
+    try std.testing.expectError(
+        error.InputOutputPathConflict,
+        pipeline.compressFile(
+            alloc,
+            io,
+            source_path,
+            source_hardlink,
+            .{},
+        ),
+    );
+
     try writeFile(io, archive_path, "stale archive");
     var serial = try pipeline.compressBytes(
         alloc,
         source,
-        .{ .synthesis = .{ .max_expansions = 0 } },
+        .{ .synthesis = .{ .max_expansions = 1 } },
     );
     defer serial.deinit(alloc);
 
@@ -388,7 +649,7 @@ test "file APIs atomically compress decompress and verify complete tensors" {
         source_path,
         archive_path,
         .{
-            .synthesis = .{ .max_expansions = 0 },
+            .synthesis = .{ .max_expansions = 1 },
             .workers = 2,
         },
     );
@@ -412,18 +673,14 @@ test "file APIs atomically compress decompress and verify complete tensors" {
         serial.archive_bytes,
         archive_bytes,
     );
-
     try std.testing.expectError(
-        error.ArchiveLimitExceeded,
-        pipeline.compressFile(
+        error.InputOutputPathConflict,
+        pipeline.decompressFile(
             alloc,
             io,
-            source_path,
             archive_path,
-            .{
-                .synthesis = .{ .max_expansions = 0 },
-                .max_archive_bytes = 1,
-            },
+            archive_path,
+            .{},
         ),
     );
     const preserved_archive = try readFile(alloc, io, archive_path);
@@ -432,6 +689,31 @@ test "file APIs atomically compress decompress and verify complete tensors" {
         u8,
         archive_bytes,
         preserved_archive,
+    );
+    try std.Io.Dir.hardLink(
+        .cwd(),
+        archive_path,
+        .cwd(),
+        archive_hardlink,
+        io,
+        .{},
+    );
+    try std.testing.expectError(
+        error.InputOutputPathConflict,
+        pipeline.decompressFile(
+            alloc,
+            io,
+            archive_path,
+            archive_hardlink,
+            .{},
+        ),
+    );
+    const preserved_hardlink = try readFile(alloc, io, archive_hardlink);
+    defer alloc.free(preserved_hardlink);
+    try std.testing.expectEqualSlices(
+        u8,
+        archive_bytes,
+        preserved_hardlink,
     );
 
     const verified = try pipeline.verifyFile(
@@ -482,7 +764,6 @@ test "file APIs atomically compress decompress and verify complete tensors" {
         .{},
     );
     try writeFile(io, corrupt_path, archive_bytes[0..truncated_at]);
-    try writeFile(io, failed_output_path, "keep me");
     try std.testing.expectError(
         error.Truncated,
         pipeline.decompressFile(
@@ -493,23 +774,11 @@ test "file APIs atomically compress decompress and verify complete tensors" {
             .{ .workers = 2 },
         ),
     );
-    const preserved_truncated = try readFile(
-        alloc,
-        io,
-        failed_output_path,
-    );
-    defer alloc.free(preserved_truncated);
-    try std.testing.expectEqualSlices(
-        u8,
-        "keep me",
-        preserved_truncated,
-    );
 
     const corrupted = try alloc.dupe(u8, archive_bytes);
     defer alloc.free(corrupted);
     corrupted[corrupted.len - 1] ^= 0x80;
     try writeFile(io, corrupt_path, corrupted);
-    try writeFile(io, failed_output_path, "keep me");
     try std.testing.expectError(
         error.ChecksumMismatch,
         pipeline.decompressFile(
@@ -520,7 +789,4 @@ test "file APIs atomically compress decompress and verify complete tensors" {
             .{},
         ),
     );
-    const preserved = try readFile(alloc, io, failed_output_path);
-    defer alloc.free(preserved);
-    try std.testing.expectEqualSlices(u8, "keep me", preserved);
 }

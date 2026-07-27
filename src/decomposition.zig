@@ -5,6 +5,7 @@
 //! the supplied target exactly.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const dsl = @import("dsl.zig");
 const semantics = @import("semantics.zig");
 const types = @import("types.zig");
@@ -138,6 +139,24 @@ pub fn merge(
         initialized += 1;
     }
 
+    if (builtin.cpu.arch.endian() == .little) {
+        switch (operation) {
+            .float_fields => |dtype| {
+                splitFloatFields(target, children, dtype.floatFields().?);
+            },
+            .fields => |low_bits| {
+                splitFields(target, children, low_bits);
+            },
+            .bit_planes => {
+                splitPlanes(target, children, 1);
+            },
+            .byte_planes => {
+                splitPlanes(target, children, 8);
+            },
+        }
+        return children;
+    }
+
     switch (operation) {
         .float_fields => |dtype| {
             const fields = dtype.floatFields().?;
@@ -162,6 +181,227 @@ pub fn merge(
         },
     }
     return children;
+}
+
+fn splitFloatFields(
+    target: Stream,
+    children: []Stream,
+    fields: types.Dtype.FloatFields,
+) void {
+    switch (target.elemBytes()) {
+        1 => splitFloatFieldsTyped(u8, u8, target, children, fields),
+        2 => switch (children[2].elemBytes()) {
+            1 => splitFloatFieldsTyped(u16, u8, target, children, fields),
+            else => splitFloatFieldsTyped(u16, u16, target, children, fields),
+        },
+        else => splitFloatFieldsTyped(u32, u32, target, children, fields),
+    }
+}
+
+fn splitFloatFieldsTyped(
+    comptime Source: type,
+    comptime Mantissa: type,
+    target: Stream,
+    children: []Stream,
+    fields: types.Dtype.FloatFields,
+) void {
+    const lanes = std.simd.suggestVectorLength(u8) orelse 16;
+    const SourceVector = @Vector(lanes, Source);
+    const ShiftVector = @Vector(lanes, std.math.Log2Int(Source));
+    const exponent_mask: SourceVector = @splat(@intCast(mask(fields.exp)));
+    const mantissa_mask: SourceVector = @splat(@intCast(mask(fields.mant)));
+    const sign_shift: ShiftVector = @splat(@intCast(fields.total - 1));
+    const exponent_shift: ShiftVector = @splat(@intCast(fields.mant));
+    var i: usize = 0;
+
+    while (i + lanes <= target.count) : (i += lanes) {
+        const words = loadVector(Source, lanes, target.data, i);
+        storeVector(Source, u8, lanes, words >> sign_shift, children[0].data, i);
+        storeVector(
+            Source,
+            u8,
+            lanes,
+            (words >> exponent_shift) & exponent_mask,
+            children[1].data,
+            i,
+        );
+        storeVector(
+            Source,
+            Mantissa,
+            lanes,
+            words & mantissa_mask,
+            children[2].data,
+            i,
+        );
+    }
+
+    while (i < target.count) : (i += 1) {
+        const word = target.getU32(i);
+        children[0].setU32(i, word >> @intCast(fields.total - 1));
+        children[1].setU32(
+            i,
+            (word >> @intCast(fields.mant)) & mask(fields.exp),
+        );
+        children[2].setU32(i, word & mask(fields.mant));
+    }
+}
+
+fn splitFields(target: Stream, children: []Stream, low_bits: u8) void {
+    switch (target.elemBytes()) {
+        1 => splitFieldsSource(u8, target, children, low_bits),
+        2 => splitFieldsSource(u16, target, children, low_bits),
+        else => splitFieldsSource(u32, target, children, low_bits),
+    }
+}
+
+fn splitFieldsSource(
+    comptime Source: type,
+    target: Stream,
+    children: []Stream,
+    low_bits: u8,
+) void {
+    switch (children[0].elemBytes()) {
+        1 => switch (children[1].elemBytes()) {
+            1 => splitFieldsTyped(Source, u8, u8, target, children, low_bits),
+            2 => splitFieldsTyped(Source, u8, u16, target, children, low_bits),
+            else => splitFieldsTyped(Source, u8, u32, target, children, low_bits),
+        },
+        2 => switch (children[1].elemBytes()) {
+            1 => splitFieldsTyped(Source, u16, u8, target, children, low_bits),
+            2 => splitFieldsTyped(Source, u16, u16, target, children, low_bits),
+            else => splitFieldsTyped(Source, u16, u32, target, children, low_bits),
+        },
+        else => switch (children[1].elemBytes()) {
+            1 => splitFieldsTyped(Source, u32, u8, target, children, low_bits),
+            2 => splitFieldsTyped(Source, u32, u16, target, children, low_bits),
+            else => splitFieldsTyped(Source, u32, u32, target, children, low_bits),
+        },
+    }
+}
+
+fn splitFieldsTyped(
+    comptime Source: type,
+    comptime Low: type,
+    comptime High: type,
+    target: Stream,
+    children: []Stream,
+    low_bits: u8,
+) void {
+    const lanes = std.simd.suggestVectorLength(u8) orelse 16;
+    const SourceVector = @Vector(lanes, Source);
+    const ShiftVector = @Vector(lanes, std.math.Log2Int(Source));
+    const low_mask: SourceVector = @splat(@intCast(mask(low_bits)));
+    const high_mask: SourceVector = @splat(@intCast(mask(
+        target.bits_per_elem - low_bits,
+    )));
+    const shift: ShiftVector = @splat(@intCast(low_bits));
+    var i: usize = 0;
+
+    while (i + lanes <= target.count) : (i += lanes) {
+        const words = loadVector(Source, lanes, target.data, i);
+        storeVector(Source, Low, lanes, words & low_mask, children[0].data, i);
+        storeVector(
+            Source,
+            High,
+            lanes,
+            (words >> shift) & high_mask,
+            children[1].data,
+            i,
+        );
+    }
+
+    while (i < target.count) : (i += 1) {
+        const word = target.getU32(i);
+        children[0].setU32(i, word & mask(low_bits));
+        children[1].setU32(
+            i,
+            (word >> @intCast(low_bits)) &
+                mask(target.bits_per_elem - low_bits),
+        );
+    }
+}
+
+fn splitPlanes(target: Stream, children: []Stream, comptime step: u8) void {
+    if (target.bits_per_elem == 8 and children.len == 1 and step == 8) {
+        @memcpy(children[0].data, target.data);
+        return;
+    }
+    switch (target.elemBytes()) {
+        1 => splitPlanesTyped(u8, target, children, step),
+        2 => splitPlanesTyped(u16, target, children, step),
+        else => splitPlanesTyped(u32, target, children, step),
+    }
+}
+
+fn splitPlanesTyped(
+    comptime Source: type,
+    target: Stream,
+    children: []Stream,
+    comptime step: u8,
+) void {
+    const lanes = std.simd.suggestVectorLength(u8) orelse 16;
+    const SourceVector = @Vector(lanes, Source);
+    const ShiftVector = @Vector(lanes, std.math.Log2Int(Source));
+    var i: usize = 0;
+
+    while (i + lanes <= target.count) : (i += lanes) {
+        const words = loadVector(Source, lanes, target.data, i);
+        for (children, 0..) |child, plane| {
+            const shift: ShiftVector = @splat(@intCast(plane * step));
+            const value_mask: SourceVector = @splat(@intCast(mask(
+                child.bits_per_elem,
+            )));
+            storeVector(
+                Source,
+                u8,
+                lanes,
+                (words >> shift) & value_mask,
+                child.data,
+                i,
+            );
+        }
+    }
+
+    while (i < target.count) : (i += 1) {
+        const word = target.getU32(i);
+        for (children, 0..) |*child, plane| {
+            child.setU32(
+                i,
+                (word >> @intCast(plane * step)) & mask(child.bits_per_elem),
+            );
+        }
+    }
+}
+
+fn loadVector(
+    comptime T: type,
+    comptime lanes: comptime_int,
+    data: []const u8,
+    element_index: usize,
+) @Vector(lanes, T) {
+    const Vector = @Vector(lanes, T);
+    const offset = element_index * @sizeOf(T);
+    return std.mem.bytesToValue(
+        Vector,
+        data[offset..][0..@sizeOf(Vector)],
+    );
+}
+
+fn storeVector(
+    comptime Source: type,
+    comptime Dest: type,
+    comptime lanes: comptime_int,
+    values: @Vector(lanes, Source),
+    data: []u8,
+    element_index: usize,
+) void {
+    const Vector = @Vector(lanes, Dest);
+    var narrowed: Vector = if (Source == Dest) values else @truncate(values);
+    const offset = element_index * @sizeOf(Dest);
+    @memcpy(
+        data[offset..][0..@sizeOf(Vector)],
+        std.mem.asBytes(&narrowed),
+    );
 }
 
 fn mask(bits: u8) u32 {

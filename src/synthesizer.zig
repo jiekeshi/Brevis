@@ -17,7 +17,7 @@ const Dtype = types.Dtype;
 const Stream = types.Stream;
 
 pub const Options = struct {
-    max_expansions: usize = 512,
+    max_expansions: usize = 1,
     max_nodes: usize = 64,
     seed_float_fields: bool = true,
     /// Maximum total storage of simultaneously open target streams. Choices
@@ -53,8 +53,27 @@ pub const Result = struct {
     }
 };
 
+const ChoicePath = struct {
+    parent: ?*const ChoicePath,
+    choice: grammar.Choice,
+};
+
+fn extendChoicePath(
+    path_alloc: Allocator,
+    parent: ?*const ChoicePath,
+    choice: grammar.Choice,
+) Allocator.Error!*const ChoicePath {
+    const node = try path_alloc.create(ChoicePath);
+    node.* = .{
+        .parent = parent,
+        .choice = choice,
+    };
+    return node;
+}
+
 const Partial = struct {
-    choices: []grammar.Choice,
+    path: ?*const ChoicePath,
+    choice_count: usize,
     holes: usize,
     /// g(s): rule cost already paid by filled productions.
     grammar_cost: u64,
@@ -65,11 +84,6 @@ const Partial = struct {
     fixed_bytes: usize,
     size_lower_bound: usize,
     serial: u64,
-
-    fn deinit(self: *Partial, alloc: Allocator) void {
-        alloc.free(self.choices);
-        self.choices = &.{};
-    }
 };
 
 fn comparePartial(_: void, left: Partial, right: Partial) std.math.Order {
@@ -90,11 +104,12 @@ const Hole = struct {
 };
 
 const ContextBuildCounter = struct {
-    var value: usize = 0;
+    var value: std.atomic.Value(usize) = .init(0);
 };
 
 fn contextForHole(hole: Hole, dtype: Dtype) grammar_prior.Context {
-    if (builtin.is_test) ContextBuildCounter.value += 1;
+    if (builtin.is_test)
+        _ = ContextBuildCounter.value.fetchAdd(1, .monotonic);
     return grammar_prior.Context.fromTarget(
         hole.target,
         dtype,
@@ -106,16 +121,17 @@ fn contextForHole(hole: Hole, dtype: Dtype) grammar_prior.Context {
 
 pub const testing = if (builtin.is_test) struct {
     pub fn resetContextBuildCount() void {
-        ContextBuildCounter.value = 0;
+        ContextBuildCounter.value.store(0, .monotonic);
     }
 
     pub fn contextBuildCount() usize {
-        return ContextBuildCounter.value;
+        return ContextBuildCounter.value.load(.monotonic);
     }
 } else struct {};
 
 const OpenHoles = struct {
     items: std.ArrayList(Hole) = .empty,
+    storage_bytes: usize = 0,
 
     fn deinit(self: *OpenHoles, alloc: Allocator) void {
         for (self.items.items) |*hole| hole.target.deinit(alloc);
@@ -193,15 +209,17 @@ fn synthesizeImpl(
     var used_literal_fallback = true;
     var completed_candidates: usize = 0;
     var expanded: usize = 0;
-    var expansion_cutoff = false;
+    var cutoff_size_lower_bound: usize = std.math.maxInt(usize);
+    var rollout_frontier: ?Partial = null;
+    var shallow_float_fields_evaluated = false;
 
     if (try shallowFloatFieldsCandidate(alloc, target, dtype, options)) |candidate_value| {
+        shallow_float_fields_evaluated = true;
         var candidate = candidate_value;
         var candidate_owned = true;
         defer if (candidate_owned) candidate.deinit(alloc);
-        const candidate_bytes = try exactSerializedSize(
+        const candidate_bytes = try program_format.serializedSize(
             alloc,
-            target,
             candidate,
         );
         completed_candidates += 1;
@@ -214,17 +232,13 @@ fn synthesizeImpl(
         }
     }
 
+    var path_arena = std.heap.ArenaAllocator.init(alloc);
+    defer path_arena.deinit();
+    const path_alloc = path_arena.allocator();
     var queue = Queue.initContext({});
-    defer {
-        while (queue.pop()) |partial_value| {
-            var partial = partial_value;
-            partial.deinit(alloc);
-        }
-        queue.deinit(alloc);
-    }
+    defer queue.deinit(alloc);
 
     var serial: u64 = 0;
-    const initial_choices = try alloc.alloc(grammar.Choice, 0);
     var relaxed_heuristic = try RelaxedGrammarHeuristic.init(
         alloc,
         dtype,
@@ -237,7 +251,8 @@ fn synthesizeImpl(
         0,
     );
     try queue.push(alloc, .{
-        .choices = initial_choices,
+        .path = null,
+        .choice_count = 0,
         .holes = 1,
         .grammar_cost = 0,
         .priority_cost = initial_heuristic,
@@ -247,32 +262,33 @@ fn synthesizeImpl(
     });
 
     while (queue.count() > 0) {
-        var partial = queue.pop().?;
-        defer partial.deinit(alloc);
+        const partial = queue.pop().?;
 
         if (partial.size_lower_bound >= best_bytes) continue;
 
         if (partial.holes == 0) {
-            if (isRootLiteral(partial.choices)) {
+            if (isRootLiteral(partial.path, partial.choice_count)) {
                 completed_candidates += 1;
                 continue;
             }
+            const choices = try materializeChoices(
+                alloc,
+                partial.path,
+                partial.choice_count,
+            );
+            defer alloc.free(choices);
             var candidate = try buildProgram(
                 alloc,
-                partial.choices,
+                choices,
                 target,
                 dtype,
             );
             var candidate_owned = true;
             defer if (candidate_owned) candidate.deinit(alloc);
 
-            // Complete states are independently checked. The decomposition
-            // contract makes failures exceptional, but correctness does not
-            // rely on trusting proposal code.
             completed_candidates += 1;
-            const candidate_bytes = try exactSerializedSize(
+            const candidate_bytes = try program_format.serializedSize(
                 alloc,
-                target,
                 candidate,
             );
             if (candidate_bytes < best_bytes) {
@@ -288,11 +304,15 @@ fn synthesizeImpl(
             continue;
         }
 
-        if (partial.choices.len + partial.holes > options.max_nodes)
+        if (partial.choice_count + partial.holes > options.max_nodes)
             continue;
 
         if (expanded == options.max_expansions) {
-            expansion_cutoff = true;
+            cutoff_size_lower_bound = @min(
+                cutoff_size_lower_bound,
+                partial.size_lower_bound,
+            );
+            retainPreferredPartial(&rollout_frontier, partial);
             continue;
         }
 
@@ -300,7 +320,7 @@ fn synthesizeImpl(
             alloc,
             target,
             dtype,
-            partial.choices,
+            partial.path,
             options.max_decomposition_bytes,
         );
         defer open_holes.deinit(alloc);
@@ -309,13 +329,22 @@ fn synthesizeImpl(
         const hole = open_holes.leftmost().*;
 
         expanded += 1;
-        const choices = try grammar.propose(
-            alloc,
-            hole.target,
-            dtype,
-            hole.depth,
-            options.grammar_options,
-        );
+        const choices = if (hole.depth == 0)
+            try grammar.propose(
+                alloc,
+                hole.target,
+                dtype,
+                hole.depth,
+                options.grammar_options,
+            )
+        else
+            try grammar.proposeKnownValid(
+                alloc,
+                hole.target,
+                dtype,
+                hole.depth,
+                options.grammar_options,
+            );
         defer alloc.free(choices);
         const legal = grammar.families(choices);
         if (legal.len == 0) return error.NoLiteralFallback;
@@ -334,7 +363,7 @@ fn synthesizeImpl(
             );
         }
 
-        const current_open_storage = try openTargetStorageBytes(&open_holes);
+        const current_open_storage = open_holes.storage_bytes;
         var retained_heuristic: u64 = 0;
         for (open_holes.items.items[0 .. open_holes.items.items.len - 1]) |other| {
             retained_heuristic = saturatingCostAdd(
@@ -347,7 +376,7 @@ fn synthesizeImpl(
             );
         }
         for (choices) |choice| {
-            const child_storage = grammar.childTargetStorageBytes(
+            const child_storage = grammar.childTargetStorageBytesForProposal(
                 choice,
                 hole.target,
                 dtype,
@@ -365,22 +394,19 @@ fn synthesizeImpl(
             if (next_storage > options.max_decomposition_bytes)
                 continue;
 
-            var child_targets = try grammar.childTargets(
-                alloc,
+            const child_shapes = grammar.childShapesForProposal(
                 choice,
                 hole.target,
-                dtype,
             );
-            defer child_targets.deinit(alloc);
-
+            const child_count = child_shapes.len;
             const new_holes = std.math.add(
                 usize,
                 partial.holes - 1,
-                child_targets.streams.len,
+                child_count,
             ) catch continue;
             const new_filled = std.math.add(
                 usize,
-                partial.choices.len,
+                partial.choice_count,
                 1,
             ) catch continue;
             const minimum_final_nodes = std.math.add(
@@ -393,7 +419,7 @@ fn synthesizeImpl(
             const node_fixed_bytes = choiceFixedBytes(
                 choice,
                 hole.target,
-                child_targets.streams.len,
+                child_count,
             );
             const fixed_bytes = std.math.add(
                 usize,
@@ -407,12 +433,6 @@ fn synthesizeImpl(
             ) catch continue;
             if (size_lower_bound >= best_bytes) continue;
 
-            const next_choices = try appendChoice(
-                alloc,
-                partial.choices,
-                choice,
-            );
-            serial +%= 1;
             const grammar_cost = std.math.add(
                 u64,
                 partial.grammar_cost,
@@ -428,19 +448,19 @@ fn synthesizeImpl(
                 hole.depth,
                 1,
             ) catch return error.DepthOverflow;
-            for (child_targets.streams, 0..) |child, child_slot| {
-                _ = child_slot;
+            for (child_shapes.slice()) |child| {
                 heuristic = saturatingCostAdd(
                     heuristic,
                     relaxed_heuristic.completionCost(
-                        child.bits_per_elem,
+                        child.bits,
                         child.count,
                         child_depth,
                     ),
                 );
             }
-            queue.push(alloc, .{
-                .choices = next_choices,
+            var next: Partial = .{
+                .path = partial.path,
+                .choice_count = new_filled,
                 .holes = new_holes,
                 .grammar_cost = grammar_cost,
                 .priority_cost = saturatingCostAdd(
@@ -450,14 +470,71 @@ fn synthesizeImpl(
                 .fixed_bytes = fixed_bytes,
                 .size_lower_bound = size_lower_bound,
                 .serial = serial,
-            }) catch |err| {
-                alloc.free(next_choices);
-                return err;
             };
+            if (new_holes > options.max_expansions - expanded) {
+                cutoff_size_lower_bound = @min(
+                    cutoff_size_lower_bound,
+                    size_lower_bound,
+                );
+                if (rollout_frontier == null or
+                    comparePartial({}, next, rollout_frontier.?) == .lt)
+                {
+                    next.path = try extendChoicePath(
+                        path_alloc,
+                        partial.path,
+                        choice,
+                    );
+                    rollout_frontier = next;
+                }
+                continue;
+            }
+
+            next.path = try extendChoicePath(
+                path_alloc,
+                partial.path,
+                choice,
+            );
+            serial +%= 1;
+            next.serial = serial;
+            queue.push(alloc, next) catch |err| return err;
         }
     }
 
-    const status: SearchStatus = if (queue.count() == 0 and !expansion_cutoff)
+    if (rollout_frontier) |partial| if (partial.size_lower_bound < best_bytes and
+        !(shallow_float_fields_evaluated and options.rule_model == null) and
+        !(shallow_float_fields_evaluated and
+            isShallowFloatFieldsCompletion(partial, dtype)))
+    {
+        const choices = try materializeLiteralCompletion(
+            alloc,
+            partial,
+        );
+        defer alloc.free(choices);
+        var candidate = try buildProgram(
+            alloc,
+            choices,
+            target,
+            dtype,
+        );
+        var candidate_owned = true;
+        defer if (candidate_owned) candidate.deinit(alloc);
+
+        completed_candidates += 1;
+        const candidate_bytes = try program_format.serializedSize(
+            alloc,
+            candidate,
+        );
+        if (candidate_bytes < best_bytes) {
+            best.deinit(alloc);
+            best = candidate;
+            candidate_owned = false;
+            best_bytes = candidate_bytes;
+            used_literal_fallback = false;
+        }
+    };
+
+    const status: SearchStatus = if (queue.count() == 0 and
+        cutoff_size_lower_bound >= best_bytes)
         .proven_optimal
     else
         .budget_exhausted;
@@ -469,6 +546,9 @@ fn synthesizeImpl(
         },
         else => {},
     };
+    var output = try interpreter.execute(alloc, best);
+    defer output.deinit(alloc);
+    if (!target.eql(output)) return error.InvalidCandidate;
     const serialized_program = try program_format.serialize(alloc, best);
     std.debug.assert(serialized_program.len == best_bytes);
     return .{
@@ -482,10 +562,18 @@ fn synthesizeImpl(
     };
 }
 
-fn isRootLiteral(choices: []const grammar.Choice) bool {
-    if (choices.len != 1) return false;
-    return switch (choices[0]) {
+fn isRootLiteral(path: ?*const ChoicePath, choice_count: usize) bool {
+    if (choice_count != 1) return false;
+    return switch (path.?.choice) {
         .literal => true,
+        else => false,
+    };
+}
+
+fn isShallowFloatFieldsCompletion(partial: Partial, dtype: Dtype) bool {
+    if (partial.choice_count != 1 or partial.holes != 3) return false;
+    return switch (partial.path.?.choice) {
+        .merge_float_fields => |candidate_dtype| candidate_dtype == dtype,
         else => false,
     };
 }
@@ -521,26 +609,44 @@ fn shallowFloatFieldsCandidate(
     return try buildProgram(alloc, &choices, target, dtype);
 }
 
-fn exactSerializedSize(
+fn materializeChoices(
     alloc: Allocator,
-    target: Stream,
-    candidate: dsl.Program,
-) !usize {
-    var output = try interpreter.execute(alloc, candidate);
-    defer output.deinit(alloc);
-    if (!streamsEqual(target, output)) return error.InvalidCandidate;
-    return program_format.serializedSize(alloc, candidate);
+    path: ?*const ChoicePath,
+    count: usize,
+) Allocator.Error![]grammar.Choice {
+    const output = try alloc.alloc(grammar.Choice, count);
+    var cursor = count;
+    var current = path;
+    while (current) |node| {
+        cursor -= 1;
+        output[cursor] = node.choice;
+        current = node.parent;
+    }
+    std.debug.assert(cursor == 0);
+    return output;
 }
 
-fn appendChoice(
+fn materializeLiteralCompletion(
     alloc: Allocator,
-    existing: []const grammar.Choice,
-    choice: grammar.Choice,
+    partial: Partial,
 ) Allocator.Error![]grammar.Choice {
-    const output = try alloc.alloc(grammar.Choice, existing.len + 1);
-    @memcpy(output[0..existing.len], existing);
-    output[existing.len] = choice;
+    const count = partial.choice_count + partial.holes;
+    const output = try alloc.alloc(grammar.Choice, count);
+    var cursor = partial.choice_count;
+    var current = partial.path;
+    while (current) |node| {
+        cursor -= 1;
+        output[cursor] = node.choice;
+        current = node.parent;
+    }
+    std.debug.assert(cursor == 0);
+    for (output[partial.choice_count..]) |*choice| choice.* = .literal;
     return output;
+}
+
+fn retainPreferredPartial(slot: *?Partial, candidate: Partial) void {
+    if (slot.* == null or comparePartial({}, candidate, slot.*.?) == .lt)
+        slot.* = candidate;
 }
 
 /// Bytes fixed by one selected production. Literal payload data remains a
@@ -1151,13 +1257,10 @@ test "relaxed c chooses a recursive derivation and h orders the queue" {
 
     var queue = Queue.initContext({});
     defer queue.deinit(alloc);
-    const high_choices = try alloc.alloc(grammar.Choice, 0);
-    errdefer alloc.free(high_choices);
-    const low_choices = try alloc.alloc(grammar.Choice, 0);
-    errdefer alloc.free(low_choices);
     const paid_cost: u64 = 100;
     try queue.push(alloc, .{
-        .choices = high_choices,
+        .path = null,
+        .choice_count = 0,
         .holes = 1,
         .grammar_cost = paid_cost,
         .priority_cost = saturatingCostAdd(
@@ -1169,7 +1272,8 @@ test "relaxed c chooses a recursive derivation and h orders the queue" {
         .serial = 0,
     });
     try queue.push(alloc, .{
-        .choices = low_choices,
+        .path = null,
+        .choice_count = 0,
         .holes = 1,
         .grammar_cost = paid_cost,
         .priority_cost = saturatingCostAdd(paid_cost, root_cost),
@@ -1179,10 +1283,8 @@ test "relaxed c chooses a recursive derivation and h orders the queue" {
         .serial = 1,
     });
 
-    var first = queue.pop().?;
-    defer first.deinit(alloc);
-    var second = queue.pop().?;
-    defer second.deinit(alloc);
+    const first = queue.pop().?;
+    const second = queue.pop().?;
     try std.testing.expectEqual(@as(u64, 1), first.serial);
     try std.testing.expectEqual(@as(u64, 0), second.serial);
 }
@@ -1214,7 +1316,7 @@ fn replayOpenHoles(
     alloc: Allocator,
     root_target: Stream,
     dtype: Dtype,
-    choices: []const grammar.Choice,
+    path: ?*const ChoicePath,
     max_decomposition_bytes: usize,
 ) !OpenHoles {
     var result: OpenHoles = .{};
@@ -1228,66 +1330,94 @@ fn replayOpenHoles(
         .parent = null,
         .child_slot = 0,
     });
+    result.storage_bytes = root_view.data.len;
 
-    for (choices) |choice| {
-        if (result.items.items.len == 0)
-            return error.InvalidPartialProgram;
-        const parent_index = result.items.items.len - 1;
-        const parent = result.items.items[parent_index];
-        const current_storage = try openTargetStorageBytes(&result);
-        const child_storage = try grammar.childTargetStorageBytes(
-            choice,
-            parent.target,
-            dtype,
-        );
-        const next_storage = std.math.add(
-            usize,
-            current_storage - parent.target.data.len,
-            child_storage,
-        ) catch return error.DecompositionLimitExceeded;
-        if (next_storage > max_decomposition_bytes)
-            return error.DecompositionLimitExceeded;
-        var children = try grammar.childTargets(
-            alloc,
-            choice,
-            parent.target,
-            dtype,
-        );
-        errdefer children.deinit(alloc);
-        const child_depth = std.math.add(u8, parent.depth, 1) catch
-            return error.DepthOverflow;
-
-        try result.items.ensureUnusedCapacity(alloc, children.streams.len);
-        result.items.items.len = parent_index;
-        var parent_target = parent.target;
-        parent_target.deinit(alloc);
-
-        var child_index = children.streams.len;
-        while (child_index > 0) {
-            child_index -= 1;
-            result.items.appendAssumeCapacity(.{
-                .target = children.streams[child_index],
-                .depth = child_depth,
-                .parent = choice.id(),
-                .child_slot = @intCast(child_index),
-            });
-        }
-        alloc.free(children.streams);
-        children.streams = &.{};
-    }
+    try replayChoicePath(
+        alloc,
+        &result,
+        path,
+        dtype,
+        max_decomposition_bytes,
+    );
     return result;
 }
 
-fn openTargetStorageBytes(open_holes: *const OpenHoles) !usize {
-    var total: usize = 0;
-    for (open_holes.items.items) |hole| {
-        total = std.math.add(
-            usize,
-            total,
-            hole.target.data.len,
-        ) catch return error.IntegerOverflow;
+fn replayChoicePath(
+    alloc: Allocator,
+    open_holes: *OpenHoles,
+    path: ?*const ChoicePath,
+    dtype: Dtype,
+    max_decomposition_bytes: usize,
+) !void {
+    const node = path orelse return;
+    try replayChoicePath(
+        alloc,
+        open_holes,
+        node.parent,
+        dtype,
+        max_decomposition_bytes,
+    );
+    try applyChoiceToOpenHoles(
+        alloc,
+        open_holes,
+        node.choice,
+        dtype,
+        max_decomposition_bytes,
+    );
+}
+
+fn applyChoiceToOpenHoles(
+    alloc: Allocator,
+    open_holes: *OpenHoles,
+    choice: grammar.Choice,
+    dtype: Dtype,
+    max_decomposition_bytes: usize,
+) !void {
+    if (open_holes.items.items.len == 0)
+        return error.InvalidPartialProgram;
+    const parent_index = open_holes.items.items.len - 1;
+    const parent = open_holes.items.items[parent_index];
+    const current_storage = open_holes.storage_bytes;
+    const child_storage = try grammar.childTargetStorageBytesForProposal(
+        choice,
+        parent.target,
+        dtype,
+    );
+    const next_storage = std.math.add(
+        usize,
+        current_storage - parent.target.data.len,
+        child_storage,
+    ) catch return error.DecompositionLimitExceeded;
+    if (next_storage > max_decomposition_bytes)
+        return error.DecompositionLimitExceeded;
+    var children = try grammar.childTargetsForProposal(
+        alloc,
+        choice,
+        parent.target,
+        dtype,
+    );
+    errdefer children.deinit(alloc);
+    const child_depth = std.math.add(u8, parent.depth, 1) catch
+        return error.DepthOverflow;
+
+    try open_holes.items.ensureUnusedCapacity(alloc, children.streams.len);
+    open_holes.items.items.len = parent_index;
+    var parent_target = parent.target;
+    parent_target.deinit(alloc);
+
+    var child_index = children.streams.len;
+    while (child_index > 0) {
+        child_index -= 1;
+        open_holes.items.appendAssumeCapacity(.{
+            .target = children.streams[child_index],
+            .depth = child_depth,
+            .parent = choice.id(),
+            .child_slot = @intCast(child_index),
+        });
     }
-    return total;
+    alloc.free(children.streams);
+    children.streams = &.{};
+    open_holes.storage_bytes = next_storage;
 }
 
 fn buildProgram(
@@ -1324,7 +1454,7 @@ fn buildNode(
     const choice = choices[cursor.*];
     cursor.* += 1;
 
-    var child_targets = try grammar.childTargets(
+    var child_targets = try grammar.childTargetsForProposal(
         alloc,
         choice,
         target.*,
@@ -1448,13 +1578,4 @@ fn adoptLiteralTarget(
     _ = try program.typeOf();
     target.owns_data = false;
     return program;
-}
-
-fn streamsEqual(left: Stream, right: Stream) bool {
-    if (left.bits_per_elem != right.bits_per_elem or
-        left.count != right.count)
-        return false;
-    for (0..left.count) |index|
-        if (left.getU32(index) != right.getU32(index)) return false;
-    return true;
 }
