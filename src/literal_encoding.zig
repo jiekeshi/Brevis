@@ -66,31 +66,27 @@ pub fn emitBody(
     try encoding.emitBody(alloc, out);
 }
 
-/// Encode all applicable physical representations and select by the exact
-/// complete body length. Equal lengths use the stable numeric `Tag` order.
-/// Raw is constructed first and is therefore an unconditional fallback for
-/// every valid stream.
+/// Select by exact wire size, then materialize only the winning body.
 pub fn encodeBest(alloc: Allocator, stream: Stream) !OwnedEncoding {
-    try validateStream(stream);
+    var analysis = try analyzeBest(alloc, stream, .materialize);
+    defer analysis.deinit(alloc);
+    return switch (analysis.best.tag) {
+        .raw => encodeRaw(alloc, stream),
+        .bitpack => encodeBitpack(alloc, stream),
+        .huffman => encodeHuffman(
+            alloc,
+            stream,
+            analysis.huffman.?,
+            analysis.huffman_payload_bits,
+        ),
+        .rans => encodeRans(alloc, analysis.rans.?, analysis.rans_payload.?),
+    };
+}
 
-    var best = try encodeRaw(alloc, stream);
-    errdefer best.deinit(alloc);
-    if (stream.count == 0) return best;
-
-    var bitpack_candidate = try encodeBitpack(alloc, stream);
-    consider(alloc, &best, &bitpack_candidate);
-
-    if (try encodeHuffman(alloc, stream)) |candidate_value| {
-        var candidate = candidate_value;
-        consider(alloc, &best, &candidate);
-    }
-
-    if (try encodeRans(alloc, stream)) |candidate_value| {
-        var candidate = candidate_value;
-        consider(alloc, &best, &candidate);
-    }
-
-    return best;
+pub fn encodedSize(alloc: Allocator, stream: Stream) !usize {
+    var analysis = try analyzeBest(alloc, stream, .count);
+    defer analysis.deinit(alloc);
+    return analysis.best.size;
 }
 
 /// Decode an owned result from `encodeBest`.
@@ -124,10 +120,32 @@ pub fn decodeBody(
     );
     errdefer decoded.deinit(alloc);
 
-    var canonical = try encodeBest(alloc, decoded);
-    defer canonical.deinit(alloc);
-    if (!std.mem.eql(u8, canonical.body, body))
+    const tag = std.enums.fromInt(Tag, body[0]) orelse
+        return error.UnknownLiteralEncoding;
+    const rans_sizing: RansSizing = if (tag == .rans)
+        .{ .known = try ransPayloadLength(body) }
+    else
+        .count;
+    var analysis = try analyzeBest(alloc, decoded, rans_sizing);
+    defer analysis.deinit(alloc);
+    if (tag != analysis.best.tag)
         return error.NonCanonicalLiteralEncoding;
+    switch (tag) {
+        .raw => {},
+        .bitpack => {
+            if (body[1] != requiredBits(decoded))
+                return error.NonCanonicalLiteralEncoding;
+        },
+        .huffman => try validateHuffmanBody(
+            body,
+            analysis.huffman.?,
+            analysis.huffman_payload_bits,
+        ),
+        .rans => try validateRansBody(
+            body,
+            analysis.rans.?,
+        ),
+    }
 
     return decoded;
 }
@@ -158,6 +176,7 @@ fn validateStream(stream: Stream) !void {
     const expected = try checkedStorageBytes(stream.bits_per_elem, stream.count);
     if (stream.data.len != expected) return error.InvalidLiteralStream;
 
+    if (stream.bits_per_elem == types.roundUpToPow2(stream.bits_per_elem)) return;
     const mask = stream.mask();
     for (0..stream.count) |index| {
         if (stream.getU32(index) & ~mask != 0)
@@ -171,24 +190,6 @@ fn checkedStorageBytes(bits_per_elem: u8, count: usize) !usize {
     const elem_bytes: usize = types.roundUpToPow2(bits_per_elem) / 8;
     return std.math.mul(usize, count, elem_bytes) catch
         return error.LiteralSizeOverflow;
-}
-
-fn consider(
-    alloc: Allocator,
-    best: *OwnedEncoding,
-    candidate: *OwnedEncoding,
-) void {
-    const candidate_is_better =
-        candidate.body.len < best.body.len or
-        (candidate.body.len == best.body.len and
-            @intFromEnum(candidate.tag) < @intFromEnum(best.tag));
-    if (candidate_is_better) {
-        best.deinit(alloc);
-        best.* = candidate.*;
-        candidate.body = &.{};
-    } else {
-        candidate.deinit(alloc);
-    }
 }
 
 fn encodeRaw(alloc: Allocator, stream: Stream) !OwnedEncoding {
@@ -221,29 +222,183 @@ fn requiredBits(stream: Stream) u8 {
     return if (combined == 0) 1 else @intCast(32 - @clz(combined));
 }
 
-fn encodeHuffman(alloc: Allocator, stream: Stream) !?OwnedEncoding {
+const Best = struct {
+    tag: Tag,
+    size: usize,
+};
+
+const Analysis = struct {
+    best: Best,
+    huffman: ?codec.HuffmanTable = null,
+    huffman_payload_bits: u64 = 0,
+    rans: ?codec.RansTable = null,
+    rans_payload: ?[]u8 = null,
+
+    fn deinit(self: *Analysis, alloc: Allocator) void {
+        if (self.huffman) |*table| table.deinit(alloc);
+        if (self.rans) |*table| table.deinit(alloc);
+        if (self.rans_payload) |payload| alloc.free(payload);
+    }
+};
+
+const RansSizing = union(enum) {
+    materialize,
+    count,
+    known: usize,
+};
+
+fn analyzeBest(
+    alloc: Allocator,
+    stream: Stream,
+    rans_sizing: RansSizing,
+) !Analysis {
+    try validateStream(stream);
+
+    var analysis = Analysis{
+        .best = .{
+            .tag = .raw,
+            .size = try addSize(1, stream.data.len),
+        },
+    };
+    errdefer analysis.deinit(alloc);
+    if (stream.count == 0) return analysis;
+
+    const width = requiredBits(stream);
+    const bit_count = std.math.mul(
+        usize,
+        stream.count,
+        @as(usize, width),
+    ) catch return error.LiteralSizeOverflow;
+    const packed_bytes = try addSize(bit_count, 7) / 8;
+    selectSmaller(
+        &analysis.best.tag,
+        &analysis.best.size,
+        .bitpack,
+        try addSize(2, packed_bytes),
+    );
+
     var histogram = codec.buildHistogram(alloc, stream) catch |err| switch (err) {
-        error.AlphabetTooLarge => return null,
+        error.AlphabetTooLarge => return analysis,
         else => return err,
     };
     defer histogram.deinit(alloc);
 
-    var table = codec.huffmanFromHist(
+    if (codec.huffmanFromHist(
         alloc,
         histogram,
         stream.bits_per_elem,
     ) catch |err| switch (err) {
-        error.HuffmanCodeTooLong, error.AlphabetTooLarge => return null,
+        error.HuffmanCodeTooLong, error.AlphabetTooLarge => null,
         else => return err,
-    };
-    defer table.deinit(alloc);
+    }) |table_value| {
+        analysis.huffman = table_value;
+        analysis.huffman_payload_bits = try huffmanPayloadBits(
+            analysis.huffman.?,
+            histogram,
+        );
+        const payload_bytes_u64 = std.math.add(
+            u64,
+            analysis.huffman_payload_bits,
+            7,
+        ) catch return error.LiteralSizeOverflow;
+        const payload_bytes = std.math.cast(
+            usize,
+            payload_bytes_u64 / 8,
+        ) orelse return error.LiteralSizeOverflow;
+        const entries_bytes = std.math.mul(
+            usize,
+            analysis.huffman.?.entries.len,
+            5,
+        ) catch return error.LiteralSizeOverflow;
+        selectSmaller(
+            &analysis.best.tag,
+            &analysis.best.size,
+            .huffman,
+            try addSize(try addSize(13, entries_bytes), payload_bytes),
+        );
+    }
 
+    if (codec.ransFromHist(
+        alloc,
+        histogram,
+        stream.count,
+    ) catch |err| switch (err) {
+        error.AlphabetTooLarge => null,
+        else => return err,
+    }) |table_value| {
+        analysis.rans = table_value;
+        const entries_bytes = std.math.mul(
+            usize,
+            analysis.rans.?.symbols.len,
+            8,
+        ) catch return error.LiteralSizeOverflow;
+        const fixed_bytes = try addSize(13, entries_bytes);
+        const lower_payload = std.math.cast(
+            usize,
+            codec.ransLowerBytes(analysis.rans.?, histogram),
+        ) orelse std.math.maxInt(usize);
+        const lower_size = std.math.add(
+            usize,
+            fixed_bytes,
+            lower_payload,
+        ) catch std.math.maxInt(usize);
+        if (lower_size < analysis.best.size) {
+            const payload_size = switch (rans_sizing) {
+                .materialize => blk: {
+                    analysis.rans_payload = try codec.ransEncode(
+                        alloc,
+                        stream,
+                        analysis.rans.?,
+                    );
+                    break :blk analysis.rans_payload.?.len;
+                },
+                .count => try codec.ransEncodedSize(
+                    alloc,
+                    stream,
+                    analysis.rans.?,
+                ),
+                .known => |size| size,
+            };
+            selectSmaller(
+                &analysis.best.tag,
+                &analysis.best.size,
+                .rans,
+                try addSize(fixed_bytes, payload_size),
+            );
+        }
+    }
+
+    return analysis;
+}
+
+fn addSize(left: usize, right: usize) !usize {
+    return std.math.add(usize, left, right) catch
+        error.LiteralSizeOverflow;
+}
+
+fn selectSmaller(
+    best: *Tag,
+    best_size: *usize,
+    candidate: Tag,
+    candidate_size: usize,
+) void {
+    if (candidate_size < best_size.* or
+        (candidate_size == best_size.* and
+            @intFromEnum(candidate) < @intFromEnum(best.*)))
+    {
+        best.* = candidate;
+        best_size.* = candidate_size;
+    }
+}
+
+fn encodeHuffman(
+    alloc: Allocator,
+    stream: Stream,
+    table: codec.HuffmanTable,
+    payload_bits: u64,
+) !OwnedEncoding {
     const payload = try codec.huffmanEncode(alloc, stream, table);
     defer alloc.free(payload);
-    const payload_bits = try huffmanPayloadBits(table, histogram);
-
-    if (table.entries.len > std.math.maxInt(u32))
-        return null;
 
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(alloc);
@@ -291,18 +446,11 @@ fn huffmanPayloadBits(
     return bits;
 }
 
-fn encodeRans(alloc: Allocator, stream: Stream) !?OwnedEncoding {
-    var table = codec.ransBuild(alloc, stream) catch |err| switch (err) {
-        error.AlphabetTooLarge => return null,
-        else => return err,
-    };
-    defer table.deinit(alloc);
-
-    const payload = try codec.ransEncode(alloc, stream, table);
-    defer alloc.free(payload);
-    if (table.symbols.len > std.math.maxInt(u32))
-        return null;
-
+fn encodeRans(
+    alloc: Allocator,
+    table: codec.RansTable,
+    payload: []const u8,
+) !OwnedEncoding {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(alloc);
     try out.append(alloc, @intFromEnum(Tag.rans));
@@ -319,6 +467,69 @@ fn encodeRans(alloc: Allocator, stream: Stream) !?OwnedEncoding {
     };
 }
 
+fn validateHuffmanBody(
+    body: []const u8,
+    table: codec.HuffmanTable,
+    payload_bits: u64,
+) !void {
+    var reader = Reader{ .bytes = body };
+    if (try reader.byte() != @intFromEnum(Tag.huffman))
+        return error.NonCanonicalLiteralEncoding;
+    if (try reader.readU32() != table.entries.len)
+        return error.NonCanonicalLiteralEncoding;
+    for (table.entries) |entry| {
+        if (try reader.readU32() != entry.sym or
+            try reader.byte() != entry.len)
+            return error.NonCanonicalLiteralEncoding;
+    }
+    if (try reader.readU64() != payload_bits)
+        return error.NonCanonicalLiteralEncoding;
+    const payload_bytes = std.math.cast(
+        usize,
+        (std.math.add(u64, payload_bits, 7) catch
+            return error.LiteralSizeOverflow) / 8,
+    ) orelse return error.LiteralSizeOverflow;
+    _ = try reader.take(payload_bytes);
+    try reader.finish();
+}
+
+fn validateRansBody(
+    body: []const u8,
+    table: codec.RansTable,
+) !void {
+    var reader = Reader{ .bytes = body };
+    if (try reader.byte() != @intFromEnum(Tag.rans))
+        return error.NonCanonicalLiteralEncoding;
+    if (try reader.readU32() != table.symbols.len)
+        return error.NonCanonicalLiteralEncoding;
+    for (table.symbols, table.info) |symbol, info| {
+        if (try reader.readU32() != symbol or
+            try reader.readU32() != info.freq)
+            return error.NonCanonicalLiteralEncoding;
+    }
+    const payload_len = std.math.cast(usize, try reader.readU64()) orelse
+        return error.LiteralSizeOverflow;
+    _ = try reader.take(payload_len);
+    try reader.finish();
+    // decodeRans already required exact payload consumption and terminal RANS_L,
+    // the inverse conditions of the deterministic encoder.
+}
+
+fn ransPayloadLength(body: []const u8) !usize {
+    var reader = Reader{ .bytes = body };
+    if (try reader.byte() != @intFromEnum(Tag.rans))
+        return error.CorruptLiteralEncoding;
+    const entry_count: usize = @intCast(try reader.readU32());
+    const entries_bytes = std.math.mul(usize, entry_count, 8) catch
+        return error.LiteralSizeOverflow;
+    _ = try reader.take(entries_bytes);
+    const payload_len = std.math.cast(usize, try reader.readU64()) orelse
+        return error.LiteralSizeOverflow;
+    _ = try reader.take(payload_len);
+    try reader.finish();
+    return payload_len;
+}
+
 fn decodeRaw(
     alloc: Allocator,
     bits_per_elem: u8,
@@ -329,7 +540,7 @@ fn decodeRaw(
     const payload = try reader.take(expected);
     try reader.finish();
 
-    var stream = try Stream.init(alloc, count, bits_per_elem);
+    var stream = try Stream.initUninitialized(alloc, count, bits_per_elem);
     errdefer stream.deinit(alloc);
     @memcpy(stream.data, payload);
     try validateStream(stream);
@@ -413,11 +624,6 @@ fn decodeHuffman(
         bits_per_elem,
     );
     errdefer decoded.deinit(alloc);
-
-    var histogram = try codec.buildHistogram(alloc, decoded);
-    defer histogram.deinit(alloc);
-    if (try huffmanPayloadBits(table, histogram) != payload_bits)
-        return error.CorruptLiteralEncoding;
     return decoded;
 }
 
@@ -465,13 +671,6 @@ fn decodeRans(
     errdefer decoded.deinit(alloc);
     if (result.consumed_bytes != payload.len or
         result.final_state != codec.RANS_L)
-        return error.CorruptLiteralEncoding;
-
-    // Re-encoding additionally establishes a unique byte representation for
-    // every stream under this table.
-    const canonical_payload = try codec.ransEncode(alloc, decoded, table);
-    defer alloc.free(canonical_payload);
-    if (!std.mem.eql(u8, payload, canonical_payload))
         return error.CorruptLiteralEncoding;
     return decoded;
 }

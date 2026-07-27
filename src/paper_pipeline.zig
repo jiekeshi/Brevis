@@ -14,8 +14,11 @@ const types = @import("types.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+pub const DEFAULT_WORKERS: usize = 32;
+
 pub const CompressOptions = struct {
     synthesis: synthesizer.Options = .{},
+    workers: usize = DEFAULT_WORKERS,
     max_source_bytes: usize = types.defaultLargeByteLimit,
     max_prefix_bytes: usize = 64 * 1024 * 1024,
     max_tensors: usize = 1_000_000,
@@ -27,6 +30,7 @@ pub const CompressOptions = struct {
 
 pub const DecompressLimits = struct {
     archive: tensor_archive.DecodeLimits = .{},
+    workers: usize = DEFAULT_WORKERS,
     max_archive_bytes: usize = types.defaultLargeByteLimit,
     max_output_bytes: usize = types.defaultLargeByteLimit,
 };
@@ -118,6 +122,7 @@ pub fn compressBytes(
         source[0..prefix_len],
         source.len,
         &sink,
+        null,
         options,
     );
     errdefer summary.deinit(alloc);
@@ -184,6 +189,7 @@ pub fn compressFile(
         loaded.bytes[0..prefix_len],
         loaded.bytes.len,
         &sink,
+        io,
         options,
     );
     errdefer summary.deinit(alloc);
@@ -214,6 +220,7 @@ pub fn decompressBytes(
         encoded,
         limits,
         &sink,
+        null,
     );
     return output.toOwnedSlice(alloc);
 }
@@ -255,6 +262,7 @@ pub fn decompressFile(
         archive_file.bytes,
         limits,
         &sink,
+        io,
     );
     try file_writer.flush();
     try atomic.file.sync(io);
@@ -298,6 +306,7 @@ pub fn verifyFile(
         archive_file.bytes,
         limits,
         &sink,
+        io,
     );
 }
 
@@ -307,6 +316,7 @@ fn compressLoaded(
     safetensors_prefix: []const u8,
     source_bytes: usize,
     sink: *OutputSink,
+    io: ?Io,
     options: CompressOptions,
 ) !CompressSummary {
     if (sink.written != 0) return error.NonEmptyOutputSink;
@@ -335,67 +345,28 @@ fn compressLoaded(
     defer alloc.free(header);
     try sink.writeAll(header);
 
-    for (loaded.tensors) |tensor| {
-        const elements = try tensor.view.numelChecked();
-        const expected_bytes = std.math.mul(
-            usize,
-            elements,
-            tensor.view.dtype.elemSize(),
-        ) catch return error.IntegerOverflow;
-        if (expected_bytes != tensor.view.data.len)
-            return error.TensorByteLengthMismatch;
-        if (expected_bytes > options.max_tensor_bytes)
-            return error.TensorLimitExceeded;
-
-        const target = types.Stream{
-            // Grammar/synthesis only read target streams. The explicit cast
-            // stays inside this adapter because public safetensors views are
-            // correctly read-only, including when backed by a read-only mmap.
-            .data = @constCast(tensor.view.data),
-            .count = elements,
-            .bits_per_elem = tensor.view.dtype.bitWidth(),
-            .owns_data = false,
-        };
-
-        // This is deliberately the sole synthesis call in the per-tensor
-        // path: `target` is the complete physical tensor stream.
-        var synthesis = try synthesizer.synthesize(
+    if (io != null and options.workers > 1 and loaded.tensors.len > 1) {
+        try compressTensorsParallel(
             alloc,
-            target,
-            tensor.view.dtype,
-            options.synthesis,
+            io.?,
+            loaded.tensors,
+            stats,
+            &initialized_stats,
+            sink,
+            options,
         );
-        var root_owned = true;
-        defer if (root_owned) synthesis.program.deinit(alloc);
-
-        var tensor_program = try dsl.TensorProgram.init(
-            alloc,
-            tensor.view.dtype,
-            tensor.view.shape,
-            synthesis.program,
-        );
-        root_owned = false;
-        defer tensor_program.deinit(alloc);
-
-        const frame = try tensor_archive.encodeTensorRecord(
-            alloc,
-            tensor.name,
-            tensor_program,
-        );
-        defer alloc.free(frame);
-        try sink.writeAll(frame);
-
-        stats[initialized_stats] = .{
-            .name = try alloc.dupe(u8, tensor.name),
-            .source_bytes = expected_bytes,
-            .archive_record_bytes = frame.len,
-            .serialized_program_bytes = synthesis.serialized_bytes,
-            .expanded = synthesis.expanded,
-            .completed_candidates = synthesis.completed_candidates,
-            .status = synthesis.status,
-            .used_literal_fallback = synthesis.used_literal_fallback,
-        };
-        initialized_stats += 1;
+    } else {
+        for (loaded.tensors) |tensor| {
+            var encoded = try encodeTensor(alloc, tensor, options);
+            defer encoded.deinit(alloc);
+            stats[initialized_stats] = try finishEncodedTensor(
+                alloc,
+                tensor.name,
+                encoded,
+                sink,
+            );
+            initialized_stats += 1;
+        }
     }
 
     return .{
@@ -405,11 +376,182 @@ fn compressLoaded(
     };
 }
 
+const EncodedTensor = struct {
+    frame: []u8,
+    source_bytes: usize,
+    serialized_program_bytes: usize,
+    expanded: usize,
+    completed_candidates: usize,
+    status: synthesizer.SearchStatus,
+    used_literal_fallback: bool,
+
+    fn deinit(self: *EncodedTensor, alloc: Allocator) void {
+        alloc.free(self.frame);
+        self.frame = &.{};
+    }
+};
+
+const EncodeOutcome = union(enum) {
+    success: EncodedTensor,
+    failure: anyerror,
+
+    fn deinit(self: *EncodeOutcome, alloc: Allocator) void {
+        switch (self.*) {
+            .success => |*encoded| encoded.deinit(alloc),
+            .failure => {},
+        }
+    }
+};
+
+fn encodeTensor(
+    alloc: Allocator,
+    tensor: safetensors.Tensor,
+    options: CompressOptions,
+) !EncodedTensor {
+    const elements = try tensor.view.numelChecked();
+    const source_bytes = std.math.mul(
+        usize,
+        elements,
+        tensor.view.dtype.elemSize(),
+    ) catch return error.IntegerOverflow;
+    if (source_bytes != tensor.view.data.len)
+        return error.TensorByteLengthMismatch;
+    if (source_bytes > options.max_tensor_bytes)
+        return error.TensorLimitExceeded;
+
+    const target = types.Stream{
+        .data = @constCast(tensor.view.data),
+        .count = elements,
+        .bits_per_elem = tensor.view.dtype.bitWidth(),
+        .owns_data = false,
+    };
+    var synthesis = try synthesizer.synthesizeBorrowingTarget(
+        alloc,
+        target,
+        tensor.view.dtype,
+        options.synthesis,
+    );
+    defer alloc.free(synthesis.serialized_program);
+    var root_owned = true;
+    defer if (root_owned) synthesis.program.deinit(alloc);
+
+    var tensor_program = try dsl.TensorProgram.init(
+        alloc,
+        tensor.view.dtype,
+        tensor.view.shape,
+        synthesis.program,
+    );
+    root_owned = false;
+    defer tensor_program.deinit(alloc);
+
+    return .{
+        .frame = try tensor_archive.encodePreparedTensorRecordForSource(
+            alloc,
+            tensor.name,
+            tensor_program,
+            synthesis.serialized_program,
+            tensor.view.data,
+        ),
+        .source_bytes = source_bytes,
+        .serialized_program_bytes = synthesis.serialized_bytes,
+        .expanded = synthesis.expanded,
+        .completed_candidates = synthesis.completed_candidates,
+        .status = synthesis.status,
+        .used_literal_fallback = synthesis.used_literal_fallback,
+    };
+}
+
+fn encodeTensorTask(
+    tensor: safetensors.Tensor,
+    options: CompressOptions,
+) EncodeOutcome {
+    const worker_alloc = std.heap.smp_allocator;
+    return .{ .success = encodeTensor(
+        worker_alloc,
+        tensor,
+        options,
+    ) catch |err| return .{ .failure = err } };
+}
+
+fn finishEncodedTensor(
+    alloc: Allocator,
+    name: []const u8,
+    encoded: EncodedTensor,
+    sink: *OutputSink,
+) !TensorStat {
+    try sink.writeAll(encoded.frame);
+    return .{
+        .name = try alloc.dupe(u8, name),
+        .source_bytes = encoded.source_bytes,
+        .archive_record_bytes = encoded.frame.len,
+        .serialized_program_bytes = encoded.serialized_program_bytes,
+        .expanded = encoded.expanded,
+        .completed_candidates = encoded.completed_candidates,
+        .status = encoded.status,
+        .used_literal_fallback = encoded.used_literal_fallback,
+    };
+}
+
+fn compressTensorsParallel(
+    alloc: Allocator,
+    io: Io,
+    tensors: []const safetensors.Tensor,
+    stats: []TensorStat,
+    initialized_stats: *usize,
+    sink: *OutputSink,
+    options: CompressOptions,
+) !void {
+    const window = @min(options.workers, tensors.len);
+    const futures = try alloc.alloc(Io.Future(EncodeOutcome), window);
+    defer alloc.free(futures);
+    const active = try alloc.alloc(bool, window);
+    defer alloc.free(active);
+    @memset(active, false);
+    defer for (futures, active) |*future, is_active| {
+        if (is_active) {
+            var outcome = future.cancel(io);
+            outcome.deinit(std.heap.smp_allocator);
+        }
+    };
+    for (futures, active, tensors[0..window]) |*future, *is_active, tensor| {
+        future.* = io.async(encodeTensorTask, .{ tensor, options });
+        is_active.* = true;
+    }
+
+    for (tensors, 0..) |tensor, index| {
+        const slot = index % window;
+        var outcome = futures[slot].await(io);
+        active[slot] = false;
+        defer outcome.deinit(std.heap.smp_allocator);
+        switch (outcome) {
+            .success => |encoded| {
+                stats[initialized_stats.*] = try finishEncodedTensor(
+                    alloc,
+                    tensor.name,
+                    encoded,
+                    sink,
+                );
+                initialized_stats.* += 1;
+            },
+            .failure => |err| return err,
+        }
+        const next = index + window;
+        if (next < tensors.len) {
+            futures[slot] = io.async(
+                encodeTensorTask,
+                .{ tensors[next], options },
+            );
+            active[slot] = true;
+        }
+    }
+}
+
 fn decodeArchiveToSink(
     alloc: Allocator,
     encoded: []const u8,
     limits: DecompressLimits,
     sink: *OutputSink,
+    io: ?Io,
 ) !DecodeSummary {
     if (sink.written != 0) return error.NonEmptyOutputSink;
     if (encoded.len > limits.max_archive_bytes)
@@ -445,53 +587,32 @@ fn decodeArchiveToSink(
     try sink.writeAll(header.safetensors_prefix);
 
     var position = header.next_offset;
-    for (metadata.tensors) |expected| {
-        if (expected.name.len > limits.archive.max_name_bytes)
-            return error.NameLimitExceeded;
-        if (expected.shape.len > limits.archive.max_dimensions)
-            return error.DimensionLimitExceeded;
-        const expected_record_bytes = try expected.expectedByteLen();
-        if (expected_record_bytes > limits.archive.max_tensor_output_bytes)
-            return error.OutputLimitExceeded;
-        // Bind resource use to the trusted prefix metadata before executing a
-        // record. A mismatched record must not allocate according to its own
-        // attacker-controlled shape and only then fail the metadata check.
-        var record_limits = limits.archive;
-        record_limits.max_tensor_output_bytes = @min(
-            record_limits.max_tensor_output_bytes,
-            expected_record_bytes,
-        );
-        record_limits.program.max_output_bytes = @min(
-            record_limits.program.max_output_bytes,
-            expected_record_bytes,
-        );
-        var verified = try tensor_archive.nextVerifiedTensorRecord(
+    if (io != null and limits.workers > 1 and metadata.tensors.len > 1) {
+        try decodeRecordsParallel(
             alloc,
+            io.?,
             encoded,
             &position,
-            record_limits,
+            metadata.tensors,
+            limits,
+            sink,
         );
-        defer verified.deinit(alloc);
-        const record = verified.record;
-
-        if (!std.mem.eql(u8, record.name, expected.name) or
-            record.tensor_program.dtype != expected.dtype or
-            !std.mem.eql(u64, record.tensor_program.shape, expected.shape))
-        {
-            return error.MetadataMismatch;
+    } else {
+        for (metadata.tensors) |*expected| {
+            const frame = try tensor_archive.nextTensorRecordFrame(
+                encoded,
+                &position,
+                limits.archive,
+            );
+            var verified = try decodeExpectedRecord(
+                alloc,
+                frame,
+                expected,
+                limits.archive,
+            );
+            defer verified.deinit(alloc);
+            try sink.writeAll(verified.decoded.data);
         }
-
-        const tensor_type = try record.tensor_program.validate();
-        const record_bytes = std.math.mul(
-            usize,
-            tensor_type.elements,
-            tensor_type.dtype.elemSize(),
-        ) catch return error.IntegerOverflow;
-        if (record_bytes != expected_record_bytes)
-            return error.MetadataMismatch;
-        if (verified.decoded.data.len != record_bytes)
-            return error.TensorByteLengthMismatch;
-        try sink.writeAll(verified.decoded.data);
     }
     if (position != encoded.len) return error.TrailingBytes;
     if (sink.written != expected_output_len)
@@ -503,6 +624,136 @@ fn decodeArchiveToSink(
         .output_bytes = sink.written,
         .tensor_count = metadata.tensors.len,
     };
+}
+
+const DecodeOutcome = union(enum) {
+    success: tensor_archive.VerifiedTensorRecord,
+    failure: anyerror,
+
+    fn deinit(self: *DecodeOutcome, alloc: Allocator) void {
+        switch (self.*) {
+            .success => |*verified| verified.deinit(alloc),
+            .failure => {},
+        }
+    }
+};
+
+fn decodeExpectedRecord(
+    alloc: Allocator,
+    frame: []const u8,
+    expected: *const safetensors.HeaderTensor,
+    limits: tensor_archive.DecodeLimits,
+) !tensor_archive.VerifiedTensorRecord {
+    if (expected.name.len > limits.max_name_bytes)
+        return error.NameLimitExceeded;
+    if (expected.shape.len > limits.max_dimensions)
+        return error.DimensionLimitExceeded;
+    const expected_bytes = try expected.expectedByteLen();
+    if (expected_bytes > limits.max_tensor_output_bytes)
+        return error.OutputLimitExceeded;
+
+    var record_limits = limits;
+    record_limits.max_tensor_output_bytes = @min(
+        record_limits.max_tensor_output_bytes,
+        expected_bytes,
+    );
+    record_limits.program.max_output_bytes = @min(
+        record_limits.program.max_output_bytes,
+        expected_bytes,
+    );
+    var verified = try tensor_archive.decodeVerifiedTensorRecord(
+        alloc,
+        frame,
+        record_limits,
+    );
+    errdefer verified.deinit(alloc);
+    const record = verified.record;
+    if (!std.mem.eql(u8, record.name, expected.name) or
+        record.tensor_program.dtype != expected.dtype or
+        !std.mem.eql(u64, record.tensor_program.shape, expected.shape))
+    {
+        return error.MetadataMismatch;
+    }
+    if (verified.decoded.data.len != expected_bytes)
+        return error.TensorByteLengthMismatch;
+    return verified;
+}
+
+fn decodeRecordTask(
+    frame: []const u8,
+    expected: *const safetensors.HeaderTensor,
+    limits: tensor_archive.DecodeLimits,
+) DecodeOutcome {
+    const worker_alloc = std.heap.smp_allocator;
+    return .{ .success = decodeExpectedRecord(
+        worker_alloc,
+        frame,
+        expected,
+        limits,
+    ) catch |err| return .{ .failure = err } };
+}
+
+fn decodeRecordsParallel(
+    alloc: Allocator,
+    io: Io,
+    encoded: []const u8,
+    position: *usize,
+    expected_tensors: []const safetensors.HeaderTensor,
+    limits: DecompressLimits,
+    sink: *OutputSink,
+) !void {
+    const window = @min(limits.workers, expected_tensors.len);
+    const futures = try alloc.alloc(Io.Future(DecodeOutcome), window);
+    defer alloc.free(futures);
+    const active = try alloc.alloc(bool, window);
+    defer alloc.free(active);
+    @memset(active, false);
+    defer for (futures, active) |*future, is_active| {
+        if (is_active) {
+            var outcome = future.cancel(io);
+            outcome.deinit(std.heap.smp_allocator);
+        }
+    };
+    for (
+        futures,
+        active,
+        expected_tensors[0..window],
+    ) |*future, *is_active, *expected| {
+        const frame = try tensor_archive.nextTensorRecordFrame(
+            encoded,
+            position,
+            limits.archive,
+        );
+        future.* = io.async(
+            decodeRecordTask,
+            .{ frame, expected, limits.archive },
+        );
+        is_active.* = true;
+    }
+
+    for (expected_tensors, 0..) |_, index| {
+        const slot = index % window;
+        var outcome = futures[slot].await(io);
+        active[slot] = false;
+        defer outcome.deinit(std.heap.smp_allocator);
+        switch (outcome) {
+            .success => |verified| try sink.writeAll(verified.decoded.data),
+            .failure => |err| return err,
+        }
+        const next = index + window;
+        if (next < expected_tensors.len) {
+            const frame = try tensor_archive.nextTensorRecordFrame(
+                encoded,
+                position,
+                limits.archive,
+            );
+            futures[slot] = io.async(
+                decodeRecordTask,
+                .{ frame, &expected_tensors[next], limits.archive },
+            );
+            active[slot] = true;
+        }
+    }
 }
 
 fn deinitTensorStats(alloc: Allocator, tensors: []TensorStat) void {

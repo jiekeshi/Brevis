@@ -94,7 +94,7 @@ pub const Program = struct {
     pub fn literal(alloc: Allocator, bits: u8, words: []const u32) (Allocator.Error || ValidationError)!Program {
         if (bits == 0 or bits > 32) return error.InvalidWordWidth;
 
-        var stream = try Stream.init(alloc, words.len, bits);
+        var stream = try Stream.initUninitialized(alloc, words.len, bits);
         errdefer stream.deinit(alloc);
         const mask = stream.mask();
         for (words, 0..) |word, i| {
@@ -111,10 +111,12 @@ pub const Program = struct {
         const required = std.math.mul(usize, source.count, source.elemBytes()) catch
             return error.LengthOverflow;
         if (source.data.len != required) return error.InvalidLiteralValue;
-        const mask = source.mask();
-        for (0..source.count) |index|
-            if (source.getU32(index) & ~mask != 0)
-                return error.InvalidLiteralValue;
+        if (source.bits_per_elem != types.roundUpToPow2(source.bits_per_elem)) {
+            const mask = source.mask();
+            for (0..source.count) |index|
+                if (source.getU32(index) & ~mask != 0)
+                    return error.InvalidLiteralValue;
+        }
         return .{ .kind = .{ .literal = try source.dupe(alloc) } };
     }
 
@@ -138,14 +140,15 @@ pub const Program = struct {
     pub fn concat(alloc: Allocator, children: []const Program) (Allocator.Error || ValidationError)!Program {
         if (children.len < 2) return error.InvalidArity;
         const first_type = try children[0].typeOf();
+        if (first_type.len == 0) return error.InvalidLength;
         var total = first_type.len;
         for (children[1..]) |child| {
             const child_type = try child.typeOf();
             if (child_type.bits != first_type.bits) return error.TypeMismatch;
+            if (child_type.len == 0) return error.InvalidLength;
             total = std.math.add(usize, total, child_type.len) catch
                 return error.LengthOverflow;
         }
-        if (total == 0) return error.InvalidLength;
         const owned = try alloc.alloc(Program, children.len);
         var initialized: usize = 0;
         errdefer {
@@ -169,14 +172,15 @@ pub const Program = struct {
     pub fn concatOwned(children: []Program) ValidationError!Program {
         if (children.len < 2) return error.InvalidArity;
         const first_type = try children[0].typeOf();
+        if (first_type.len == 0) return error.InvalidLength;
         var total = first_type.len;
         for (children[1..]) |child| {
             const child_type = try child.typeOf();
             if (child_type.bits != first_type.bits) return error.TypeMismatch;
+            if (child_type.len == 0) return error.InvalidLength;
             total = std.math.add(usize, total, child_type.len) catch
                 return error.LengthOverflow;
         }
-        if (total == 0) return error.InvalidLength;
         return .{ .kind = .concat, .children = children };
     }
 
@@ -356,10 +360,12 @@ fn analyzeProgram(program: Program) ValidationError!ProgramAnalysis {
                 stream.elemBytes(),
             ) catch return error.LengthOverflow;
             if (stream.data.len != required) return error.InvalidLiteralValue;
-            const mask = stream.mask();
-            for (0..stream.count) |index|
-                if (stream.getU32(index) & ~mask != 0)
-                    return error.InvalidLiteralValue;
+            if (stream.bits_per_elem != types.roundUpToPow2(stream.bits_per_elem)) {
+                const mask = stream.mask();
+                for (0..stream.count) |index|
+                    if (stream.getU32(index) & ~mask != 0)
+                        return error.InvalidLiteralValue;
+            }
             break :blk .{
                 .stream_type = .{
                     .bits = stream.bits_per_elem,
@@ -393,12 +399,14 @@ fn analyzeProgram(program: Program) ValidationError!ProgramAnalysis {
         .concat => blk: {
             if (program.children.len < 2) return error.InvalidArity;
             const first = try analyzeProgram(program.children[0]);
+            if (first.stream_type.len == 0) return error.InvalidLength;
             var len = first.stream_type.len;
             var execution_bytes = first.execution_bytes;
             for (program.children[1..]) |child_program| {
                 const child = try analyzeProgram(child_program);
                 if (child.stream_type.bits != first.stream_type.bits)
                     return error.TypeMismatch;
+                if (child.stream_type.len == 0) return error.InvalidLength;
                 len = std.math.add(
                     usize,
                     len,
@@ -410,7 +418,6 @@ fn analyzeProgram(program: Program) ValidationError!ProgramAnalysis {
                     child.execution_bytes,
                 ) catch return error.LengthOverflow;
             }
-            if (len == 0) return error.InvalidLength;
             break :blk .{
                 .stream_type = .{ .bits = first.stream_type.bits, .len = len },
                 .execution_bytes = execution_bytes,

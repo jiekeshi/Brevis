@@ -366,28 +366,7 @@ fn walkLengths(node: anytype, depth: u8, lengths: *std.AutoHashMap(u32, u8)) !vo
 }
 
 /// Generate canonical codes from sorted (sym,len) table.
-fn huffmanCodes(alloc: Allocator, table: HuffmanTable) !std.AutoHashMap(u32, u64) {
-    var codes: std.AutoHashMap(u32, u64) = .init(alloc);
-    if (table.entries.len == 0) return codes;
-    var code: u64 = 0;
-    var prev_len: u8 = table.entries[0].len;
-    for (table.entries) |e| {
-        if (e.len > prev_len) {
-            code <<= @intCast(e.len - prev_len);
-            prev_len = e.len;
-        }
-        try codes.put(e.sym, code);
-        code += 1;
-    }
-    return codes;
-}
-
 pub fn huffmanEncode(alloc: Allocator, stream: Stream, table: HuffmanTable) ![]u8 {
-    var codes = try huffmanCodes(alloc, table);
-    defer codes.deinit();
-
-    // Fast path for 8/16-bit alphabets: use direct-indexed arrays for code
-    // and length lookup. This avoids ~20 ns/elem of HashMap overhead.
     const max_sym: u32 = blk: {
         var m: u32 = 0;
         for (table.entries) |e| if (e.sym > m) {
@@ -402,24 +381,38 @@ pub fn huffmanEncode(alloc: Allocator, stream: Stream, table: HuffmanTable) ![]u
         alloc.free(code_arr);
         alloc.free(len_arr);
     };
-    var len_map: std.AutoHashMap(u32, u8) = undefined;
-    var have_len_map: bool = false;
-    defer if (have_len_map) len_map.deinit();
+    const Code = struct { bits: u64, len: u8 };
+    var code_map: std.AutoHashMap(u32, Code) = .init(alloc);
+    defer code_map.deinit();
 
+    var code: u64 = 0;
+    var previous_len: u8 = if (table.entries.len == 0)
+        0
+    else
+        table.entries[0].len;
     if (direct_path) {
         const n_slots: usize = @as(usize, max_sym) + 1;
         code_arr = try alloc.alloc(u64, n_slots);
         len_arr = try alloc.alloc(u8, n_slots);
         @memset(len_arr, 0);
         for (table.entries) |e| {
-            const c = codes.get(e.sym).?;
-            code_arr[e.sym] = c;
+            if (e.len > previous_len) {
+                code <<= @intCast(e.len - previous_len);
+                previous_len = e.len;
+            }
+            code_arr[e.sym] = code;
             len_arr[e.sym] = e.len;
+            code += 1;
         }
     } else {
-        len_map = .init(alloc);
-        have_len_map = true;
-        for (table.entries) |e| try len_map.put(e.sym, e.len);
+        for (table.entries) |e| {
+            if (e.len > previous_len) {
+                code <<= @intCast(e.len - previous_len);
+                previous_len = e.len;
+            }
+            try code_map.put(e.sym, .{ .bits = code, .len = e.len });
+            code += 1;
+        }
     }
 
     var out: std.ArrayList(u8) = .empty;
@@ -437,9 +430,9 @@ pub fn huffmanEncode(alloc: Allocator, stream: Stream, table: HuffmanTable) ![]u
     } else {
         for (0..stream.count) |i| {
             const sym = stream.getU32(i);
-            const len = len_map.get(sym) orelse return error.SymbolNotInTable;
-            const code = codes.get(sym).?;
-            try bw.writeBits(code, len);
+            const symbol_code = code_map.get(sym) orelse
+                return error.SymbolNotInTable;
+            try bw.writeBits(symbol_code.bits, symbol_code.len);
         }
     }
     try bw.flush();
@@ -571,7 +564,7 @@ pub fn bitpackDecode(alloc: Allocator, payload: []const u8, width: u8, count: us
     const required_payload = try bitpackByteCount(count, width);
     if (payload.len < required_payload) return error.CorruptBitpackStream;
 
-    var s = try Stream.init(alloc, count, out_bpe);
+    var s = try Stream.initUninitialized(alloc, count, out_bpe);
     errdefer s.deinit(alloc);
     if (count == 0) return s;
 
@@ -620,6 +613,47 @@ pub const RANS_BYTE_M: u32 = 1 << 8;
 pub const RansSymbol = struct {
     freq: u32, // quantized to RANS_PROB_SCALE
     cum: u32, // cumulative
+};
+
+const RansEncoderSymbol = struct {
+    x_max: u32,
+    reciprocal: u32,
+    bias: u32,
+    complement: u16,
+    shift: u5,
+
+    fn init(info: RansSymbol) RansEncoderSymbol {
+        std.debug.assert(info.freq > 0);
+        std.debug.assert(info.cum + info.freq <= RANS_PROB_SCALE);
+
+        if (info.freq == 1) return .{
+            .x_max = ((RANS_L >> RANS_PROB_BITS) << 8),
+            .reciprocal = std.math.maxInt(u32),
+            .bias = info.cum + RANS_PROB_SCALE - 1,
+            .complement = RANS_PROB_SCALE - 1,
+            .shift = 0,
+        };
+
+        const shift = std.math.log2_int_ceil(u32, info.freq);
+        // The encoder keeps state below 2^31, making this reciprocal exact.
+        const numerator = (@as(u64, 1) << @intCast(shift + 31)) +
+            info.freq - 1;
+        return .{
+            .x_max = ((RANS_L >> RANS_PROB_BITS) << 8) * info.freq,
+            .reciprocal = @intCast(numerator / info.freq),
+            .bias = info.cum,
+            .complement = @intCast(RANS_PROB_SCALE - info.freq),
+            .shift = @intCast(shift - 1),
+        };
+    }
+
+    inline fn advance(self: RansEncoderSymbol, state: u32) u32 {
+        const quotient: u32 = @intCast(
+            (@as(u64, state) * self.reciprocal) >> 32,
+        );
+        return state + self.bias +
+            (quotient >> self.shift) * @as(u32, self.complement);
+    }
 };
 
 pub const RansTable = struct {
@@ -723,30 +757,37 @@ pub fn ransFromHist(alloc: Allocator, hist: Histogram, count: usize) !RansTable 
     return .{ .symbols = syms, .info = info };
 }
 
-pub fn ransEncode(alloc: Allocator, stream: Stream, table: RansTable) ![]u8 {
-    // Direct-indexed sym -> index array for 8/16-bit alphabets (the common case).
-    const max_sym: u32 = blk: {
-        var m: u32 = 0;
-        for (table.symbols) |s| if (s > m) {
-            m = s;
-        };
-        break :blk m;
+const RansAdvance = enum { division, reciprocal };
+
+inline fn ransAdvanceReference(state: u32, info: RansSymbol) u32 {
+    return ((state / info.freq) << RANS_PROB_BITS) +
+        (state % info.freq) + info.cum;
+}
+
+inline fn ransAdvance(
+    comptime method: RansAdvance,
+    state: u32,
+    info: RansSymbol,
+    encoder: RansEncoderSymbol,
+) u32 {
+    return switch (method) {
+        .division => ransAdvanceReference(state, info),
+        .reciprocal => encoder.advance(state),
     };
-    const direct_path = max_sym <= 0xFFFF;
-    var s2i_arr: []u16 = &.{};
-    defer if (direct_path) alloc.free(s2i_arr);
-    var s2i_map: std.AutoHashMap(u32, u16) = undefined;
-    var have_map = false;
-    defer if (have_map) s2i_map.deinit();
-    if (direct_path) {
-        s2i_arr = try alloc.alloc(u16, @as(usize, max_sym) + 1);
-        @memset(s2i_arr, std.math.maxInt(u16));
-        for (table.symbols, 0..) |s, idx| s2i_arr[s] = @intCast(idx);
-    } else {
-        s2i_map = .init(alloc);
-        have_map = true;
-        for (table.symbols, 0..) |s, idx| try s2i_map.put(s, @intCast(idx));
-    }
+}
+
+pub fn ransEncode(alloc: Allocator, stream: Stream, table: RansTable) ![]u8 {
+    return ransEncodeImpl(alloc, stream, table, .reciprocal);
+}
+
+fn ransEncodeImpl(
+    alloc: Allocator,
+    stream: Stream,
+    table: RansTable,
+    comptime method: RansAdvance,
+) ![]u8 {
+    var lookup = try RansSymbolLookup.init(alloc, table);
+    defer lookup.deinit();
 
     // Encode in REVERSE so decoder reads forward.
     var out: std.ArrayList(u8) = .empty;
@@ -758,18 +799,20 @@ pub fn ransEncode(alloc: Allocator, stream: Stream, table: RansTable) ![]u8 {
     while (i > 0) {
         i -= 1;
         const sym = stream.getU32(i);
-        const idx: u16 = if (direct_path) s2i_arr[sym] else (s2i_map.get(sym) orelse return error.SymbolNotInTable);
-        if (direct_path and idx == std.math.maxInt(u16)) return error.SymbolNotInTable;
-        const f = table.info[idx].freq;
-        const c = table.info[idx].cum;
+        const idx = try lookup.get(sym);
+        const info = table.info[idx];
+        const encoder = lookup.encoders[idx];
 
-        const x_max = ((RANS_L >> RANS_PROB_BITS) << 8) * f;
+        const x_max = if (method == .division)
+            ((RANS_L >> RANS_PROB_BITS) << 8) * info.freq
+        else
+            encoder.x_max;
         while (state >= x_max) {
             try out.append(alloc, @intCast(state & 0xFF));
             state >>= 8;
         }
 
-        state = ((state / f) << RANS_PROB_BITS) + (state % f) + c;
+        state = ransAdvance(method, state, info, encoder);
     }
     try out.append(alloc, @intCast(state & 0xFF));
     try out.append(alloc, @intCast((state >> 8) & 0xFF));
@@ -781,11 +824,176 @@ pub fn ransEncode(alloc: Allocator, stream: Stream, table: RansTable) ![]u8 {
     return owned;
 }
 
+pub fn ransEncodedSize(
+    alloc: Allocator,
+    stream: Stream,
+    table: RansTable,
+) !usize {
+    return ransEncodedSizeImpl(alloc, stream, table, .reciprocal);
+}
+
+fn ransEncodedSizeImpl(
+    alloc: Allocator,
+    stream: Stream,
+    table: RansTable,
+    comptime method: RansAdvance,
+) !usize {
+    var lookup = try RansSymbolLookup.init(alloc, table);
+    defer lookup.deinit();
+
+    var size: usize = 4;
+    var state: u32 = RANS_L;
+    var i = stream.count;
+    while (i > 0) {
+        i -= 1;
+        const idx = try lookup.get(stream.getU32(i));
+        const info = table.info[idx];
+        const encoder = lookup.encoders[idx];
+        const x_max = if (method == .division)
+            ((RANS_L >> RANS_PROB_BITS) << 8) * info.freq
+        else
+            encoder.x_max;
+        while (state >= x_max) {
+            size = std.math.add(usize, size, 1) catch
+                return error.RansSizeOverflow;
+            state >>= 8;
+        }
+        state = ransAdvance(method, state, info, encoder);
+    }
+    return size;
+}
+
+const RansSymbolLookup = struct {
+    alloc: Allocator,
+    direct: bool,
+    array: []u16 = &.{},
+    map: std.AutoHashMap(u32, u16),
+    encoders: []RansEncoderSymbol = &.{},
+
+    fn init(alloc: Allocator, table: RansTable) !RansSymbolLookup {
+        var max_symbol: u32 = 0;
+        for (table.symbols) |symbol| max_symbol = @max(max_symbol, symbol);
+
+        var lookup = RansSymbolLookup{
+            .alloc = alloc,
+            .direct = max_symbol <= std.math.maxInt(u16),
+            .map = .init(alloc),
+        };
+        errdefer lookup.deinit();
+        lookup.encoders = try alloc.alloc(RansEncoderSymbol, table.info.len);
+        for (lookup.encoders, table.info) |*encoder, info|
+            encoder.* = .init(info);
+        if (lookup.direct) {
+            lookup.array = try alloc.alloc(u16, @as(usize, max_symbol) + 1);
+            @memset(lookup.array, std.math.maxInt(u16));
+            for (table.symbols, 0..) |symbol, index|
+                lookup.array[symbol] = @intCast(index);
+        } else {
+            for (table.symbols, 0..) |symbol, index|
+                try lookup.map.put(symbol, @intCast(index));
+        }
+        return lookup;
+    }
+
+    fn deinit(self: *RansSymbolLookup) void {
+        if (self.array.len > 0) self.alloc.free(self.array);
+        if (self.encoders.len > 0) self.alloc.free(self.encoders);
+        self.map.deinit();
+        self.array = &.{};
+        self.encoders = &.{};
+    }
+
+    fn get(self: RansSymbolLookup, symbol: u32) !u16 {
+        if (!self.direct)
+            return self.map.get(symbol) orelse error.SymbolNotInTable;
+        if (symbol >= self.array.len) return error.SymbolNotInTable;
+        const index = self.array[symbol];
+        if (index == std.math.maxInt(u16))
+            return error.SymbolNotInTable;
+        return index;
+    }
+};
+
+pub const ransTesting = if (@import("builtin").is_test) struct {
+    pub const Step = struct {
+        state: u32,
+        emitted: [4]u8,
+        emitted_len: u3,
+    };
+
+    pub fn stepReference(state: u32, info: RansSymbol) Step {
+        return step(state, info, .division);
+    }
+
+    pub fn stepReciprocal(state: u32, info: RansSymbol) Step {
+        return step(state, info, .reciprocal);
+    }
+
+    pub fn encodeReference(
+        alloc: Allocator,
+        stream: Stream,
+        table: RansTable,
+    ) ![]u8 {
+        return ransEncodeImpl(alloc, stream, table, .division);
+    }
+
+    pub fn encodedSizeReference(
+        alloc: Allocator,
+        stream: Stream,
+        table: RansTable,
+    ) !usize {
+        return ransEncodedSizeImpl(alloc, stream, table, .division);
+    }
+
+    pub fn decodeReference(
+        alloc: Allocator,
+        payload: []const u8,
+        table: RansTable,
+        count: usize,
+        bits_per_elem: u8,
+    ) !RansDecodeResult {
+        return ransDecodeWithStateImpl(
+            alloc,
+            payload,
+            table,
+            count,
+            bits_per_elem,
+            .runtime,
+        );
+    }
+
+    fn step(
+        initial_state: u32,
+        info: RansSymbol,
+        comptime method: RansAdvance,
+    ) Step {
+        const encoder: RansEncoderSymbol = .init(info);
+        const x_max = if (method == .division)
+            ((RANS_L >> RANS_PROB_BITS) << 8) * info.freq
+        else
+            encoder.x_max;
+        var result = Step{
+            .state = initial_state,
+            .emitted = undefined,
+            .emitted_len = 0,
+        };
+        while (result.state >= x_max) {
+            result.emitted[result.emitted_len] = @intCast(result.state & 0xff);
+            result.emitted_len += 1;
+            result.state >>= 8;
+        }
+        result.state = ransAdvance(method, result.state, info, encoder);
+        return result;
+    }
+} else struct {};
+
 pub const RansDecodeResult = struct {
     stream: Stream,
     consumed_bytes: usize,
     final_state: u32,
 };
+
+const RansDecodeStorage = enum { runtime, byte, word, dword };
 
 pub fn ransDecodeWithState(
     alloc: Allocator,
@@ -793,6 +1001,45 @@ pub fn ransDecodeWithState(
     table: RansTable,
     count: usize,
     bits_per_elem: u8,
+) !RansDecodeResult {
+    if (bits_per_elem == 0 or bits_per_elem > 32)
+        return error.InvalidWordWidth;
+    return switch (types.roundUpToPow2(bits_per_elem)) {
+        8 => ransDecodeWithStateImpl(
+            alloc,
+            payload,
+            table,
+            count,
+            bits_per_elem,
+            .byte,
+        ),
+        16 => ransDecodeWithStateImpl(
+            alloc,
+            payload,
+            table,
+            count,
+            bits_per_elem,
+            .word,
+        ),
+        32 => ransDecodeWithStateImpl(
+            alloc,
+            payload,
+            table,
+            count,
+            bits_per_elem,
+            .dword,
+        ),
+        else => unreachable,
+    };
+}
+
+fn ransDecodeWithStateImpl(
+    alloc: Allocator,
+    payload: []const u8,
+    table: RansTable,
+    count: usize,
+    bits_per_elem: u8,
+    comptime storage: RansDecodeStorage,
 ) !RansDecodeResult {
     if (bits_per_elem == 0 or bits_per_elem > 32)
         return error.InvalidWordWidth;
@@ -806,7 +1053,7 @@ pub fn ransDecodeWithState(
         while (c < end) : (c += 1) cum2sym[c] = @intCast(ii);
     }
 
-    var s = try Stream.init(alloc, count, bits_per_elem);
+    var s = try Stream.initUninitialized(alloc, count, bits_per_elem);
     errdefer s.deinit(alloc);
     if (count == 0) return .{
         .stream = s,
@@ -823,7 +1070,22 @@ pub fn ransDecodeWithState(
         const slot = state & (RANS_PROB_SCALE - 1);
         const idx = cum2sym[slot];
         const sym = table.symbols[idx];
-        s.setU32(i, sym);
+        switch (storage) {
+            .runtime => s.setU32(i, sym),
+            .byte => s.data[i] = @truncate(sym),
+            .word => std.mem.writeInt(
+                u16,
+                s.data[i * 2 ..][0..2],
+                @truncate(sym),
+                .little,
+            ),
+            .dword => std.mem.writeInt(
+                u32,
+                s.data[i * 4 ..][0..4],
+                sym,
+                .little,
+            ),
+        }
         const f = table.info[idx].freq;
         const c = table.info[idx].cum;
         state = f * (state >> RANS_PROB_BITS) + slot - c;

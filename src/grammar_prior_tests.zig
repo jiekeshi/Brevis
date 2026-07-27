@@ -18,6 +18,13 @@ fn streamFromWords(
     return stream;
 }
 
+test "the default prior uses the fully learned smoothed distribution" {
+    const config: prior_mod.Config = .{};
+    try std.testing.expectEqual(@as(u32, 1), config.learned_numerator);
+    try std.testing.expectEqual(@as(u32, 1), config.learned_denominator);
+    try std.testing.expectEqual(@as(u64, 1), config.smoothing);
+}
+
 test "an untrained prior is strictly uniform over the admitted productions" {
     const alloc = std.testing.allocator;
     var target = try streamFromWords(alloc, 8, &.{ 1, 2, 1, 2 });

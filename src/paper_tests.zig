@@ -289,6 +289,17 @@ test "empty Lit is the unique zero-length production" {
         dsl.Program.concat(alloc, &.{ first, second }),
     );
 
+    var nonempty = try dsl.Program.literal(alloc, 8, &.{1});
+    defer nonempty.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidLength,
+        dsl.Program.concat(alloc, &.{ first, nonempty }),
+    );
+    try std.testing.expectError(
+        error.InvalidLength,
+        dsl.Program.concat(alloc, &.{ nonempty, second }),
+    );
+
     var repeat_child = try first.clone(alloc);
     defer repeat_child.deinit(alloc);
     try std.testing.expectError(

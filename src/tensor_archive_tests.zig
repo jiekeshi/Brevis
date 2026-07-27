@@ -149,6 +149,54 @@ test "segmented header and tensor frame APIs compose without hidden state" {
     try std.testing.expectEqual(@as(u32, 0xabcd), decoded.getU32(1));
 }
 
+test "source-backed record checksum remains bound to program output" {
+    const alloc = std.testing.allocator;
+    var tensor = try literalTensor(alloc, .u8, &.{4}, &.{ 1, 2, 3, 4 });
+    defer tensor.deinit(alloc);
+
+    const frame = try archive.encodeTensorRecordForSource(
+        alloc,
+        "x",
+        tensor,
+        &.{ 1, 2, 3, 5 },
+    );
+    defer alloc.free(frame);
+    try std.testing.expectError(
+        error.ChecksumMismatch,
+        archive.decodeVerifiedTensorRecord(alloc, frame, .{}),
+    );
+}
+
+test "prepared canonical program bytes produce the same record" {
+    const alloc = std.testing.allocator;
+    var tensor = try literalTensor(alloc, .u16, &.{2}, &.{ 0x1234, 0xabcd });
+    defer tensor.deinit(alloc);
+    const source = [_]u8{ 0x34, 0x12, 0xcd, 0xab };
+
+    const canonical = try archive.encodeTensorRecordForSource(
+        alloc,
+        "x",
+        tensor,
+        &source,
+    );
+    defer alloc.free(canonical);
+    const bytecode = try @import("program_format.zig").serialize(
+        alloc,
+        tensor.root,
+    );
+    defer alloc.free(bytecode);
+    const prepared = try archive.encodePreparedTensorRecordForSource(
+        alloc,
+        "x",
+        tensor,
+        bytecode,
+        &source,
+    );
+    defer alloc.free(prepared);
+
+    try std.testing.expectEqualSlices(u8, canonical, prepared);
+}
+
 test "verified record API returns the checked stream without a second execution" {
     const alloc = std.testing.allocator;
     var tensor = try literalTensor(alloc, .u16, &.{2}, &.{ 0x1234, 0xabcd });
@@ -167,6 +215,7 @@ test "verified record API returns the checked stream without a second execution"
     defer verified.deinit(alloc);
     try std.testing.expectEqual(frame.len, position);
     try std.testing.expectEqualStrings("x", verified.record.name);
+    try std.testing.expect(!verified.decoded.owns_data);
     try std.testing.expectEqual(@as(u32, 0x1234), verified.decoded.getU32(0));
     try std.testing.expectEqual(@as(u32, 0xabcd), verified.decoded.getU32(1));
 

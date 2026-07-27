@@ -26,7 +26,11 @@ pub fn repeat(
     for (period_len..target.count) |i|
         if (target.getU32(i) != target.getU32(i % period_len)) return null;
 
-    var period = try Stream.init(alloc, period_len, target.bits_per_elem);
+    var period = try Stream.initUninitialized(
+        alloc,
+        period_len,
+        target.bits_per_elem,
+    );
     for (0..period_len) |i| period.setU32(i, target.getU32(i));
     return period;
 }
@@ -38,7 +42,11 @@ pub fn map(
     operation: dsl.MapOp,
 ) (Allocator.Error || dsl.ValidationError)!Stream {
     try operation.validate(target.bits_per_elem);
-    var child = try Stream.init(alloc, target.count, target.bits_per_elem);
+    var child = try Stream.initUninitialized(
+        alloc,
+        target.count,
+        target.bits_per_elem,
+    );
     errdefer child.deinit(alloc);
     for (0..target.count) |i|
         child.setU32(i, try semantics.mapInverse(
@@ -68,7 +76,11 @@ pub fn scan(
         return error.InvalidWordWidth;
     if (target.count < 2) return null;
 
-    var updates = try Stream.init(alloc, target.count - 1, target.bits_per_elem);
+    var updates = try Stream.initUninitialized(
+        alloc,
+        target.count - 1,
+        target.bits_per_elem,
+    );
     errdefer updates.deinit(alloc);
     var previous = target.getU32(0);
     for (1..target.count) |i| {
@@ -134,7 +146,7 @@ pub fn merge(
         alloc.free(children);
     }
     for (children, widths[0..count]) |*child, bits| {
-        child.* = try Stream.init(alloc, target.count, bits);
+        child.* = try Stream.initUninitialized(alloc, target.count, bits);
         initialized += 1;
     }
 

@@ -4,6 +4,7 @@ const std = @import("std");
 const dsl = @import("dsl.zig");
 const grammar = @import("grammar.zig");
 const interpreter = @import("interpreter.zig");
+const program_format = @import("program_format.zig");
 const types = @import("types.zig");
 
 fn streamFromWords(
@@ -137,6 +138,94 @@ fn countProduction(choices: []const grammar.Choice, production: grammar.Producti
     return count;
 }
 
+fn expectLegalMatchesProposals(
+    alloc: std.mem.Allocator,
+    target: types.Stream,
+    dtype: types.Dtype,
+    hole_depth: u8,
+    options: grammar.Options,
+) !void {
+    const choices = try grammar.propose(
+        alloc,
+        target,
+        dtype,
+        hole_depth,
+        options,
+    );
+    defer alloc.free(choices);
+    const proposed = grammar.families(choices);
+    const legal = grammar.legal(target, dtype, hole_depth, options);
+    try std.testing.expectEqualSlices(
+        grammar.ProductionId,
+        legal.slice(),
+        proposed.slice(),
+    );
+    for (std.enums.values(grammar.ProductionId)) |production|
+        try std.testing.expectEqual(
+            countProduction(choices, production) > 0,
+            grammar.isLegal(
+                production,
+                target,
+                dtype,
+                hole_depth,
+                options,
+            ),
+        );
+}
+
+fn expectCanonicalMergeAlias(
+    alloc: std.mem.Allocator,
+    target: types.Stream,
+    dtype: types.Dtype,
+    alias: grammar.Choice,
+    canonical: grammar.Choice,
+) !void {
+    var alias_children = try grammar.childTargets(
+        alloc,
+        alias,
+        target,
+        dtype,
+    );
+    defer alias_children.deinit(alloc);
+    var canonical_children = try grammar.childTargets(
+        alloc,
+        canonical,
+        target,
+        dtype,
+    );
+    defer canonical_children.deinit(alloc);
+    try std.testing.expectEqual(
+        alias_children.streams.len,
+        canonical_children.streams.len,
+    );
+    for (alias_children.streams, canonical_children.streams) |left, right|
+        try expectStreamsEqual(left, right);
+
+    var alias_program = try programFromChoice(
+        alloc,
+        alias,
+        target,
+        alias_children.streams,
+    );
+    defer alias_program.deinit(alloc);
+    var canonical_program = try programFromChoice(
+        alloc,
+        canonical,
+        target,
+        canonical_children.streams,
+    );
+    defer canonical_program.deinit(alloc);
+    const alias_bytes = try program_format.serializedSize(
+        alloc,
+        alias_program,
+    );
+    const canonical_bytes = try program_format.serializedSize(
+        alloc,
+        canonical_program,
+    );
+    try std.testing.expectEqual(canonical_bytes + 1, alias_bytes);
+}
+
 test "grammar uses stable production ids and always proposes literal" {
     try std.testing.expectEqual(@as(u16, 0), @intFromEnum(grammar.ProductionId.literal));
     try std.testing.expectEqual(@as(u16, 10), @intFromEnum(grammar.ProductionId.map_xor));
@@ -201,6 +290,13 @@ test "every proposed semantic expansion reconstructs its target exactly" {
 
     const choices = try grammar.propose(alloc, repeated, .f32, 0, .{});
     defer alloc.free(choices);
+    const proposed_families = grammar.families(choices);
+    const legal_families = grammar.legal(repeated, .f32, 0, .{});
+    try std.testing.expectEqualSlices(
+        grammar.ProductionId,
+        legal_families.slice(),
+        proposed_families.slice(),
+    );
     var seen: [34]bool = @splat(false);
     var previous_id: u16 = 0;
     for (choices, 0..) |choice, index| {
@@ -304,6 +400,318 @@ test "proposal order is deterministic and every parameter family is hard capped"
     );
 }
 
+test "FP8 field proposals include the sign boundary without widening search" {
+    const alloc = std.testing.allocator;
+    var target = try types.Stream.init(alloc, 16, 8);
+    defer target.deinit(alloc);
+
+    const fp8 = try grammar.propose(alloc, target, .f8_e4m3, 0, .{});
+    defer alloc.free(fp8);
+    const integer = try grammar.propose(alloc, target, .u8, 0, .{});
+    defer alloc.free(integer);
+
+    try std.testing.expectEqual(
+        countProduction(integer, .merge_fields),
+        countProduction(fp8, .merge_fields),
+    );
+    var fp8_splits: [3]u8 = undefined;
+    var split_count: usize = 0;
+    for (fp8) |choice| switch (choice) {
+        .merge_fields => |low_bits| {
+            fp8_splits[split_count] = low_bits;
+            split_count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqualSlices(u8, &.{ 2, 4, 7 }, &fp8_splits);
+}
+
+test "normal form removes semantic identities and duplicate one-bit families" {
+    const alloc = std.testing.allocator;
+    var target = try streamFromWords(alloc, 1, &.{ 0, 1, 0, 1 });
+    defer target.deinit(alloc);
+
+    const choices = try grammar.propose(alloc, target, .u8, 0, .{});
+    defer alloc.free(choices);
+    try std.testing.expectEqual(@as(usize, 1), countProduction(
+        choices,
+        .map_xor,
+    ));
+    inline for (.{
+        grammar.ProductionId.map_add_mod,
+        grammar.ProductionId.map_zigzag,
+        grammar.ProductionId.map_gray,
+        grammar.ProductionId.map_rotate_left,
+        grammar.ProductionId.map_bit_reverse,
+        grammar.ProductionId.scan_add_mod,
+    }) |production|
+        try std.testing.expectEqual(
+            @as(usize, 0),
+            countProduction(choices, production),
+        );
+    try std.testing.expectEqual(@as(usize, 1), countProduction(
+        choices,
+        .scan_xor,
+    ));
+    for (choices) |choice| switch (choice) {
+        .map_xor => |parameter| try std.testing.expectEqual(
+            @as(u32, 1),
+            parameter,
+        ),
+        else => {},
+    };
+    try expectLegalMatchesProposals(alloc, target, .u8, 0, .{});
+
+    const identities = [_]grammar.Choice{
+        .{ .map_xor = 0 },
+        .{ .map_add_mod = 0 },
+        .map_zigzag,
+        .map_gray,
+        .{ .map_rotate_left = 0 },
+        .map_bit_reverse,
+    };
+    for (identities) |identity| {
+        var children = try grammar.childTargets(
+            alloc,
+            identity,
+            target,
+            .u8,
+        );
+        defer children.deinit(alloc);
+        try std.testing.expectEqual(@as(usize, 1), children.streams.len);
+        try expectStreamsEqual(target, children.streams[0]);
+    }
+
+    var xor_map = try grammar.childTargets(
+        alloc,
+        .{ .map_xor = 1 },
+        target,
+        .u8,
+    );
+    defer xor_map.deinit(alloc);
+    var add_map = try grammar.childTargets(
+        alloc,
+        .{ .map_add_mod = 1 },
+        target,
+        .u8,
+    );
+    defer add_map.deinit(alloc);
+    try expectStreamsEqual(xor_map.streams[0], add_map.streams[0]);
+
+    var xor_scan = try grammar.childTargets(
+        alloc,
+        .{ .scan_xor = 0 },
+        target,
+        .u8,
+    );
+    defer xor_scan.deinit(alloc);
+    var add_scan = try grammar.childTargets(
+        alloc,
+        .{ .scan_add_mod = 0 },
+        target,
+        .u8,
+    );
+    defer add_scan.deinit(alloc);
+    try expectStreamsEqual(xor_scan.streams[0], add_scan.streams[0]);
+}
+
+test "normal form omits zero map parameters and dominated uniform repeats" {
+    const alloc = std.testing.allocator;
+    var mixed = try streamFromWords(alloc, 8, &.{ 0, 3, 0, 5 });
+    defer mixed.deinit(alloc);
+    const mixed_choices = try grammar.propose(alloc, mixed, .u8, 0, .{});
+    defer alloc.free(mixed_choices);
+    for (mixed_choices) |choice| switch (choice) {
+        .map_xor, .map_add_mod => |parameter| try std.testing.expect(parameter != 0),
+        else => {},
+    };
+    try std.testing.expect(countProduction(mixed_choices, .map_xor) > 0);
+    try std.testing.expect(countProduction(mixed_choices, .map_add_mod) > 0);
+    try expectLegalMatchesProposals(alloc, mixed, .u8, 0, .{});
+
+    var uniform = try streamFromWords(alloc, 8, &.{ 0, 0, 0, 0 });
+    defer uniform.deinit(alloc);
+    const uniform_choices = try grammar.propose(alloc, uniform, .u8, 0, .{});
+    defer alloc.free(uniform_choices);
+    try std.testing.expectEqual(@as(usize, 1), countProduction(
+        uniform_choices,
+        .constant,
+    ));
+    inline for (.{
+        grammar.ProductionId.repeat,
+        grammar.ProductionId.map_xor,
+        grammar.ProductionId.map_add_mod,
+    }) |production|
+        try std.testing.expectEqual(
+            @as(usize, 0),
+            countProduction(uniform_choices, production),
+        );
+    try std.testing.expect(!grammar.isLegal(.repeat, uniform, .u8, 0, .{}));
+    try expectLegalMatchesProposals(alloc, uniform, .u8, 0, .{});
+}
+
+test "normal form keeps parameter-free plane aliases and every distinct field split" {
+    const alloc = std.testing.allocator;
+    const byte_cases = [_]struct {
+        bits: u8,
+        requested: usize,
+    }{
+        .{ .bits = 9, .requested = 8 },
+        .{ .bits = 10, .requested = 8 },
+        .{ .bits = 11, .requested = 3 },
+        .{ .bits = 12, .requested = 8 },
+        .{ .bits = 13, .requested = 5 },
+        .{ .bits = 14, .requested = 4 },
+        .{ .bits = 15, .requested = 6 },
+        .{ .bits = 16, .requested = 3 },
+    };
+    for (byte_cases) |case| {
+        var target = try streamFromWords(
+            alloc,
+            case.bits,
+            &.{ 1, 2, 3, 4 },
+        );
+        defer target.deinit(alloc);
+        const options: grammar.Options = .{
+            .max_field_splits = case.requested,
+        };
+        const choices = try grammar.propose(
+            alloc,
+            target,
+            .u16,
+            0,
+            options,
+        );
+        defer alloc.free(choices);
+        var saw_split_eight = false;
+        for (choices) |choice| switch (choice) {
+            .merge_fields => |low_bits| saw_split_eight =
+                saw_split_eight or low_bits == 8,
+            else => {},
+        };
+        try std.testing.expect(!saw_split_eight);
+        try std.testing.expectEqual(
+            case.requested - 1,
+            countProduction(choices, .merge_fields),
+        );
+        try std.testing.expectEqual(@as(usize, 1), countProduction(
+            choices,
+            .merge_byte_planes,
+        ));
+        try std.testing.expect(grammar.isLegal(
+            .merge_fields,
+            target,
+            .u16,
+            0,
+            options,
+        ));
+        try expectLegalMatchesProposals(
+            alloc,
+            target,
+            .u16,
+            0,
+            options,
+        );
+        try expectCanonicalMergeAlias(
+            alloc,
+            target,
+            .u16,
+            .{ .merge_fields = 8 },
+            .merge_byte_planes,
+        );
+    }
+
+    var two_bit = try streamFromWords(alloc, 2, &.{ 0, 1, 2, 3 });
+    defer two_bit.deinit(alloc);
+    const two_bit_choices = try grammar.propose(
+        alloc,
+        two_bit,
+        .u8,
+        0,
+        .{},
+    );
+    defer alloc.free(two_bit_choices);
+    try std.testing.expectEqual(@as(usize, 0), countProduction(
+        two_bit_choices,
+        .merge_fields,
+    ));
+    try std.testing.expectEqual(@as(usize, 1), countProduction(
+        two_bit_choices,
+        .merge_bit_planes,
+    ));
+    try std.testing.expect(!grammar.isLegal(
+        .merge_fields,
+        two_bit,
+        .u8,
+        0,
+        .{},
+    ));
+    try expectLegalMatchesProposals(alloc, two_bit, .u8, 0, .{});
+    try expectCanonicalMergeAlias(
+        alloc,
+        two_bit,
+        .u8,
+        .{ .merge_fields = 1 },
+        .merge_bit_planes,
+    );
+
+    var sixteen_bit = try streamFromWords(
+        alloc,
+        16,
+        &.{ 0x0102, 0x3456, 0x789a, 0xbcde },
+    );
+    defer sixteen_bit.deinit(alloc);
+    const no_fields: grammar.Options = .{ .max_field_splits = 0 };
+    const no_field_choices = try grammar.propose(
+        alloc,
+        sixteen_bit,
+        .u16,
+        0,
+        no_fields,
+    );
+    defer alloc.free(no_field_choices);
+    try std.testing.expectEqual(@as(usize, 0), countProduction(
+        no_field_choices,
+        .merge_fields,
+    ));
+    try std.testing.expectEqual(@as(usize, 1), countProduction(
+        no_field_choices,
+        .merge_byte_planes,
+    ));
+    try expectLegalMatchesProposals(
+        alloc,
+        sixteen_bit,
+        .u16,
+        0,
+        no_fields,
+    );
+
+    const only_alias: grammar.Options = .{ .max_field_splits = 1 };
+    const canonical_only = try grammar.propose(
+        alloc,
+        sixteen_bit,
+        .u16,
+        0,
+        only_alias,
+    );
+    defer alloc.free(canonical_only);
+    try std.testing.expectEqual(@as(usize, 0), countProduction(
+        canonical_only,
+        .merge_fields,
+    ));
+    try std.testing.expectEqual(@as(usize, 1), countProduction(
+        canonical_only,
+        .merge_byte_planes,
+    ));
+    try expectLegalMatchesProposals(
+        alloc,
+        sixteen_bit,
+        .u16,
+        0,
+        only_alias,
+    );
+}
+
 test "deterministic randomized proposals always reconstruct exact targets" {
     const alloc = std.testing.allocator;
     var prng = std.Random.DefaultPrng.init(0x5041_5045_5244_534c);
@@ -328,21 +736,29 @@ test "deterministic randomized proposals always reconstruct exact targets" {
                 target.setU32(index, word);
             }
 
+            const options: grammar.Options = .{
+                .max_depth = 2,
+                .max_repeat_period = 8,
+                .max_concat_splits = 2,
+                .max_map_constants = 2,
+                .max_rotations = 2,
+                .max_field_splits = 2,
+            };
             const choices = try grammar.propose(
                 alloc,
                 target,
                 .u32,
                 0,
-                .{
-                    .max_depth = 2,
-                    .max_repeat_period = 8,
-                    .max_concat_splits = 2,
-                    .max_map_constants = 2,
-                    .max_rotations = 2,
-                    .max_field_splits = 2,
-                },
+                options,
             );
             defer alloc.free(choices);
+            try expectLegalMatchesProposals(
+                alloc,
+                target,
+                .u32,
+                0,
+                options,
+            );
             for (choices) |choice|
                 try expectChoiceReconstructs(
                     alloc,

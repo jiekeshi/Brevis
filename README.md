@@ -34,7 +34,7 @@ The program language has seven node kinds:
 | --- | --- |
 | `Lit[b](words)` | Emits the stored `b`-bit words. An empty literal is supported so zero-element tensors remain representable. |
 | `Const[b,n](word)` | Emits `n >= 1` copies of one valid `b`-bit word. |
-| `Concat(P1,...,Pk)` | Requires `k >= 2` and equal child widths; emits children in order. |
+| `Concat(P1,...,Pk)` | Requires `k >= 2`, equal child widths, and positive child lengths; emits children in order. |
 | `Repeat[k](P)` | Requires `k >= 2`; repeats the complete child stream. |
 | `Map[op,params](P)` | Applies a total width-preserving bijection to each child word. |
 | `Scan[op](initial,P)` | Emits the explicit initial word, then accumulates exactly `n - 1` child updates. |
@@ -56,7 +56,15 @@ Each open search hole contains both a required type and the exact target stream 
 
 The finite grammar proposes constants, periods, split points, map parameters, rotations, and field layouts from the target under explicit caps. Depth, node, and expansion limits make every search terminate.
 
-Search begins with `Lit(target)` as the incumbent. It expands the leftmost hole, checks every complete candidate by executing it, and continues after the first completion.
+The proposal set is kept in a small normal form. Search omits identity maps,
+one-bit aliases, period-one repeats already represented by `Const`, and a
+parameterized field split when it is identical to the shorter parameter-free
+byte-plane or bit-plane form. This removes redundant derivations without
+changing the semantic language or archive format.
+
+Search begins with `Lit(target)` as the incumbent. It expands the leftmost hole,
+checks every complete candidate by executing it, and continues after the first
+completion.
 
 The winner is the smallest correct complete program encountered, measured by exact canonical serialized bytes. A budget limit bounds work; it is not a claim of finding the globally shortest possible program.
 
@@ -92,7 +100,12 @@ Without a learned prior, legal productions receive a uniform cost. With enough b
 
 `Lit` is one semantic node. Raw, bit-packed, canonical Huffman, and rANS are physical encodings of that node, not separate DSL productions.
 
-The encoder constructs every applicable literal representation and selects the shortest complete body. The comparison includes its tag, tables, lengths, and payload.
+The encoder computes the exact complete size of every applicable literal
+representation and materializes only the winner. The comparison includes its
+tag, tables, lengths, and payload. Exact lower bounds skip an rANS payload pass
+when its framing and entropy bound already cannot beat the incumbent.
+Size-only program costing reuses the same analysis without producing a
+temporary payload.
 
 Raw and bitpack are total. To bound table-building memory, Huffman and rANS are
 defined as applicable only up to 65,536 distinct physical words; larger
@@ -134,7 +147,9 @@ Calibration learns an encoder-only PHOG prior from complete tensor programs. It 
 
 The default cap is the paper's 256 tensors per checkpoint. A zero cap or empty corpus produces a valid empty prior.
 
-Counts use three context backoff levels, additive smoothing, and a configurable learned/uniform mixture. Unseen contexts remain uniform.
+Counts use three context backoff levels, additive smoothing, and a configurable
+learned/uniform mixture. The default uses the smoothed learned distribution
+directly (`lambda = 1`); unseen contexts remain uniform.
 
 Prior bytes are canonical and insertion-order independent. They influence compression search order only and are never required for decompression.
 
@@ -160,6 +175,13 @@ Compress and restore a safetensors file:
 ./zig-out/bin/brevis verify model.brta model.safetensors
 ```
 
+The file pipeline uses 32 tensor workers by default, matching the manuscript
+configuration. Set `--workers 1` for single-core measurements or choose an
+explicit count for scaling experiments. Workers synthesize or execute
+independent complete-tensor programs through a sliding window no larger than
+the worker count. Records are still written in source order, so archive bytes
+are deterministic across worker counts.
+
 Train a prior locally, then use it for queue ordering:
 
 ```bash
@@ -167,7 +189,7 @@ Train a prior locally, then use it for queue ordering:
 ./zig-out/bin/brevis compress model.safetensors model.brta --prior model.brgp
 ```
 
-The synthesis controls are:
+The main compute controls are:
 
 | Option | Default | Meaning |
 | --- | ---: | --- |
@@ -179,8 +201,12 @@ The synthesis controls are:
 | `--max-map-constants` | `2` | Maximum representative XOR/add constants. |
 | `--max-rotations` | `3` | Maximum proposed rotation amounts. |
 | `--max-field-splits` | `3` | Maximum proposed contiguous-field splits. |
+| `--workers` | `32` | Maximum concurrent complete-tensor jobs in file compression, decompression, and verification. |
 
 These limits trade search coverage for time and memory. They do not weaken the exact fallback or decoding checks.
+Use `--max-expansions 0` to measure the canonical terminal-codec path and
+`--max-expansions 1` for a low-cost bounded-search pilot. The manuscript setting
+remains the 512-expansion default and should be reported separately from both.
 The CLI enforces finite safety ceilings of 64 repeat-period elements, 16
 Concat splits, and 8 proposals for each constant, rotation, and field-split
 family.
@@ -196,16 +222,25 @@ The byte-resource controls, accepted by all commands, are:
 The defaults cap any single decoder materialization at 512 MiB. Raise them
 explicitly for trusted models containing larger tensors. SafeTensors limits
 are enforced before format-specific metadata allocations, and output files
-are written through synchronized atomic replacement.
+are written through synchronized atomic replacement. Parallel file paths keep
+at most one completed record per active worker before ordered output, so peak
+memory scales with the worker count and active tensor sizes rather than the
+complete checkpoint. Each emitted source-order result immediately reuses its
+window slot, avoiding a fixed batch barrier. Compression preserves source
+record order, and a root `Lit` may borrow its tensor bytes until that record is
+serialized. The zero-budget terminal path serializes the canonical program
+once and passes those bytes directly to archive framing. The public
+`synthesize` API remains owning; only the file pipeline uses the explicit
+borrowing seam.
 
 Canonical program readers additionally default to 512 MiB of output/literal
 storage and 4 GiB of cumulative interpreter byte-work, so a small deeply
 nested program cannot force unbounded repeated passes. These byte limits are
 not a process-RSS quota: compression retains a target/program candidate and
 constructs literal and record candidates, so peak memory can be several times
-the largest tensor. The file API avoids copying the complete source and
-archive, but still constructs one complete record at a time. For untrusted
-workloads, lower `--max-tensor-bytes` and apply an OS/container memory limit.
+the largest tensor per active worker. The file API avoids copying the complete
+source and archive. For untrusted workloads, lower `--max-tensor-bytes`, reduce
+`--workers`, and apply an OS/container memory limit.
 
 ## Build and test
 

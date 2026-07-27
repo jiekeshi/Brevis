@@ -34,6 +34,10 @@ fn expectWireAndDecode(
     try literal.emitBody(alloc, &emitted, encoding);
     try std.testing.expectEqual(literal.wireSize(encoding), emitted.items.len);
     try std.testing.expectEqual(encoding.wireSize(), emitted.items.len);
+    try std.testing.expectEqual(
+        encoding.wireSize(),
+        try literal.encodedSize(alloc, input),
+    );
     try std.testing.expectEqualSlices(u8, encoding.body, emitted.items);
 
     var decoded = try literal.decode(

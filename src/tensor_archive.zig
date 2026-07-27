@@ -97,10 +97,9 @@ pub const TensorRecord = struct {
     }
 };
 
-/// One independently decoded record together with the physical stream whose
-/// checksum has already been verified. This lets streaming consumers avoid
-/// executing a valid program a second time while preserving the strict
-/// behavior of the existing record APIs.
+/// One decoded record together with its checksum-verified physical stream.
+/// A root literal is exposed as a view into `record`; other roots own their
+/// decoded storage. In both cases the view remains valid until `deinit`.
 pub const VerifiedTensorRecord = struct {
     record: TensorRecord,
     decoded: types.Stream,
@@ -158,34 +157,126 @@ pub fn encodeTensorRecord(
     name: []const u8,
     tensor_program: dsl.TensorProgram,
 ) ![]u8 {
-    _ = try tensor_program.validate();
+    var decoded = try interpreter.executeTensor(alloc, tensor_program);
+    defer decoded.deinit(alloc);
+    return encodeTensorRecordWithChecksum(
+        alloc,
+        name,
+        tensor_program,
+        sha256(decoded.data),
+    );
+}
 
+/// Encode a synthesized program whose exact source bytes are already known.
+/// The archive checksum remains tied to the original tensor without executing
+/// the program a second time after synthesis has validated it.
+pub fn encodeTensorRecordForSource(
+    alloc: Allocator,
+    name: []const u8,
+    tensor_program: dsl.TensorProgram,
+    source: []const u8,
+) ![]u8 {
+    const tensor_type = try tensor_program.validate();
+    const expected_bytes = std.math.mul(
+        usize,
+        tensor_type.elements,
+        tensor_type.dtype.elemSize(),
+    ) catch return error.IntegerOverflow;
+    if (source.len != expected_bytes) return error.TensorLengthMismatch;
+    return encodeTensorRecordWithChecksum(
+        alloc,
+        name,
+        tensor_program,
+        sha256(source),
+    );
+}
+
+/// Encode using trusted canonical bytes already produced for `tensor_program`.
+pub fn encodePreparedTensorRecordForSource(
+    alloc: Allocator,
+    name: []const u8,
+    tensor_program: dsl.TensorProgram,
+    bytecode: []const u8,
+    source: []const u8,
+) ![]u8 {
+    const tensor_type = try tensor_program.validate();
+    const expected_bytes = std.math.mul(
+        usize,
+        tensor_type.elements,
+        tensor_type.dtype.elemSize(),
+    ) catch return error.IntegerOverflow;
+    if (source.len != expected_bytes) return error.TensorLengthMismatch;
+    return encodeTensorRecordWithBytecode(
+        alloc,
+        name,
+        tensor_program,
+        bytecode,
+        sha256(source),
+    );
+}
+
+fn encodeTensorRecordWithChecksum(
+    alloc: Allocator,
+    name: []const u8,
+    tensor_program: dsl.TensorProgram,
+    checksum: [CHECKSUM_BYTES]u8,
+) ![]u8 {
     const bytecode = try program_format.serialize(alloc, tensor_program.root);
     defer alloc.free(bytecode);
 
-    var decoded = try interpreter.executeTensor(alloc, tensor_program);
-    defer decoded.deinit(alloc);
-    const checksum = sha256(decoded.data);
+    return encodeTensorRecordWithBytecode(
+        alloc,
+        name,
+        tensor_program,
+        bytecode,
+        checksum,
+    );
+}
 
-    var body: std.ArrayList(u8) = .empty;
-    defer body.deinit(alloc);
-    var body_emitter = Emitter{ .allocator = alloc, .output = &body };
-    try body_emitter.writeByte(RECORD_TAG);
-    try body_emitter.writeUleb128(try usizeToU64(name.len));
-    try body_emitter.writeAll(name);
-    try body_emitter.writeByte(@intFromEnum(dtypeToWire(tensor_program.dtype)));
-    try body_emitter.writeUleb128(try usizeToU64(tensor_program.shape.len));
+fn encodeTensorRecordWithBytecode(
+    alloc: Allocator,
+    name: []const u8,
+    tensor_program: dsl.TensorProgram,
+    bytecode: []const u8,
+    checksum: [CHECKSUM_BYTES]u8,
+) ![]u8 {
+    var body_len: usize = 2;
+    body_len = try addSize(body_len, uleb128Size(try usizeToU64(name.len)));
+    body_len = try addSize(body_len, name.len);
+    body_len = try addSize(
+        body_len,
+        uleb128Size(try usizeToU64(tensor_program.shape.len)),
+    );
     for (tensor_program.shape) |dimension|
-        try body_emitter.writeUleb128(dimension);
-    try body_emitter.writeUleb128(try usizeToU64(bytecode.len));
-    try body_emitter.writeAll(bytecode);
-    try body_emitter.writeAll(&checksum);
+        body_len = try addSize(body_len, uleb128Size(dimension));
+    body_len = try addSize(
+        body_len,
+        uleb128Size(try usizeToU64(bytecode.len)),
+    );
+    body_len = try addSize(body_len, bytecode.len);
+    body_len = try addSize(body_len, checksum.len);
 
     var frame: std.ArrayList(u8) = .empty;
     errdefer frame.deinit(alloc);
+    try frame.ensureTotalCapacity(
+        alloc,
+        try addSize(
+            uleb128Size(try usizeToU64(body_len)),
+            body_len,
+        ),
+    );
     var frame_emitter = Emitter{ .allocator = alloc, .output = &frame };
-    try frame_emitter.writeUleb128(try usizeToU64(body.items.len));
-    try frame_emitter.writeAll(body.items);
+    try frame_emitter.writeUleb128(try usizeToU64(body_len));
+    try frame_emitter.writeByte(RECORD_TAG);
+    try frame_emitter.writeUleb128(try usizeToU64(name.len));
+    try frame_emitter.writeAll(name);
+    try frame_emitter.writeByte(@intFromEnum(dtypeToWire(tensor_program.dtype)));
+    try frame_emitter.writeUleb128(try usizeToU64(tensor_program.shape.len));
+    for (tensor_program.shape) |dimension|
+        try frame_emitter.writeUleb128(dimension);
+    try frame_emitter.writeUleb128(try usizeToU64(bytecode.len));
+    try frame_emitter.writeAll(bytecode);
+    try frame_emitter.writeAll(&checksum);
     return frame.toOwnedSlice(alloc);
 }
 
@@ -274,6 +365,22 @@ pub fn nextVerifiedTensorRecord(
     return verified;
 }
 
+/// Return the next complete length-delimited frame without decoding it.
+pub fn nextTensorRecordFrame(
+    bytes: []const u8,
+    position: *usize,
+    limits: DecodeLimits,
+) ArchiveError![]const u8 {
+    if (position.* > bytes.len) return error.Truncated;
+    const start = position.*;
+    var reader = Reader{ .bytes = bytes, .pos = start };
+    const body_len = try reader.readUsize();
+    if (body_len > limits.max_record_bytes) return error.RecordLimitExceeded;
+    _ = try reader.take(body_len);
+    position.* = reader.pos;
+    return bytes[start..reader.pos];
+}
+
 /// Decode an isolated, length-delimited record frame.
 pub fn decodeTensorRecord(
     alloc: Allocator,
@@ -285,6 +392,24 @@ pub fn decodeTensorRecord(
     errdefer record.deinit(alloc);
     if (position != frame.len) return error.TrailingBytes;
     return record;
+}
+
+/// Decode, execute, and checksum-verify one isolated record frame.
+pub fn decodeVerifiedTensorRecord(
+    alloc: Allocator,
+    frame: []const u8,
+    limits: DecodeLimits,
+) ArchiveError!VerifiedTensorRecord {
+    var position: usize = 0;
+    var verified = try nextVerifiedTensorRecord(
+        alloc,
+        frame,
+        &position,
+        limits,
+    );
+    errdefer verified.deinit(alloc);
+    if (position != frame.len) return error.TrailingBytes;
+    return verified;
 }
 
 /// Structurally parse an entire archive and reject bytes after the declared
@@ -330,6 +455,25 @@ pub fn executeVerified(
     if (!std.mem.eql(u8, &sha256(decoded.data), &record.checksum))
         return error.ChecksumMismatch;
     return decoded;
+}
+
+fn executeVerifiedForRecordLifetime(
+    alloc: Allocator,
+    record: TensorRecord,
+) ArchiveError!types.Stream {
+    switch (record.tensor_program.root.kind) {
+        .literal => |literal| {
+            if (record.tensor_program.root.children.len == 0) {
+                if (!std.mem.eql(u8, &sha256(literal.data), &record.checksum))
+                    return error.ChecksumMismatch;
+                var view = literal;
+                view.owns_data = false;
+                return view;
+            }
+        },
+        else => {},
+    }
+    return executeVerified(alloc, record);
 }
 
 fn decodeRecordBodyVerified(
@@ -424,7 +568,7 @@ fn decodeRecordBodyVerified(
     name_owned = false;
     errdefer record.deinit(alloc);
 
-    var decoded = try executeVerified(alloc, record);
+    var decoded = try executeVerifiedForRecordLifetime(alloc, record);
     errdefer decoded.deinit(alloc);
     if (decoded.data.len != output_bytes) return error.TensorLengthMismatch;
     return .{ .record = record, .decoded = decoded };
@@ -480,6 +624,10 @@ fn wireToDtype(wire: DtypeWireId) types.Dtype {
 
 fn usizeToU64(value: usize) ArchiveError!u64 {
     return std.math.cast(u64, value) orelse error.IntegerOverflow;
+}
+
+fn addSize(left: usize, right: usize) ArchiveError!usize {
+    return std.math.add(usize, left, right) catch error.IntegerOverflow;
 }
 
 const Emitter = struct {

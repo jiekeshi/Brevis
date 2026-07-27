@@ -26,7 +26,11 @@ pub const TensorExecuteError = ExecuteError || dsl.TensorValidationError;
 /// already owns the final tensor buffer.
 pub fn execute(alloc: Allocator, program: dsl.Program) ExecuteError!Stream {
     const output_type = try program.typeOf();
-    var output = try Stream.init(alloc, output_type.len, output_type.bits);
+    var output = try Stream.initUninitialized(
+        alloc,
+        output_type.len,
+        output_type.bits,
+    );
     errdefer output.deinit(alloc);
 
     try executeValidatedInto(alloc, program, output, output_type);
@@ -53,7 +57,7 @@ pub fn executeTensor(
     tensor_program: dsl.TensorProgram,
 ) TensorExecuteError!Stream {
     const tensor_type = try tensor_program.validate();
-    var output = try Stream.init(
+    var output = try Stream.initUninitialized(
         alloc,
         tensor_type.elements,
         tensor_type.dtype.bitWidth(),
@@ -119,12 +123,16 @@ fn writeInto(
                 return error.OutputTypeMismatch;
             try validateRegion(output.*, offset, literal.count);
 
-            const mask = wordMask(literal.bits_per_elem);
-            for (0..literal.count) |i| {
-                const word = literal.getU32(i);
-                if (word & ~mask != 0) return error.InvalidLiteralValue;
-                output.setU32(offset + i, word);
-            }
+            const elem_bytes = output.elemBytes();
+            const output_start = std.math.mul(
+                usize,
+                offset,
+                elem_bytes,
+            ) catch return error.LengthOverflow;
+            @memcpy(
+                output.data[output_start..][0..literal.data.len],
+                literal.data,
+            );
             break :blk literal.count;
         },
         .constant => |constant_value| blk: {
@@ -263,17 +271,13 @@ fn writeInto(
             if (merge_type.bits != output.bits_per_elem)
                 return error.OutputTypeMismatch;
             try validateRegion(output.*, offset, merge_type.len);
-            for (0..merge_type.len) |i| output.setU32(offset + i, 0);
 
-            // Materialize and combine one child at a time. This retains exact
-            // physical-word semantics while bounding scratch memory by the
-            // largest child stream.
             for (program.children, 0..) |child_program, child_index| {
                 const child_type = try child_program.typeOf();
                 if (child_type.len != merge_type.len)
                     return error.TypeMismatch;
 
-                var child = try Stream.init(
+                var child = try Stream.initUninitialized(
                     alloc,
                     child_type.len,
                     child_type.bits,
@@ -294,10 +298,10 @@ fn writeInto(
                 for (0..merge_type.len) |i| {
                     const shifted = child.getU32(i) << @intCast(shift);
                     const output_index = offset + i;
-                    output.setU32(
-                        output_index,
-                        output.getU32(output_index) | shifted,
-                    );
+                    output.setU32(output_index, if (child_index == 0)
+                        shifted
+                    else
+                        output.getU32(output_index) | shifted);
                 }
             }
             break :blk merge_type.len;
@@ -337,11 +341,4 @@ fn mergeChildShift(
         .byte_planes => std.math.cast(u8, child_index * 8) orelse
             return error.InvalidArity,
     };
-}
-
-fn wordMask(bits: u8) u32 {
-    return if (bits == 32)
-        std.math.maxInt(u32)
-    else
-        (@as(u32, 1) << @intCast(bits)) - 1;
 }

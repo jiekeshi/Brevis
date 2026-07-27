@@ -366,17 +366,17 @@ test "rANS round trip reports canonical state and exact consumption" {
     var prng = std.Random.DefaultPrng.init(0x5241_4e53);
     const random = prng.random();
 
-    for ([_]u8{ 8, 16, 32 }) |bits_per_elem| {
+    for ([_]u8{ 1, 7, 8, 9, 15, 16, 17, 23, 31, 32 }) |bits_per_elem| {
         var input = try Stream.init(alloc, 4097, bits_per_elem);
         defer input.deinit(alloc);
         const mask = widthMask(bits_per_elem);
         for (0..input.count) |index| {
-            const value = if (index % 17 < 13)
+            const value = (if (index % 17 < 13)
                 @as(u32, @intCast(index % 5))
             else if (bits_per_elem == 32)
                 random.int(u32)
             else
-                random.int(u32) & mask;
+                random.int(u32)) & mask;
             input.setU32(index, value);
         }
 
@@ -397,7 +397,22 @@ test "rANS round trip reports canonical state and exact consumption" {
         defer alloc.free(first_payload);
         const second_payload = try codec.ransEncode(alloc, input, table);
         defer alloc.free(second_payload);
+        const reference_payload = try codec.ransTesting.encodeReference(
+            alloc,
+            input,
+            table,
+        );
+        defer alloc.free(reference_payload);
         try std.testing.expectEqualSlices(u8, first_payload, second_payload);
+        try std.testing.expectEqualSlices(u8, reference_payload, first_payload);
+        try std.testing.expectEqual(
+            first_payload.len,
+            try codec.ransEncodedSize(alloc, input, table),
+        );
+        try std.testing.expectEqual(
+            first_payload.len,
+            try codec.ransTesting.encodedSizeReference(alloc, input, table),
+        );
 
         var decoded = try codec.ransDecodeWithState(
             alloc,
@@ -407,7 +422,28 @@ test "rANS round trip reports canonical state and exact consumption" {
             input.bits_per_elem,
         );
         defer decoded.stream.deinit(alloc);
+        var reference_decoded = try codec.ransTesting.decodeReference(
+            alloc,
+            first_payload,
+            table,
+            input.count,
+            input.bits_per_elem,
+        );
+        defer reference_decoded.stream.deinit(alloc);
         try expectStreamsEqual(input, decoded.stream);
+        try std.testing.expectEqualSlices(
+            u8,
+            reference_decoded.stream.data,
+            decoded.stream.data,
+        );
+        try std.testing.expectEqual(
+            reference_decoded.consumed_bytes,
+            decoded.consumed_bytes,
+        );
+        try std.testing.expectEqual(
+            reference_decoded.final_state,
+            decoded.final_state,
+        );
         try std.testing.expectEqual(first_payload.len, decoded.consumed_bytes);
         try std.testing.expectEqual(codec.RANS_L, decoded.final_state);
 
@@ -423,15 +459,56 @@ test "rANS round trip reports canonical state and exact consumption" {
             input.bits_per_elem,
         );
         defer bounded.stream.deinit(alloc);
+        var reference_bounded = try codec.ransTesting.decodeReference(
+            alloc,
+            with_trailing,
+            table,
+            input.count,
+            input.bits_per_elem,
+        );
+        defer reference_bounded.stream.deinit(alloc);
         try expectStreamsEqual(input, bounded.stream);
+        try std.testing.expectEqualSlices(
+            u8,
+            reference_bounded.stream.data,
+            bounded.stream.data,
+        );
+        try std.testing.expectEqual(
+            reference_bounded.consumed_bytes,
+            bounded.consumed_bytes,
+        );
+        try std.testing.expectEqual(
+            reference_bounded.final_state,
+            bounded.final_state,
+        );
         try std.testing.expectEqual(first_payload.len, bounded.consumed_bytes);
         try std.testing.expectEqual(codec.RANS_L, bounded.final_state);
 
         try std.testing.expectError(
             error.CorruptRansStream,
+            codec.ransTesting.decodeReference(
+                alloc,
+                first_payload[0..3],
+                table,
+                input.count,
+                input.bits_per_elem,
+            ),
+        );
+        try std.testing.expectError(
+            error.CorruptRansStream,
             codec.ransDecodeWithState(
                 alloc,
                 first_payload[0..3],
+                table,
+                input.count,
+                input.bits_per_elem,
+            ),
+        );
+        try std.testing.expectError(
+            error.CorruptRansStream,
+            codec.ransTesting.decodeReference(
+                alloc,
+                first_payload[0 .. first_payload.len - 1],
                 table,
                 input.count,
                 input.bits_per_elem,
@@ -452,6 +529,93 @@ test "rANS round trip reports canonical state and exact consumption" {
         defer histogram.deinit(alloc);
         try std.testing.expect(
             codec.ransLowerBytes(table, histogram) <= first_payload.len,
+        );
+    }
+}
+
+test "rANS reciprocal step matches division for every normalized frequency" {
+    const max_state = (codec.RANS_L << 8) - 1;
+    var frequency: u32 = 1;
+    while (frequency <= codec.RANS_PROB_SCALE) : (frequency += 1) {
+        const x_max = ((codec.RANS_L >> codec.RANS_PROB_BITS) << 8) *
+            frequency;
+        const states = [_]u32{
+            1,
+            codec.RANS_L,
+            x_max - 1,
+            @min(x_max, max_state),
+            @min(x_max + 1, max_state),
+            max_state,
+        };
+        for ([_]u32{ 0, codec.RANS_PROB_SCALE - frequency }) |cumulative| {
+            const info: codec.RansSymbol = .{
+                .freq = frequency,
+                .cum = cumulative,
+            };
+            for (states) |state| {
+                const reference = codec.ransTesting.stepReference(state, info);
+                const reciprocal = codec.ransTesting.stepReciprocal(state, info);
+                try std.testing.expectEqual(reference.state, reciprocal.state);
+                try std.testing.expectEqual(
+                    reference.emitted_len,
+                    reciprocal.emitted_len,
+                );
+                try std.testing.expectEqualSlices(
+                    u8,
+                    reference.emitted[0..reference.emitted_len],
+                    reciprocal.emitted[0..reciprocal.emitted_len],
+                );
+            }
+        }
+    }
+}
+
+test "rANS reciprocal encoder is byte-identical for random legal tables" {
+    const alloc = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x5241_4e53_4641_5354);
+    const random = prng.random();
+
+    var symbols = [_]u32{ 0, 1 };
+    var info: [2]codec.RansSymbol = undefined;
+    for (0..256) |_| {
+        const frequency = random.intRangeAtMost(
+            u32,
+            1,
+            codec.RANS_PROB_SCALE - 1,
+        );
+        info = .{
+            .{ .freq = frequency, .cum = 0 },
+            .{
+                .freq = codec.RANS_PROB_SCALE - frequency,
+                .cum = frequency,
+            },
+        };
+        const table: codec.RansTable = .{
+            .symbols = &symbols,
+            .info = &info,
+        };
+        const count = random.intRangeAtMost(usize, 0, 2048);
+        var input = try Stream.init(alloc, count, 8);
+        defer input.deinit(alloc);
+        for (0..count) |index|
+            input.setU32(index, random.uintLessThan(u8, 2));
+
+        const reference = try codec.ransTesting.encodeReference(
+            alloc,
+            input,
+            table,
+        );
+        defer alloc.free(reference);
+        const reciprocal = try codec.ransEncode(alloc, input, table);
+        defer alloc.free(reciprocal);
+        try std.testing.expectEqualSlices(u8, reference, reciprocal);
+        try std.testing.expectEqual(
+            reference.len,
+            try codec.ransTesting.encodedSizeReference(alloc, input, table),
+        );
+        try std.testing.expectEqual(
+            reference.len,
+            try codec.ransEncodedSize(alloc, input, table),
         );
     }
 }

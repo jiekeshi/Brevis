@@ -1,7 +1,7 @@
 # Brevis paper implementation specification
 
 This document is the engineering specification for the Brevis core. The
-normative source is `Synthzip-draft/main.pdf`, especially Equations (3)-(25),
+normative source is `Brevis-draft/main.pdf`, especially Equations (3)-(25),
 Figure 3, and Algorithm 1. When this document and the legacy implementation
 disagree, this document wins.
 
@@ -72,8 +72,8 @@ Every program has exactly one derived stream type `b[n]`.
   safetensors tensors remain representable without inventing a special
   out-of-language archive case.
 - `Const[b, n](v)` requires `n >= 1` and `v < 2^b`; it emits `n` copies.
-- `Concat(P1, ..., Pk)` requires `k >= 2` and equal child widths; it emits the
-  children in order and sums their lengths.
+- `Concat(P1, ..., Pk)` requires `k >= 2`, equal child widths, and positive
+  child lengths; it emits the children in order and sums their lengths.
 - `Repeat[k](P)` requires `k >= 2`; it repeats the complete child stream and
   multiplies its length by `k`.
 - `Map` requires a width-preserving bijection and preserves the child type.
@@ -137,6 +137,14 @@ The rule prior changes exploration order only. It must not change:
 - exact serialized size;
 - correctness checks;
 - final comparison between complete candidates.
+
+The target-directed proposal generator uses a semantics-preserving normal form.
+It omits identity maps, one-bit aliases, uniform period-one repeats already
+covered by `Const`, and parameterized field splits identical to the shorter
+parameter-free byte-plane or bit-plane form. This reduces redundant search
+paths without removing the corresponding programs from the DSL or wire format.
+PHOG normalization uses exactly the distinct production families admitted by
+the proposal generator.
 
 Finite parameter proposals plus explicit depth and node limits guarantee
 termination. These limits do not imply global optimality.
@@ -207,6 +215,13 @@ legal, and the complete target `Lit` incumbent remains available.
 The archive stores one program per tensor. Fixed-size blocks are not archive
 records and are not the unit of synthesis.
 
+File compression and decompression may process independent tensor records in
+parallel. The manuscript configuration uses 32 workers, each handling one
+complete tensor at a time. The implementation keeps a source-ordered sliding
+window no larger than the worker count and reuses a slot as soon as its result
+is emitted. Parallel execution must preserve source record order and produce
+the same canonical archive as one worker.
+
 An implementation may internally bound memory by lowering a tensor program to
 streamable regions. When regions need independent subprograms, that structure
 must be explicit in the tensor program:
@@ -257,6 +272,13 @@ execute(Program) -> exact physical-word stream
 ```
 
 The archive module composes these seams but does not define DSL semantics.
+`synthesize` returns an owning program. The file encoder may instead call an
+explicit borrowing variant whose root `Lit` refers to the input tensor only
+until immediate record serialization; every structured program owns its leaf
+storage. Synthesis also returns the canonical bytecode selected for the
+winner, so the zero-budget terminal path does not repeat its serialized-size
+and serialization passes during archive framing. These lifetime and execution
+optimizations do not change the program bytes or the decoder interface.
 
 Required acceptance properties:
 

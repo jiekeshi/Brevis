@@ -3,10 +3,10 @@
 
 The module deliberately keeps algorithm timing narrow: after both diagnostic log
 files are open, a clock starts immediately before the compressor/decompressor
-process is spawned and stops when that process exits. Input staging, output
-inspection, hashing, and bit-for-bit verification all happen outside the timed
-region. Every compressor writes an archive to disk and every decompressor writes
-a restored file to disk.
+process is spawned and stops after a successful output has been fsynced. Input
+staging, output inspection, hashing, and bit-for-bit verification all happen
+outside the timed region. Every compressor writes an archive to disk and every
+decompressor writes a restored file to disk.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from typing import Any, Mapping
 
 
 SCHEMA_ID = "brevis.generic-baseline-benchmark"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PROFILES = ("speed", "default", "ratio")
 DEFAULT_REPETITIONS = 6
 DEFAULT_SCHEDULE_SEED = 2701
@@ -135,10 +135,17 @@ SERIAL_CLI = ThreadPolicy(
     requested_decompression_threads=1,
 )
 RAW_COPY = ThreadPolicy(
-    compression="one cp process; threading is not configurable",
-    decompression="one cp process; threading is not configurable",
+    compression="one Python streaming-copy process; threading is not configurable",
+    decompression="one Python streaming-copy process; threading is not configurable",
     requested_compression_threads=None,
     requested_decompression_threads=None,
+)
+RAW_COPY_PROGRAM = (
+    "import sys\n"
+    "with open(sys.argv[1], 'rb') as source, "
+    "open(sys.argv[2], 'xb') as output:\n"
+    "    while chunk := source.read(1048576):\n"
+    "        output.write(chunk)\n"
 )
 XZ_SINGLE = ThreadPolicy(
     compression="one worker requested explicitly",
@@ -189,19 +196,15 @@ def _build_registry() -> tuple[BaselineSpec, ...]:
         BaselineSpec(
             method="raw",
             profile="copy",
-            executable="cp",
+            executable=sys.executable,
             version_args=("--version",),
-            compress_args=(
-                "--reflink=never", "--sparse=never", "--", "{input}", "{output}",
-            ),
-            decompress_args=(
-                "--reflink=never", "--sparse=never", "--", "{input}", "{output}",
-            ),
+            compress_args=("-c", RAW_COPY_PROGRAM, "{input}", "{output}"),
+            decompress_args=("-c", RAW_COPY_PROGRAM, "{input}", "{output}"),
             thread_policy=RAW_COPY,
             notes=(
-                "Uncompressed regular-file logical-copy reference; --reflink=never "
-                "prevents a copy-on-write clone and --sparse=never prevents sparse "
-                "output. No codec is applied."
+                "Uncompressed regular-file logical-copy reference using explicit "
+                "1 MiB Python reads and writes, without clone or sparse-seek APIs. "
+                "No codec is applied."
             ),
         )
     ]
@@ -259,7 +262,11 @@ def _build_registry() -> tuple[BaselineSpec, ...]:
         ),
         (
             "ratio", ("-19",),
-            "Ratio-oriented level 19, bounded to regular levels; --ultra levels 20--22 are outside this profile.",
+            "Ratio-oriented level 19, bounded to regular levels.",
+        ),
+        (
+            "ultra", ("--ultra", "-22"),
+            "Ceiling-oriented extreme profile: Zstandard ultra level 22.",
         ),
     ):
         specs.append(BaselineSpec(
@@ -506,11 +513,18 @@ def _wait_direct_child(
         return exit_code, None, True, "popen_wait", "non-POSIX fallback"
 
 
+def _fsync_file(path: pathlib.Path) -> None:
+    with path.open("rb") as output:
+        os.fsync(output.fileno())
+
+
 def _run_process(
     command: Sequence[str],
     log_dir: pathlib.Path,
     label: str,
     timeout_seconds: float | None,
+    *,
+    durable_output: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     """Run one process and return non-cumulative timing and resource data."""
 
@@ -526,6 +540,19 @@ def _run_process(
     timed_out = False
     wait_strategy: str | None = None
     wait_strategy_detail: str | None = None
+    durability = {
+        "policy": (
+            "file_fsync_after_successful_exit_before_wall_clock_stop"
+            if durable_output is not None
+            else "none"
+        ),
+        "target_path": str(durable_output) if durable_output is not None else None,
+        "attempted": False,
+        "succeeded": None,
+        "status_code": "not_requested" if durable_output is None else "not_attempted",
+        "error": None,
+        "included_in_wall_time": False,
+    }
     operation_started_at_utc = _utc_now()
     try:
         with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
@@ -547,6 +574,18 @@ def _run_process(
             exit_code, usage, timed_out, wait_strategy, wait_strategy_detail = _wait_direct_child(
                 process, wait_timeout,
             )
+            if durable_output is not None and not timed_out and exit_code == 0:
+                durability["attempted"] = True
+                durability["included_in_wall_time"] = True
+                try:
+                    _fsync_file(durable_output)
+                except OSError as exc:
+                    durability["succeeded"] = False
+                    durability["status_code"] = "failed"
+                    durability["error"] = f"{type(exc).__name__}: {exc}"
+                else:
+                    durability["succeeded"] = True
+                    durability["status_code"] = "ok"
             ended_ns = time.perf_counter_ns()
     except OSError as exc:
         error = f"{type(exc).__name__}: {exc}"
@@ -557,6 +596,9 @@ def _run_process(
         if process is not None:
             _force_cleanup_process_tree(process)
         raise
+
+    if durable_output is not None and durability["status_code"] == "not_attempted":
+        durability["status_code"] = "not_attempted_process_failed"
 
     if started_ns is None:
         # Opening a log failed before the timed region could begin.
@@ -573,6 +615,8 @@ def _run_process(
         status_code = "timed_out"
     elif error is not None:
         status_code = "launch_or_wait_error"
+    elif durability["status_code"] == "failed":
+        status_code = "durability_failed"
     elif exit_code == 0:
         status_code = "ok"
     elif exit_code is not None and exit_code < 0:
@@ -604,6 +648,7 @@ def _run_process(
         "stdout": _captured_bytes(stdout),
         "stderr": _captured_bytes(stderr),
         "error": error,
+        "durability": durability,
     }
 
 
@@ -712,6 +757,11 @@ def _failure_for(
             "compression_nonzero_exit",
             f"compression exited with status {compression['exit_code']}",
         )
+    if compression["durability"]["status_code"] == "failed":
+        return (
+            "compression_durability_failed",
+            f"compression output durability failed: {compression['durability']['error']}",
+        )
     if not compressed_exists:
         return "archive_missing", "compression exited successfully but produced no archive"
     if archive_hash_error is not None:
@@ -732,6 +782,11 @@ def _failure_for(
         return (
             "decompression_nonzero_exit",
             f"decompression exited with status {decompression['exit_code']}",
+        )
+    if decompression["durability"]["status_code"] == "failed":
+        return (
+            "decompression_durability_failed",
+            f"decompression output durability failed: {decompression['durability']['error']}",
         )
     if verification is None:
         return "verification_not_started", "verification was not started"
@@ -770,6 +825,7 @@ def _run_iteration(
     ]
     compression = _run_process(
         compress_command, run_dir, "compression", timeout_seconds,
+        durable_output=compressed,
     )
 
     compressed_exists = compressed.is_file()
@@ -792,7 +848,7 @@ def _run_iteration(
     archive_staging: str | None = None
     restored = decompress_dir / "restored.bin"
 
-    if compression["error"] is None and compression["exit_code"] == 0 and compressed_exists:
+    if compression["status_code"] == "ok" and compressed_exists:
         if spec.implicit_suffix:
             staged_archive = pathlib.Path(f"{restored}{spec.implicit_suffix}")
         else:
@@ -804,12 +860,13 @@ def _run_iteration(
         ]
         decompression = _run_process(
             decompress_command, run_dir, "decompression", timeout_seconds,
+            durable_output=restored,
         )
         decompression["output_size_bytes"] = restored.stat().st_size if restored.is_file() else None
         decompression["output_storage"] = (
             _file_allocation(restored) if restored.is_file() else None
         )
-        if decompression["error"] is None and decompression["exit_code"] == 0:
+        if decompression["status_code"] == "ok":
             # This full scan is intentionally after _run_process has stopped its clock.
             verification = _verify_file(source, restored, source_sha256)
 
@@ -1421,6 +1478,7 @@ def benchmark_file(
     version_probe_timeout_seconds: float | None = DEFAULT_VERSION_PROBE_TIMEOUT_SECONDS,
     schedule_seed: int = DEFAULT_SCHEDULE_SEED,
     input_metadata: Mapping[str, Any] | None = None,
+    evidence_policy: Mapping[str, Any] | None = None,
     expected_source_size_bytes: int | None = None,
     expected_source_sha256: str | None = None,
     manifest_path: os.PathLike[str] | str | None = None,
@@ -1457,10 +1515,15 @@ def benchmark_file(
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
 
     metadata = dict(input_metadata or {})
+    policy = dict(evidence_policy or {})
     try:
         json.dumps(metadata)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"input_metadata must be JSON serializable: {exc}") from exc
+    try:
+        json.dumps(policy)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"evidence_policy must be JSON serializable: {exc}") from exc
 
     started_at_utc = _utc_now()
     source_size = source_path.stat().st_size
@@ -1535,6 +1598,7 @@ def benchmark_file(
             },
             "integrity": integrity,
             "input_metadata": metadata,
+            "evidence_policy": policy or None,
             "configuration": {
                 "warmups": warmups,
                 "repetitions": repetitions,
@@ -1561,16 +1625,19 @@ def benchmark_file(
                     "best-effort buffered I/O: source hashing and independent copy staging can "
                     "warm the page cache, but the harness neither flushes the cache nor guarantees "
                     "page residency; warmups precede measurements; every archive is hashed and "
-                    "independently copied before decoding; raw/copy uses --reflink=never and "
-                    "--sparse=never"
+                    "independently copied before decoding; raw/copy uses explicit 1 MiB reads "
+                    "and writes without clone or sparse-seek APIs"
                 ),
                 "io_policy": (
-                    "regular on-disk files; no explicit fsync or drop_caches; xz, Zstandard, "
-                    "and LZ4 decoders use --no-sparse; Zstandard compression and decoding "
-                    "use --no-asyncio"
+                    "regular on-disk files; successful compression archives and successful "
+                    "decompression outputs receive file fsync before their wall clocks stop; "
+                    "source and staging files are not fsynced; no directory fsync or "
+                    "drop_caches; xz, Zstandard, and LZ4 decoders use --no-sparse; "
+                    "Zstandard compression and decoding use --no-asyncio"
                 ),
                 "timing_scope": (
-                    "after stdout/stderr log open, immediately before process spawn, through process reap"
+                    "after stdout/stderr log open, immediately before process spawn, through "
+                    "process reap and successful output file fsync"
                 ),
                 "verification_scope": (
                     "complete post-timing byte scan on every successful decompression"
@@ -1859,6 +1926,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-revision")
     parser.add_argument("--manifest")
     parser.add_argument("--shard")
+    parser.add_argument(
+        "--engineering-evidence",
+        action="store_true",
+        help="mark the standalone result as engineering-only evidence",
+    )
     parser.add_argument("--expected-source-size", type=int)
     parser.add_argument("--expected-source-sha256")
     parser.add_argument("--expected-manifest-sha256")
@@ -1912,6 +1984,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             version_probe_timeout_seconds=args.version_probe_timeout_seconds,
             schedule_seed=args.schedule_seed,
             input_metadata=metadata,
+            evidence_policy=(
+                {
+                    "run_class": "engineering",
+                    "paper_eligible": False,
+                    "reason": "standalone engineering run outside a frozen formal campaign",
+                }
+                if args.engineering_evidence
+                else None
+            ),
             expected_source_size_bytes=args.expected_source_size,
             expected_source_sha256=args.expected_source_sha256,
             manifest_path=args.manifest,

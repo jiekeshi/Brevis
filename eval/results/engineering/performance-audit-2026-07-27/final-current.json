@@ -1,0 +1,1658 @@
+{
+  "calibration": null,
+  "configuration": {
+    "artifact_root": null,
+    "artifacts_retained": false,
+    "cache_policy": "best-effort buffered I/O; the harness does not flush host page cache or claim cold-cache or guaranteed warm-cache timing",
+    "execution_schedule": [
+      {
+        "direction": "forward",
+        "index": 0,
+        "phase": "warmup",
+        "workers": [
+          1,
+          8
+        ]
+      },
+      {
+        "direction": "forward",
+        "index": 0,
+        "phase": "measured",
+        "workers": [
+          1,
+          8
+        ]
+      },
+      {
+        "direction": "reverse",
+        "index": 1,
+        "phase": "measured",
+        "workers": [
+          8,
+          1
+        ]
+      },
+      {
+        "direction": "forward",
+        "index": 2,
+        "phase": "measured",
+        "workers": [
+          1,
+          8
+        ]
+      }
+    ],
+    "io_policy": "Brevis file commands sync each successful temporary output before atomic replacement inside the measured child process; the harness does not issue a second fsync or directory fsync",
+    "measured_repetitions_per_worker": 3,
+    "prior_policy": "none",
+    "requested_cli_options": {
+      "max_expansions": 0,
+      "seed_float_fields": 0
+    },
+    "timeout_seconds_per_operation": 3600.0,
+    "timing_scope": "wall clock starts immediately before process spawn and stops after direct-child reap; input/output hashing and exact byte comparison are outside the timed region",
+    "warmups_per_worker": 1,
+    "workers": [
+      1,
+      8
+    ]
+  },
+  "ended_at_utc": "2026-07-27T03:01:36.294155+00:00",
+  "environment": {
+    "cpu": {
+      "affinity_logical_cores": null,
+      "logical_cores_host": 8,
+      "model": null,
+      "physical_cores_host": null,
+      "quota": {
+        "period_microseconds": null,
+        "quota_cores": null,
+        "quota_microseconds": null,
+        "source": null
+      }
+    },
+    "filesystems": {
+      "source": {
+        "device": 16777229,
+        "filesystem_type": null,
+        "free_bytes": 365688418304,
+        "mount_option_names": null,
+        "mount_point": null,
+        "path": "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+        "source": null,
+        "total_bytes": 994662584320,
+        "used_bytes": 628974166016
+      },
+      "work": {
+        "device": 16777229,
+        "filesystem_type": null,
+        "free_bytes": 365688418304,
+        "mount_option_names": null,
+        "mount_point": null,
+        "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw",
+        "source": null,
+        "total_bytes": 994662584320,
+        "used_bytes": 628974166016
+      }
+    },
+    "hostname": "Jiekes-MacBook-Air.local",
+    "machine": "arm64",
+    "memory": {
+      "available_bytes_at_start": null,
+      "cgroup_limit_bytes": null,
+      "cgroup_limit_source": null,
+      "total_bytes": 25769803776
+    },
+    "processor": "arm",
+    "python": "3.14.2",
+    "release": "25.5.0",
+    "system": "Darwin",
+    "thread_environment_variables": {
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null
+    }
+  },
+  "evidence_policy": {
+    "paper_metrics_eligible": false,
+    "reason": "This harness records reproducible engineering measurements but does not certify a preregistered clean formal campaign.",
+    "run_class": "engineering"
+  },
+  "generic_baselines": null,
+  "limitations": [
+    "The result remains engineering evidence even for a clean tree.",
+    "The binary hash binds the executed artifact, but this harness does not rebuild it or infer its compiler and optimization flags.",
+    "Direct-child resource counters do not aggregate descendant processes.",
+    "Worker configurations are alternated but BRTA and optional generic methods are scheduled in separate phases.",
+    "The harness does not drop or pin the host page cache."
+  ],
+  "measured_archive_consistency": {
+    "distinct_archives": [
+      {
+        "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+        "size_bytes": 171762137
+      }
+    ],
+    "expected_measured_runs": 6,
+    "reference_sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+    "reference_size_bytes": 171762137,
+    "status": "consistent",
+    "successful_exact_runs": 6
+  },
+  "prior": null,
+  "provenance": {
+    "binary": {
+      "path": "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+      "sha256": "299610330e0873ba302316c1025fb178602b64bdf812d7ced812bf94cef578ef",
+      "sha256_after_runs": "299610330e0873ba302316c1025fb178602b64bdf812d7ced812bf94cef578ef",
+      "unchanged_during_benchmark": true
+    },
+    "git": {
+      "after": {
+        "branch": "codex/paper-dsl-refactor",
+        "commit": "ad2d71ef798a3caf65c69ee14a630da2986092ba",
+        "dirty": true,
+        "excluded_generated_paths": [],
+        "repository": "/Users/jiekeshi/Documents/GitHub/Brevis",
+        "status_porcelain": " M README.md\n M build.zig\n M docs/PAPER_IMPLEMENTATION_SPEC.md\n M eval/README.md\n M eval/benchmarking.py\n M eval/test_benchmarking.py\n M src/codec.zig\n M src/codec_tests.zig\n M src/decomposition.zig\n M src/dsl.zig\n M src/grammar.zig\n M src/grammar_prior.zig\n M src/grammar_prior_tests.zig\n M src/grammar_tests.zig\n M src/interpreter.zig\n M src/literal_encoding.zig\n M src/literal_encoding_tests.zig\n M src/main.zig\n M src/paper_pipeline.zig\n M src/paper_pipeline_tests.zig\n M src/paper_tests.zig\n M src/program_format.zig\n M src/synthesizer.zig\n M src/synthesizer_tests.zig\n M src/tensor_archive.zig\n M src/tensor_archive_tests.zig\n M src/tests.zig\n M src/types.zig\n?? docs/PRIMARY_SOURCE_RESEARCH_2026-07-27.md\n?? eval/BRTA_V1_PILOT_2026-07-27.md\n?? eval/brta_benchmarking.py\n?? eval/brta_program_inventory.py\n?? eval/results/engineering/\n?? eval/test_brta_benchmarking.py\n?? eval/test_brta_program_inventory.py",
+        "tracked_diff_sha256": "ffc35fc78583c2d39940a1a35bd2c192904a8f0f8823fd005282121f35c0532c"
+      },
+      "branch": "codex/paper-dsl-refactor",
+      "commit": "ad2d71ef798a3caf65c69ee14a630da2986092ba",
+      "dirty": true,
+      "excluded_generated_paths": [],
+      "repository": "/Users/jiekeshi/Documents/GitHub/Brevis",
+      "status_porcelain": " M README.md\n M build.zig\n M docs/PAPER_IMPLEMENTATION_SPEC.md\n M eval/README.md\n M eval/benchmarking.py\n M eval/test_benchmarking.py\n M src/codec.zig\n M src/codec_tests.zig\n M src/decomposition.zig\n M src/dsl.zig\n M src/grammar.zig\n M src/grammar_prior.zig\n M src/grammar_prior_tests.zig\n M src/grammar_tests.zig\n M src/interpreter.zig\n M src/literal_encoding.zig\n M src/literal_encoding_tests.zig\n M src/main.zig\n M src/paper_pipeline.zig\n M src/paper_pipeline_tests.zig\n M src/paper_tests.zig\n M src/program_format.zig\n M src/synthesizer.zig\n M src/synthesizer_tests.zig\n M src/tensor_archive.zig\n M src/tensor_archive_tests.zig\n M src/tests.zig\n M src/types.zig\n?? docs/PRIMARY_SOURCE_RESEARCH_2026-07-27.md\n?? eval/BRTA_V1_PILOT_2026-07-27.md\n?? eval/brta_benchmarking.py\n?? eval/brta_program_inventory.py\n?? eval/results/engineering/\n?? eval/test_brta_benchmarking.py\n?? eval/test_brta_program_inventory.py",
+      "tracked_diff_sha256": "ffc35fc78583c2d39940a1a35bd2c192904a8f0f8823fd005282121f35c0532c",
+      "unchanged_during_benchmark": true
+    },
+    "harness": {
+      "path": "/Users/jiekeshi/Documents/GitHub/Brevis/eval/brta_benchmarking.py",
+      "sha256": "38291eb2d4288d7967a7e6a841033d3ed6588e580220443aad7486970b18fc71",
+      "sha256_after_runs": "38291eb2d4288d7967a7e6a841033d3ed6588e580220443aad7486970b18fc71",
+      "unchanged_during_benchmark": true
+    },
+    "process_helper": {
+      "path": "/Users/jiekeshi/Documents/GitHub/Brevis/eval/benchmarking.py",
+      "sha256": "570ed02e862c7462a0b6d084da1bfb73fbfb3bf8428e4dd4f9bf6dbccbcfd429",
+      "sha256_after_runs": "570ed02e862c7462a0b6d084da1bfb73fbfb3bf8428e4dd4f9bf6dbccbcfd429",
+      "unchanged_during_benchmark": true
+    }
+  },
+  "schema": {
+    "id": "brevis.brta-v1-engineering-benchmark",
+    "version": 1
+  },
+  "source": {
+    "declared_identity_verified": true,
+    "expected_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+    "expected_size_bytes": 219850592,
+    "label": "smollm-w8a8-bf16-terminal-final-current",
+    "path": "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+    "sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+    "sha256_after_runs": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+    "size_bytes": 219850592,
+    "unchanged_during_benchmark": true
+  },
+  "started_at_utc": "2026-07-27T03:01:03.950239+00:00",
+  "status": "complete",
+  "worker_results": [
+    {
+      "config_probe": {
+        "command": [
+          "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+          "config",
+          "--max-expansions",
+          "0",
+          "--seed-float-fields",
+          "0",
+          "--workers",
+          "1"
+        ],
+        "effective": {
+          "archive": "BRTA-v1",
+          "literal_fallback": true,
+          "max_concat_splits": 3,
+          "max_decomposition_bytes": 536870912,
+          "max_depth": 4,
+          "max_expansions": 0,
+          "max_field_splits": 3,
+          "max_map_constants": 2,
+          "max_nodes": 64,
+          "max_prefix_bytes": 67108864,
+          "max_repeat_period": 32,
+          "max_rotations": 3,
+          "max_tensor_bytes": 536870912,
+          "max_total_bytes": 17179869184,
+          "objective": "canonical_program_bytes",
+          "phog_role": "queue_order_only",
+          "seed_float_fields": false,
+          "synthesis_unit": "complete_tensor",
+          "workers": 1
+        },
+        "process": {
+          "command": [
+            "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+            "config",
+            "--max-expansions",
+            "0",
+            "--seed-float-fields",
+            "0",
+            "--workers",
+            "1"
+          ],
+          "direct_child_max_rss_bytes": 1638400,
+          "direct_child_system_cpu_time_ns": 1367999,
+          "direct_child_user_cpu_time_ns": 1782000,
+          "durability": {
+            "attempted": false,
+            "error": null,
+            "included_in_wall_time": false,
+            "policy": "none",
+            "status_code": "not_requested",
+            "succeeded": null,
+            "target_path": null
+          },
+          "ended_at_utc": "2026-07-27T03:01:03.957924+00:00",
+          "error": null,
+          "exit_code": 0,
+          "process_group_id": 7416,
+          "process_group_isolated": true,
+          "started_at_utc": "2026-07-27T03:01:03.951670+00:00",
+          "started_new_session": true,
+          "status_code": "ok",
+          "stderr": {
+            "base64": "",
+            "size_bytes": 0,
+            "text": ""
+          },
+          "stdout": {
+            "base64": "ewogICJzeW50aGVzaXNfdW5pdCI6ICJjb21wbGV0ZV90ZW5zb3IiLAogICJvYmplY3RpdmUiOiAiY2Fub25pY2FsX3Byb2dyYW1fYnl0ZXMiLAogICJsaXRlcmFsX2ZhbGxiYWNrIjogdHJ1ZSwKICAicGhvZ19yb2xlIjogInF1ZXVlX29yZGVyX29ubHkiLAogICJhcmNoaXZlIjogIkJSVEEtdjEiLAogICJ3b3JrZXJzIjogMSwKICAibWF4X2V4cGFuc2lvbnMiOiAwLAogICJtYXhfbm9kZXMiOiA2NCwKICAic2VlZF9mbG9hdF9maWVsZHMiOiBmYWxzZSwKICAibWF4X2RlY29tcG9zaXRpb25fYnl0ZXMiOiA1MzY4NzA5MTIsCiAgIm1heF9kZXB0aCI6IDQsCiAgIm1heF9yZXBlYXRfcGVyaW9kIjogMzIsCiAgIm1heF9jb25jYXRfc3BsaXRzIjogMywKICAibWF4X21hcF9jb25zdGFudHMiOiAyLAogICJtYXhfcm90YXRpb25zIjogMywKICAibWF4X2ZpZWxkX3NwbGl0cyI6IDMsCiAgIm1heF90b3RhbF9ieXRlcyI6IDE3MTc5ODY5MTg0LAogICJtYXhfdGVuc29yX2J5dGVzIjogNTM2ODcwOTEyLAogICJtYXhfcHJlZml4X2J5dGVzIjogNjcxMDg4NjQKfQo=",
+            "size_bytes": 542,
+            "text": "{\n  \"synthesis_unit\": \"complete_tensor\",\n  \"objective\": \"canonical_program_bytes\",\n  \"literal_fallback\": true,\n  \"phog_role\": \"queue_order_only\",\n  \"archive\": \"BRTA-v1\",\n  \"workers\": 1,\n  \"max_expansions\": 0,\n  \"max_nodes\": 64,\n  \"seed_float_fields\": false,\n  \"max_decomposition_bytes\": 536870912,\n  \"max_depth\": 4,\n  \"max_repeat_period\": 32,\n  \"max_concat_splits\": 3,\n  \"max_map_constants\": 2,\n  \"max_rotations\": 3,\n  \"max_field_splits\": 3,\n  \"max_total_bytes\": 17179869184,\n  \"max_tensor_bytes\": 536870912,\n  \"max_prefix_bytes\": 67108864\n}\n"
+          },
+          "term_signal": null,
+          "timed_out": false,
+          "timeout_seconds": 3600.0,
+          "wait_strategy": "wait4_wnohang_1ms_poll",
+          "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+          "wall_time_ns": 5877500
+        }
+      },
+      "runs": [
+        {
+          "archive": {
+            "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-1/model.brta",
+            "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "sha256_after_decode": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "size_bytes": 171762137,
+            "storage": {
+              "allocated_size_bytes": 187912192,
+              "logical_size_bytes": 171762137,
+              "st_blocks_512b": 367016
+            },
+            "unchanged_during_decode": true
+          },
+          "archive_consistency": {
+            "matches_reference": true,
+            "reference_sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "reference_size_bytes": 171762137
+          },
+          "artifact_directory": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-1",
+          "bit_exact": true,
+          "commands": {
+            "compress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-1/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "1"
+            ],
+            "decompress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-1/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-1/restored.safetensors",
+              "--workers",
+              "1"
+            ]
+          },
+          "compression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-1/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "1"
+            ],
+            "direct_child_max_rss_bytes": 340951040,
+            "direct_child_system_cpu_time_ns": 71321000,
+            "direct_child_user_cpu_time_ns": 1815011000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:12.587899+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7589,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:10.639012+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "Y29tcHJlc3NlZCA0ODMgdGVuc29yczogMjE5ODUwNTkyIC0+IDE3MTc2MjEzNyBieXRlcyAoMS4yODB4KQpzZWFyY2g6IGV4cGFuZGVkPTAsIGNvbXBsZXRlZD0wLCBidWRnZXRfZXhoYXVzdGVkPTQ4MywgbGl0ZXJhbF9mYWxsYmFjaz00ODMsIHByaW9yPXVuaWZvcm0K",
+              "size_bytes": 153,
+              "text": "compressed 483 tensors: 219850592 -> 171762137 bytes (1.280x)\nsearch: expanded=0, completed=0, budget_exhausted=483, literal_fallback=483, prior=uniform\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 1948381125
+          },
+          "decompression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-1/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-1/restored.safetensors",
+              "--workers",
+              "1"
+            ],
+            "direct_child_max_rss_bytes": 235290624,
+            "direct_child_system_cpu_time_ns": 75337000,
+            "direct_child_user_cpu_time_ns": 1980593000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:14.818102+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7638,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:12.727155+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "ZGVjb21wcmVzc2VkIDQ4MyB0ZW5zb3JzOiAxNzE3NjIxMzcgLT4gMjE5ODUwNTkyIGJ5dGVzCg==",
+              "size_bytes": 55,
+              "text": "decompressed 483 tensors: 171762137 -> 219850592 bytes\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 2090292417
+          },
+          "execution_order": 3,
+          "failure": null,
+          "index": 0,
+          "phase": "measured",
+          "success": true,
+          "verification": {
+            "attempted": true,
+            "bit_exact": true,
+            "error": null,
+            "restored_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+            "restored_size_bytes": 219850592,
+            "restored_storage": {
+              "allocated_size_bytes": 234807296,
+              "logical_size_bytes": 219850592,
+              "st_blocks_512b": 458608
+            },
+            "source_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+          },
+          "workers": 1
+        },
+        {
+          "archive": {
+            "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-1/model.brta",
+            "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "sha256_after_decode": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "size_bytes": 171762137,
+            "storage": {
+              "allocated_size_bytes": 181456896,
+              "logical_size_bytes": 171762137,
+              "st_blocks_512b": 354408
+            },
+            "unchanged_during_decode": true
+          },
+          "archive_consistency": {
+            "matches_reference": true,
+            "reference_sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "reference_size_bytes": 171762137
+          },
+          "artifact_directory": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-1",
+          "bit_exact": true,
+          "commands": {
+            "compress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-1/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "1"
+            ],
+            "decompress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-1/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-1/restored.safetensors",
+              "--workers",
+              "1"
+            ]
+          },
+          "compression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-1/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "1"
+            ],
+            "direct_child_max_rss_bytes": 304152576,
+            "direct_child_system_cpu_time_ns": 159721000,
+            "direct_child_user_cpu_time_ns": 2334723000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:23.489820+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7909,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:20.381810+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "Y29tcHJlc3NlZCA0ODMgdGVuc29yczogMjE5ODUwNTkyIC0+IDE3MTc2MjEzNyBieXRlcyAoMS4yODB4KQpzZWFyY2g6IGV4cGFuZGVkPTAsIGNvbXBsZXRlZD0wLCBidWRnZXRfZXhoYXVzdGVkPTQ4MywgbGl0ZXJhbF9mYWxsYmFjaz00ODMsIHByaW9yPXVuaWZvcm0K",
+              "size_bytes": 153,
+              "text": "compressed 483 tensors: 219850592 -> 171762137 bytes (1.280x)\nsearch: expanded=0, completed=0, budget_exhausted=483, literal_fallback=483, prior=uniform\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 3107355958
+          },
+          "decompression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-1/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-1/restored.safetensors",
+              "--workers",
+              "1"
+            ],
+            "direct_child_max_rss_bytes": 235044864,
+            "direct_child_system_cpu_time_ns": 193342000,
+            "direct_child_user_cpu_time_ns": 1969026999,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:26.455643+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 8004,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:23.677109+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "ZGVjb21wcmVzc2VkIDQ4MyB0ZW5zb3JzOiAxNzE3NjIxMzcgLT4gMjE5ODUwNTkyIGJ5dGVzCg==",
+              "size_bytes": 55,
+              "text": "decompressed 483 tensors: 171762137 -> 219850592 bytes\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 2777305333
+          },
+          "execution_order": 6,
+          "failure": null,
+          "index": 1,
+          "phase": "measured",
+          "success": true,
+          "verification": {
+            "attempted": true,
+            "bit_exact": true,
+            "error": null,
+            "restored_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+            "restored_size_bytes": 219850592,
+            "restored_storage": {
+              "allocated_size_bytes": 230744064,
+              "logical_size_bytes": 219850592,
+              "st_blocks_512b": 450672
+            },
+            "source_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+          },
+          "workers": 1
+        },
+        {
+          "archive": {
+            "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-1/model.brta",
+            "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "sha256_after_decode": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "size_bytes": 171762137,
+            "storage": {
+              "allocated_size_bytes": 174354432,
+              "logical_size_bytes": 171762137,
+              "st_blocks_512b": 340536
+            },
+            "unchanged_during_decode": true
+          },
+          "archive_consistency": {
+            "matches_reference": true,
+            "reference_sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "reference_size_bytes": 171762137
+          },
+          "artifact_directory": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-1",
+          "bit_exact": true,
+          "commands": {
+            "compress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-1/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "1"
+            ],
+            "decompress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-1/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-1/restored.safetensors",
+              "--workers",
+              "1"
+            ]
+          },
+          "compression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-1/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "1"
+            ],
+            "direct_child_max_rss_bytes": 304218112,
+            "direct_child_system_cpu_time_ns": 135853000,
+            "direct_child_user_cpu_time_ns": 2128490000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:29.357689+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 8062,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:27.025098+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "Y29tcHJlc3NlZCA0ODMgdGVuc29yczogMjE5ODUwNTkyIC0+IDE3MTc2MjEzNyBieXRlcyAoMS4yODB4KQpzZWFyY2g6IGV4cGFuZGVkPTAsIGNvbXBsZXRlZD0wLCBidWRnZXRfZXhoYXVzdGVkPTQ4MywgbGl0ZXJhbF9mYWxsYmFjaz00ODMsIHByaW9yPXVuaWZvcm0K",
+              "size_bytes": 153,
+              "text": "compressed 483 tensors: 219850592 -> 171762137 bytes (1.280x)\nsearch: expanded=0, completed=0, budget_exhausted=483, literal_fallback=483, prior=uniform\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 2331764167
+          },
+          "decompression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-1/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-1/restored.safetensors",
+              "--workers",
+              "1"
+            ],
+            "direct_child_max_rss_bytes": 200949760,
+            "direct_child_system_cpu_time_ns": 216765000,
+            "direct_child_user_cpu_time_ns": 1959327000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:32.475371+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 8158,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:29.550562+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "ZGVjb21wcmVzc2VkIDQ4MyB0ZW5zb3JzOiAxNzE3NjIxMzcgLT4gMjE5ODUwNTkyIGJ5dGVzCg==",
+              "size_bytes": 55,
+              "text": "decompressed 483 tensors: 171762137 -> 219850592 bytes\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 2922441542
+          },
+          "execution_order": 7,
+          "failure": null,
+          "index": 2,
+          "phase": "measured",
+          "success": true,
+          "verification": {
+            "attempted": true,
+            "bit_exact": true,
+            "error": null,
+            "restored_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+            "restored_size_bytes": 219850592,
+            "restored_storage": {
+              "allocated_size_bytes": 222310400,
+              "logical_size_bytes": 219850592,
+              "st_blocks_512b": 434200
+            },
+            "source_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+          },
+          "workers": 1
+        }
+      ],
+      "status": "complete",
+      "timing_observations_ns": {
+        "compression_wall": [
+          1948381125,
+          3107355958,
+          2331764167
+        ],
+        "decompression_wall": [
+          2090292417,
+          2777305333,
+          2922441542
+        ]
+      },
+      "warmups": [
+        {
+          "archive": {
+            "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-1/model.brta",
+            "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "sha256_after_decode": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "size_bytes": 171762137,
+            "storage": {
+              "allocated_size_bytes": 187912192,
+              "logical_size_bytes": 171762137,
+              "st_blocks_512b": 367016
+            },
+            "unchanged_during_decode": true
+          },
+          "artifact_directory": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-1",
+          "bit_exact": true,
+          "commands": {
+            "compress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-1/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "1"
+            ],
+            "decompress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-1/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-1/restored.safetensors",
+              "--workers",
+              "1"
+            ]
+          },
+          "compression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-1/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "1"
+            ],
+            "direct_child_max_rss_bytes": 321355776,
+            "direct_child_system_cpu_time_ns": 72824000,
+            "direct_child_user_cpu_time_ns": 1824942000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:05.959028+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7418,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:03.964427+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "Y29tcHJlc3NlZCA0ODMgdGVuc29yczogMjE5ODUwNTkyIC0+IDE3MTc2MjEzNyBieXRlcyAoMS4yODB4KQpzZWFyY2g6IGV4cGFuZGVkPTAsIGNvbXBsZXRlZD0wLCBidWRnZXRfZXhoYXVzdGVkPTQ4MywgbGl0ZXJhbF9mYWxsYmFjaz00ODMsIHByaW9yPXVuaWZvcm0K",
+              "size_bytes": 153,
+              "text": "compressed 483 tensors: 219850592 -> 171762137 bytes (1.280x)\nsearch: expanded=0, completed=0, budget_exhausted=483, literal_fallback=483, prior=uniform\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 1994126209
+          },
+          "decompression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-1/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-1/restored.safetensors",
+              "--workers",
+              "1"
+            ],
+            "direct_child_max_rss_bytes": 235175936,
+            "direct_child_system_cpu_time_ns": 79880000,
+            "direct_child_user_cpu_time_ns": 2074948000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:08.329048+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7492,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:06.103908+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "ZGVjb21wcmVzc2VkIDQ4MyB0ZW5zb3JzOiAxNzE3NjIxMzcgLT4gMjE5ODUwNTkyIGJ5dGVzCg==",
+              "size_bytes": 55,
+              "text": "decompressed 483 tensors: 171762137 -> 219850592 bytes\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 2224372042
+          },
+          "execution_order": 1,
+          "failure": null,
+          "index": 0,
+          "phase": "warmup",
+          "success": true,
+          "verification": {
+            "attempted": true,
+            "bit_exact": true,
+            "error": null,
+            "restored_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+            "restored_size_bytes": 219850592,
+            "restored_storage": {
+              "allocated_size_bytes": 232042496,
+              "logical_size_bytes": 219850592,
+              "st_blocks_512b": 453208
+            },
+            "source_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+          },
+          "workers": 1
+        }
+      ],
+      "workers": 1
+    },
+    {
+      "config_probe": {
+        "command": [
+          "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+          "config",
+          "--max-expansions",
+          "0",
+          "--seed-float-fields",
+          "0",
+          "--workers",
+          "8"
+        ],
+        "effective": {
+          "archive": "BRTA-v1",
+          "literal_fallback": true,
+          "max_concat_splits": 3,
+          "max_decomposition_bytes": 536870912,
+          "max_depth": 4,
+          "max_expansions": 0,
+          "max_field_splits": 3,
+          "max_map_constants": 2,
+          "max_nodes": 64,
+          "max_prefix_bytes": 67108864,
+          "max_repeat_period": 32,
+          "max_rotations": 3,
+          "max_tensor_bytes": 536870912,
+          "max_total_bytes": 17179869184,
+          "objective": "canonical_program_bytes",
+          "phog_role": "queue_order_only",
+          "seed_float_fields": false,
+          "synthesis_unit": "complete_tensor",
+          "workers": 8
+        },
+        "process": {
+          "command": [
+            "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+            "config",
+            "--max-expansions",
+            "0",
+            "--seed-float-fields",
+            "0",
+            "--workers",
+            "8"
+          ],
+          "direct_child_max_rss_bytes": 1638400,
+          "direct_child_system_cpu_time_ns": 1403000,
+          "direct_child_user_cpu_time_ns": 1728999,
+          "durability": {
+            "attempted": false,
+            "error": null,
+            "included_in_wall_time": false,
+            "policy": "none",
+            "status_code": "not_requested",
+            "succeeded": null,
+            "target_path": null
+          },
+          "ended_at_utc": "2026-07-27T03:01:03.964025+00:00",
+          "error": null,
+          "exit_code": 0,
+          "process_group_id": 7417,
+          "process_group_isolated": true,
+          "started_at_utc": "2026-07-27T03:01:03.958085+00:00",
+          "started_new_session": true,
+          "status_code": "ok",
+          "stderr": {
+            "base64": "",
+            "size_bytes": 0,
+            "text": ""
+          },
+          "stdout": {
+            "base64": "ewogICJzeW50aGVzaXNfdW5pdCI6ICJjb21wbGV0ZV90ZW5zb3IiLAogICJvYmplY3RpdmUiOiAiY2Fub25pY2FsX3Byb2dyYW1fYnl0ZXMiLAogICJsaXRlcmFsX2ZhbGxiYWNrIjogdHJ1ZSwKICAicGhvZ19yb2xlIjogInF1ZXVlX29yZGVyX29ubHkiLAogICJhcmNoaXZlIjogIkJSVEEtdjEiLAogICJ3b3JrZXJzIjogOCwKICAibWF4X2V4cGFuc2lvbnMiOiAwLAogICJtYXhfbm9kZXMiOiA2NCwKICAic2VlZF9mbG9hdF9maWVsZHMiOiBmYWxzZSwKICAibWF4X2RlY29tcG9zaXRpb25fYnl0ZXMiOiA1MzY4NzA5MTIsCiAgIm1heF9kZXB0aCI6IDQsCiAgIm1heF9yZXBlYXRfcGVyaW9kIjogMzIsCiAgIm1heF9jb25jYXRfc3BsaXRzIjogMywKICAibWF4X21hcF9jb25zdGFudHMiOiAyLAogICJtYXhfcm90YXRpb25zIjogMywKICAibWF4X2ZpZWxkX3NwbGl0cyI6IDMsCiAgIm1heF90b3RhbF9ieXRlcyI6IDE3MTc5ODY5MTg0LAogICJtYXhfdGVuc29yX2J5dGVzIjogNTM2ODcwOTEyLAogICJtYXhfcHJlZml4X2J5dGVzIjogNjcxMDg4NjQKfQo=",
+            "size_bytes": 542,
+            "text": "{\n  \"synthesis_unit\": \"complete_tensor\",\n  \"objective\": \"canonical_program_bytes\",\n  \"literal_fallback\": true,\n  \"phog_role\": \"queue_order_only\",\n  \"archive\": \"BRTA-v1\",\n  \"workers\": 8,\n  \"max_expansions\": 0,\n  \"max_nodes\": 64,\n  \"seed_float_fields\": false,\n  \"max_decomposition_bytes\": 536870912,\n  \"max_depth\": 4,\n  \"max_repeat_period\": 32,\n  \"max_concat_splits\": 3,\n  \"max_map_constants\": 2,\n  \"max_rotations\": 3,\n  \"max_field_splits\": 3,\n  \"max_total_bytes\": 17179869184,\n  \"max_tensor_bytes\": 536870912,\n  \"max_prefix_bytes\": 67108864\n}\n"
+          },
+          "term_signal": null,
+          "timed_out": false,
+          "timeout_seconds": 3600.0,
+          "wait_strategy": "wait4_wnohang_1ms_poll",
+          "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+          "wall_time_ns": 5557333
+        }
+      },
+      "runs": [
+        {
+          "archive": {
+            "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-8/model.brta",
+            "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "sha256_after_decode": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "size_bytes": 171762137,
+            "storage": {
+              "allocated_size_bytes": 171765760,
+              "logical_size_bytes": 171762137,
+              "st_blocks_512b": 335480
+            },
+            "unchanged_during_decode": true
+          },
+          "archive_consistency": {
+            "matches_reference": true,
+            "reference_sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "reference_size_bytes": 171762137
+          },
+          "artifact_directory": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-8",
+          "bit_exact": true,
+          "commands": {
+            "compress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-8/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "8"
+            ],
+            "decompress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-8/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-8/restored.safetensors",
+              "--workers",
+              "8"
+            ]
+          },
+          "compression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-8/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "8"
+            ],
+            "direct_child_max_rss_bytes": 267304960,
+            "direct_child_system_cpu_time_ns": 195843000,
+            "direct_child_user_cpu_time_ns": 1850508000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:16.012828+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7696,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:15.228762+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "Y29tcHJlc3NlZCA0ODMgdGVuc29yczogMjE5ODUwNTkyIC0+IDE3MTc2MjEzNyBieXRlcyAoMS4yODB4KQpzZWFyY2g6IGV4cGFuZGVkPTAsIGNvbXBsZXRlZD0wLCBidWRnZXRfZXhoYXVzdGVkPTQ4MywgbGl0ZXJhbF9mYWxsYmFjaz00ODMsIHByaW9yPXVuaWZvcm0K",
+              "size_bytes": 153,
+              "text": "compressed 483 tensors: 219850592 -> 171762137 bytes (1.280x)\nsearch: expanded=0, completed=0, budget_exhausted=483, literal_fallback=483, prior=uniform\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 783616458
+          },
+          "decompression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-8/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/00-workers-8/restored.safetensors",
+              "--workers",
+              "8"
+            ],
+            "direct_child_max_rss_bytes": 196444160,
+            "direct_child_system_cpu_time_ns": 133488000,
+            "direct_child_user_cpu_time_ns": 2123768000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:16.987194+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7740,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:16.153168+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "ZGVjb21wcmVzc2VkIDQ4MyB0ZW5zb3JzOiAxNzE3NjIxMzcgLT4gMjE5ODUwNTkyIGJ5dGVzCg==",
+              "size_bytes": 55,
+              "text": "decompressed 483 tensors: 171762137 -> 219850592 bytes\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 833301417
+          },
+          "execution_order": 4,
+          "failure": null,
+          "index": 0,
+          "phase": "measured",
+          "success": true,
+          "verification": {
+            "attempted": true,
+            "bit_exact": true,
+            "error": null,
+            "restored_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+            "restored_size_bytes": 219850592,
+            "restored_storage": {
+              "allocated_size_bytes": 219852800,
+              "logical_size_bytes": 219850592,
+              "st_blocks_512b": 429400
+            },
+            "source_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+          },
+          "workers": 8
+        },
+        {
+          "archive": {
+            "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-8/model.brta",
+            "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "sha256_after_decode": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "size_bytes": 171762137,
+            "storage": {
+              "allocated_size_bytes": 187527168,
+              "logical_size_bytes": 171762137,
+              "st_blocks_512b": 366264
+            },
+            "unchanged_during_decode": true
+          },
+          "archive_consistency": {
+            "matches_reference": true,
+            "reference_sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "reference_size_bytes": 171762137
+          },
+          "artifact_directory": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-8",
+          "bit_exact": true,
+          "commands": {
+            "compress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-8/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "8"
+            ],
+            "decompress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-8/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-8/restored.safetensors",
+              "--workers",
+              "8"
+            ]
+          },
+          "compression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-8/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "8"
+            ],
+            "direct_child_max_rss_bytes": 259801088,
+            "direct_child_system_cpu_time_ns": 293940000,
+            "direct_child_user_cpu_time_ns": 2270742000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:18.602900+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7807,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:17.495570+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "Y29tcHJlc3NlZCA0ODMgdGVuc29yczogMjE5ODUwNTkyIC0+IDE3MTc2MjEzNyBieXRlcyAoMS4yODB4KQpzZWFyY2g6IGV4cGFuZGVkPTAsIGNvbXBsZXRlZD0wLCBidWRnZXRfZXhoYXVzdGVkPTQ4MywgbGl0ZXJhbF9mYWxsYmFjaz00ODMsIHByaW9yPXVuaWZvcm0K",
+              "size_bytes": 153,
+              "text": "compressed 483 tensors: 219850592 -> 171762137 bytes (1.280x)\nsearch: expanded=0, completed=0, budget_exhausted=483, literal_fallback=483, prior=uniform\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 1106594459
+          },
+          "decompression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-8/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/01-workers-8/restored.safetensors",
+              "--workers",
+              "8"
+            ],
+            "direct_child_max_rss_bytes": 196395008,
+            "direct_child_system_cpu_time_ns": 212999000,
+            "direct_child_user_cpu_time_ns": 2414268000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:19.898372+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7881,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:18.821954+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "ZGVjb21wcmVzc2VkIDQ4MyB0ZW5zb3JzOiAxNzE3NjIxMzcgLT4gMjE5ODUwNTkyIGJ5dGVzCg==",
+              "size_bytes": 55,
+              "text": "decompressed 483 tensors: 171762137 -> 219850592 bytes\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 1075503708
+          },
+          "execution_order": 5,
+          "failure": null,
+          "index": 1,
+          "phase": "measured",
+          "success": true,
+          "verification": {
+            "attempted": true,
+            "bit_exact": true,
+            "error": null,
+            "restored_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+            "restored_size_bytes": 219850592,
+            "restored_storage": {
+              "allocated_size_bytes": 222474240,
+              "logical_size_bytes": 219850592,
+              "st_blocks_512b": 434520
+            },
+            "source_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+          },
+          "workers": 8
+        },
+        {
+          "archive": {
+            "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-8/model.brta",
+            "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "sha256_after_decode": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "size_bytes": 171762137,
+            "storage": {
+              "allocated_size_bytes": 186920960,
+              "logical_size_bytes": 171762137,
+              "st_blocks_512b": 365080
+            },
+            "unchanged_during_decode": true
+          },
+          "archive_consistency": {
+            "matches_reference": true,
+            "reference_sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "reference_size_bytes": 171762137
+          },
+          "artifact_directory": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-8",
+          "bit_exact": true,
+          "commands": {
+            "compress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-8/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "8"
+            ],
+            "decompress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-8/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-8/restored.safetensors",
+              "--workers",
+              "8"
+            ]
+          },
+          "compression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-8/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "8"
+            ],
+            "direct_child_max_rss_bytes": 262012928,
+            "direct_child_system_cpu_time_ns": 301608999,
+            "direct_child_user_cpu_time_ns": 1983644999,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:34.095645+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 8208,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:33.072430+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "Y29tcHJlc3NlZCA0ODMgdGVuc29yczogMjE5ODUwNTkyIC0+IDE3MTc2MjEzNyBieXRlcyAoMS4yODB4KQpzZWFyY2g6IGV4cGFuZGVkPTAsIGNvbXBsZXRlZD0wLCBidWRnZXRfZXhoYXVzdGVkPTQ4MywgbGl0ZXJhbF9mYWxsYmFjaz00ODMsIHByaW9yPXVuaWZvcm0K",
+              "size_bytes": 153,
+              "text": "compressed 483 tensors: 219850592 -> 171762137 bytes (1.280x)\nsearch: expanded=0, completed=0, budget_exhausted=483, literal_fallback=483, prior=uniform\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 1022094208
+          },
+          "decompression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-8/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/measured/02-workers-8/restored.safetensors",
+              "--workers",
+              "8"
+            ],
+            "direct_child_max_rss_bytes": 196263936,
+            "direct_child_system_cpu_time_ns": 237996000,
+            "direct_child_user_cpu_time_ns": 1865186000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:35.216470+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 8256,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:34.251183+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "ZGVjb21wcmVzc2VkIDQ4MyB0ZW5zb3JzOiAxNzE3NjIxMzcgLT4gMjE5ODUwNTkyIGJ5dGVzCg==",
+              "size_bytes": 55,
+              "text": "decompressed 483 tensors: 171762137 -> 219850592 bytes\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 963958750
+          },
+          "execution_order": 8,
+          "failure": null,
+          "index": 2,
+          "phase": "measured",
+          "success": true,
+          "verification": {
+            "attempted": true,
+            "bit_exact": true,
+            "error": null,
+            "restored_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+            "restored_size_bytes": 219850592,
+            "restored_storage": {
+              "allocated_size_bytes": 219852800,
+              "logical_size_bytes": 219850592,
+              "st_blocks_512b": 429400
+            },
+            "source_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+          },
+          "workers": 8
+        }
+      ],
+      "status": "complete",
+      "timing_observations_ns": {
+        "compression_wall": [
+          783616458,
+          1106594459,
+          1022094208
+        ],
+        "decompression_wall": [
+          833301417,
+          1075503708,
+          963958750
+        ]
+      },
+      "warmups": [
+        {
+          "archive": {
+            "path": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-8/model.brta",
+            "sha256": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "sha256_after_decode": "509fb5709d7f8cb51ed93d80dd6580a202a809eb628802d5a9137b29c85ee7e5",
+            "size_bytes": 171762137,
+            "storage": {
+              "allocated_size_bytes": 171765760,
+              "logical_size_bytes": 171762137,
+              "st_blocks_512b": 335480
+            },
+            "unchanged_during_decode": true
+          },
+          "artifact_directory": "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-8",
+          "bit_exact": true,
+          "commands": {
+            "compress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-8/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "8"
+            ],
+            "decompress": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-8/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-8/restored.safetensors",
+              "--workers",
+              "8"
+            ]
+          },
+          "compression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "compress",
+              "/Users/jiekeshi/Documents/GitHub/Brevis/eval/cache/RedHatAI__SmolLM-135M-Instruct-quantized.w8a8/0407d4a4dcc9601d11cf028866ee2272c5233557/model.safetensors",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-8/model.brta",
+              "--max-expansions",
+              "0",
+              "--seed-float-fields",
+              "0",
+              "--workers",
+              "8"
+            ],
+            "direct_child_max_rss_bytes": 265158656,
+            "direct_child_system_cpu_time_ns": 166402000,
+            "direct_child_user_cpu_time_ns": 1836910000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:09.386934+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7540,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:08.729884+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "Y29tcHJlc3NlZCA0ODMgdGVuc29yczogMjE5ODUwNTkyIC0+IDE3MTc2MjEzNyBieXRlcyAoMS4yODB4KQpzZWFyY2g6IGV4cGFuZGVkPTAsIGNvbXBsZXRlZD0wLCBidWRnZXRfZXhoYXVzdGVkPTQ4MywgbGl0ZXJhbF9mYWxsYmFjaz00ODMsIHByaW9yPXVuaWZvcm0K",
+              "size_bytes": 153,
+              "text": "compressed 483 tensors: 219850592 -> 171762137 bytes (1.280x)\nsearch: expanded=0, completed=0, budget_exhausted=483, literal_fallback=483, prior=uniform\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 656532292
+          },
+          "decompression": {
+            "command": [
+              "/private/tmp/brevis-final-fast-v3.eHBqaO/bin/brevis",
+              "decompress",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-8/model.brta",
+              "/private/tmp/brevis-final-current-benchmark-20260727/brta-v1-sllfqddw/warmup/00-workers-8/restored.safetensors",
+              "--workers",
+              "8"
+            ],
+            "direct_child_max_rss_bytes": 196362240,
+            "direct_child_system_cpu_time_ns": 104293000,
+            "direct_child_user_cpu_time_ns": 1934645000,
+            "durability": {
+              "attempted": false,
+              "error": null,
+              "included_in_wall_time": false,
+              "policy": "none",
+              "status_code": "not_requested",
+              "succeeded": null,
+              "target_path": null
+            },
+            "ended_at_utc": "2026-07-27T03:01:10.245463+00:00",
+            "error": null,
+            "exit_code": 0,
+            "process_group_id": 7541,
+            "process_group_isolated": true,
+            "started_at_utc": "2026-07-27T03:01:09.534398+00:00",
+            "started_new_session": true,
+            "status_code": "ok",
+            "stderr": {
+              "base64": "",
+              "size_bytes": 0,
+              "text": ""
+            },
+            "stdout": {
+              "base64": "ZGVjb21wcmVzc2VkIDQ4MyB0ZW5zb3JzOiAxNzE3NjIxMzcgLT4gMjE5ODUwNTkyIGJ5dGVzCg==",
+              "size_bytes": 55,
+              "text": "decompressed 483 tensors: 171762137 -> 219850592 bytes\n"
+            },
+            "term_signal": null,
+            "timed_out": false,
+            "timeout_seconds": 3600.0,
+            "wait_strategy": "wait4_wnohang_1ms_poll",
+            "wait_strategy_detail": "pidfd unavailable; 1 ms active polling; pidfd_open failed: NotImplementedError: pidfd_open is unavailable",
+            "wall_time_ns": 710477584
+          },
+          "execution_order": 2,
+          "failure": null,
+          "index": 0,
+          "phase": "warmup",
+          "success": true,
+          "verification": {
+            "attempted": true,
+            "bit_exact": true,
+            "error": null,
+            "restored_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf",
+            "restored_size_bytes": 219850592,
+            "restored_storage": {
+              "allocated_size_bytes": 219852800,
+              "logical_size_bytes": 219850592,
+              "st_blocks_512b": 429400
+            },
+            "source_sha256": "1f6ee9463560573bcccb6b48dfd89827ad9d49a4f50b6123a35b6f4efafb3baf"
+          },
+          "workers": 8
+        }
+      ],
+      "workers": 8
+    }
+  ]
+}

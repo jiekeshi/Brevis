@@ -128,7 +128,7 @@ pub const Context = struct {
 pub const Config = struct {
     /// Rational mixing weight λ for the learned distribution.
     learned_numerator: u32 = 1,
-    learned_denominator: u32 = 20,
+    learned_denominator: u32 = 1,
     /// Additive smoothing β. It is integral so stored models and scoring are
     /// reproducible without floating-point count serialization.
     smoothing: u64 = 1,

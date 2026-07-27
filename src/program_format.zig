@@ -181,6 +181,12 @@ const Emitter = struct {
         self.count = next;
     }
 
+    fn countBytes(self: *Emitter, count: usize) !void {
+        std.debug.assert(self.output == null);
+        self.count = std.math.add(usize, self.count, count) catch
+            return error.LengthOverflow;
+    }
+
     fn writeUleb128(self: *Emitter, value: u64) !void {
         var remaining = value;
         while (true) {
@@ -207,13 +213,22 @@ fn emitNode(emitter: *Emitter, program: dsl.Program) !void {
             try emitter.writeUleb128(try usizeToU64(literal.count));
 
             try validateLiteralWords(literal);
-            var encoding = try literal_encoding.encodeBest(
-                emitter.allocator,
-                literal,
-            );
-            defer encoding.deinit(emitter.allocator);
-            try emitter.writeUleb128(try usizeToU64(encoding.body.len));
-            try emitter.writeAll(encoding.body);
+            if (emitter.output != null) {
+                var encoding = try literal_encoding.encodeBest(
+                    emitter.allocator,
+                    literal,
+                );
+                defer encoding.deinit(emitter.allocator);
+                try emitter.writeUleb128(try usizeToU64(encoding.body.len));
+                try emitter.writeAll(encoding.body);
+            } else {
+                const body_len = try literal_encoding.encodedSize(
+                    emitter.allocator,
+                    literal,
+                );
+                try emitter.writeUleb128(try usizeToU64(body_len));
+                try emitter.countBytes(body_len);
+            }
         },
         .constant => |constant_value| {
             try emitter.writeByte(@intFromEnum(NodeWireId.constant));
@@ -294,6 +309,7 @@ fn storageBytes(bits: u8) usize {
 fn validateLiteralWords(literal: types.Stream) dsl.ValidationError!void {
     if (literal.bits_per_elem == 0 or literal.bits_per_elem > 32)
         return error.InvalidWordWidth;
+    if (literal.bits_per_elem == types.roundUpToPow2(literal.bits_per_elem)) return;
     const mask = literal.mask();
     for (0..literal.count) |index|
         if (literal.getU32(index) & ~mask != 0)

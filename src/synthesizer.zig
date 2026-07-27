@@ -4,6 +4,7 @@
 //! candidates are compared only by their exact canonical serialized bytes.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const dsl = @import("dsl.zig");
 const grammar = @import("grammar.zig");
 const grammar_prior = @import("grammar_prior.zig");
@@ -18,6 +19,7 @@ const Stream = types.Stream;
 pub const Options = struct {
     max_expansions: usize = 512,
     max_nodes: usize = 64,
+    seed_float_fields: bool = true,
     /// Maximum total storage of simultaneously open target streams. Choices
     /// that would exceed it are pruned before decomposition allocation.
     max_decomposition_bytes: usize = 512 * 1024 * 1024,
@@ -37,6 +39,7 @@ pub const SearchStatus = enum {
 
 pub const Result = struct {
     program: dsl.Program,
+    serialized_program: []u8,
     serialized_bytes: usize,
     expanded: usize,
     completed_candidates: usize,
@@ -45,6 +48,8 @@ pub const Result = struct {
 
     pub fn deinit(self: *Result, alloc: Allocator) void {
         self.program.deinit(alloc);
+        alloc.free(self.serialized_program);
+        self.serialized_program = &.{};
     }
 };
 
@@ -84,6 +89,31 @@ const Hole = struct {
     child_slot: u8,
 };
 
+const ContextBuildCounter = struct {
+    var value: usize = 0;
+};
+
+fn contextForHole(hole: Hole, dtype: Dtype) grammar_prior.Context {
+    if (builtin.is_test) ContextBuildCounter.value += 1;
+    return grammar_prior.Context.fromTarget(
+        hole.target,
+        dtype,
+        hole.parent,
+        hole.child_slot,
+        hole.depth,
+    );
+}
+
+pub const testing = if (builtin.is_test) struct {
+    pub fn resetContextBuildCount() void {
+        ContextBuildCounter.value = 0;
+    }
+
+    pub fn contextBuildCount() usize {
+        return ContextBuildCounter.value;
+    }
+} else struct {};
+
 const OpenHoles = struct {
     items: std.ArrayList(Hole) = .empty,
 
@@ -105,17 +135,84 @@ pub fn synthesize(
     dtype: Dtype,
     options: Options,
 ) !Result {
+    return synthesizeImpl(alloc, target, dtype, options, .own);
+}
+
+/// Encoder-only synthesis whose returned root `Lit` may view `target`.
+/// The target must outlive every read or serialization of that result.
+/// Structured results remain self-contained.
+pub fn synthesizeBorrowingTarget(
+    alloc: Allocator,
+    target: Stream,
+    dtype: Dtype,
+    options: Options,
+) !Result {
+    return synthesizeImpl(alloc, target, dtype, options, .borrow);
+}
+
+const RootLiteralStorage = enum {
+    own,
+    borrow,
+};
+
+fn synthesizeImpl(
+    alloc: Allocator,
+    target: Stream,
+    dtype: Dtype,
+    options: Options,
+    root_literal_storage: RootLiteralStorage,
+) !Result {
     if (target.bits_per_elem != dtype.bitWidth())
         return error.TensorWidthMismatch;
 
     // The universal fallback is a complete semantic program, not an external
     // raw block mode.
-    var best = try dsl.Program.literalFromStream(alloc, target);
+    var best = try borrowedLiteral(target);
     errdefer best.deinit(alloc);
+
+    if (options.max_expansions == 0) {
+        const serialized_program = try program_format.serialize(alloc, best);
+        errdefer alloc.free(serialized_program);
+        if (root_literal_storage == .own) {
+            const owned = try dsl.Program.literalFromStream(alloc, target);
+            best.deinit(alloc);
+            best = owned;
+        }
+        return .{
+            .program = best,
+            .serialized_program = serialized_program,
+            .serialized_bytes = serialized_program.len,
+            .expanded = 0,
+            .completed_candidates = 0,
+            .status = .budget_exhausted,
+            .used_literal_fallback = true,
+        };
+    }
+
     var best_bytes = try program_format.serializedSize(alloc, best);
     var used_literal_fallback = true;
     var completed_candidates: usize = 0;
     var expanded: usize = 0;
+    var expansion_cutoff = false;
+
+    if (try shallowFloatFieldsCandidate(alloc, target, dtype, options)) |candidate_value| {
+        var candidate = candidate_value;
+        var candidate_owned = true;
+        defer if (candidate_owned) candidate.deinit(alloc);
+        const candidate_bytes = try exactSerializedSize(
+            alloc,
+            target,
+            candidate,
+        );
+        completed_candidates += 1;
+        if (candidate_bytes < best_bytes) {
+            best.deinit(alloc);
+            best = candidate;
+            candidate_owned = false;
+            best_bytes = candidate_bytes;
+            used_literal_fallback = false;
+        }
+    }
 
     var queue = Queue.initContext({});
     defer {
@@ -149,13 +246,17 @@ pub fn synthesize(
         .serial = serial,
     });
 
-    while (queue.count() > 0 and expanded < options.max_expansions) {
+    while (queue.count() > 0) {
         var partial = queue.pop().?;
         defer partial.deinit(alloc);
 
         if (partial.size_lower_bound >= best_bytes) continue;
 
         if (partial.holes == 0) {
+            if (isRootLiteral(partial.choices)) {
+                completed_candidates += 1;
+                continue;
+            }
             var candidate = try buildProgram(
                 alloc,
                 partial.choices,
@@ -168,13 +269,10 @@ pub fn synthesize(
             // Complete states are independently checked. The decomposition
             // contract makes failures exceptional, but correctness does not
             // rely on trusting proposal code.
-            var output = try interpreter.execute(alloc, candidate);
-            defer output.deinit(alloc);
-            if (!streamsEqual(target, output)) return error.InvalidCandidate;
-
             completed_candidates += 1;
-            const candidate_bytes = try program_format.serializedSize(
+            const candidate_bytes = try exactSerializedSize(
                 alloc,
+                target,
                 candidate,
             );
             if (candidate_bytes < best_bytes) {
@@ -192,6 +290,11 @@ pub fn synthesize(
 
         if (partial.choices.len + partial.holes > options.max_nodes)
             continue;
+
+        if (expanded == options.max_expansions) {
+            expansion_cutoff = true;
+            continue;
+        }
 
         var open_holes = try replayOpenHoles(
             alloc,
@@ -214,25 +317,13 @@ pub fn synthesize(
             options.grammar_options,
         );
         defer alloc.free(choices);
-        const legal = grammar.legal(
-            hole.target,
-            dtype,
-            hole.depth,
-            options.grammar_options,
-        );
+        const legal = grammar.families(choices);
         if (legal.len == 0) return error.NoLiteralFallback;
         const admitted = legal.slice();
         var production_costs: [grammar_prior.PRODUCTION_COUNT]grammar_prior.Cost = undefined;
-        const context = grammar_prior.Context.fromTarget(
-            hole.target,
-            dtype,
-            hole.parent,
-            hole.child_slot,
-            hole.depth,
-        );
         if (options.rule_model) |rule_model| {
             try rule_model.scoreSet(
-                context,
+                contextForHole(hole, dtype),
                 admitted,
                 production_costs[0..admitted.len],
             );
@@ -366,18 +457,79 @@ pub fn synthesize(
         }
     }
 
-    const status: SearchStatus = if (queue.count() == 0)
+    const status: SearchStatus = if (queue.count() == 0 and !expansion_cutoff)
         .proven_optimal
     else
         .budget_exhausted;
+    if (root_literal_storage == .own) switch (best.kind) {
+        .literal => |literal| if (!literal.owns_data) {
+            const owned = try dsl.Program.literalFromStream(alloc, literal);
+            best.deinit(alloc);
+            best = owned;
+        },
+        else => {},
+    };
+    const serialized_program = try program_format.serialize(alloc, best);
+    std.debug.assert(serialized_program.len == best_bytes);
     return .{
         .program = best,
+        .serialized_program = serialized_program,
         .serialized_bytes = best_bytes,
         .expanded = expanded,
         .completed_candidates = completed_candidates,
         .status = status,
         .used_literal_fallback = used_literal_fallback,
     };
+}
+
+fn isRootLiteral(choices: []const grammar.Choice) bool {
+    if (choices.len != 1) return false;
+    return switch (choices[0]) {
+        .literal => true,
+        else => false,
+    };
+}
+
+fn shallowFloatFieldsCandidate(
+    alloc: Allocator,
+    target: Stream,
+    dtype: Dtype,
+    options: Options,
+) !?dsl.Program {
+    if (!options.seed_float_fields or
+        options.max_expansions == 0 or
+        options.max_nodes < 4 or
+        options.grammar_options.max_depth == 0 or
+        target.count == 0 or
+        dtype.floatFields() == null)
+    {
+        return null;
+    }
+
+    const root: grammar.Choice = .{ .merge_float_fields = dtype };
+    if (try grammar.childTargetStorageBytes(root, target, dtype) >
+        options.max_decomposition_bytes)
+    {
+        return null;
+    }
+    const choices = [_]grammar.Choice{
+        root,
+        .literal,
+        .literal,
+        .literal,
+    };
+    return try buildProgram(alloc, &choices, target, dtype);
+}
+
+fn exactSerializedSize(
+    alloc: Allocator,
+    target: Stream,
+    candidate: dsl.Program,
+) !usize {
+    var output = try interpreter.execute(alloc, candidate);
+    defer output.deinit(alloc);
+    if (!streamsEqual(target, output)) return error.InvalidCandidate;
+    return program_format.serializedSize(alloc, candidate);
 }
 
 fn appendChoice(
@@ -464,13 +616,14 @@ const RelaxedLengthClass = enum(u1) {
 /// Costs from Equation 18, conservatively lowered for this implementation's
 /// target-conditioned PHOG normalization.
 ///
-/// For a positive target below the depth cap, `Lit`, `Map(zigzag)`,
-/// `Map(gray)`, and `Map(bit_reverse)` are always admitted. A length-one
+/// For widths above one, a positive target below the depth cap always admits
+/// `Lit`, `Map(zigzag)`, `Map(gray)`, and `Map(bit_reverse)`. A length-one
 /// target also admits `Const`; a longer target admits both `Scan` families.
-/// Hence every such set has at least five families. A family outside the
-/// first group implies at least one additional family. At the depth cap only
-/// `Lit`, and conditionally `Const`, remain. These facts supply the admitted
-/// set lower bounds used by `Prior.contextualCostLowerBounds`.
+/// Thus the corresponding minima are five and six families, and an admitted
+/// family outside either base set raises its minimum by one. At width one,
+/// normal-form pruning leaves `Lit` plus `Const` for length one, or `Lit` plus
+/// `Scan(xor)` for longer targets, so only a two-family bound is valid. At the
+/// depth cap only `Lit`, and conditionally `Const`, remain.
 const RelaxedRuleCosts = struct {
     one: [grammar_prior.PRODUCTION_COUNT]grammar_prior.Cost,
     two: [grammar_prior.PRODUCTION_COUNT]grammar_prior.Cost,
@@ -524,8 +677,10 @@ const RelaxedRuleCosts = struct {
     fn belowDepthCap(
         self: *const RelaxedRuleCosts,
         production: grammar.ProductionId,
+        bits: u8,
         length_class: RelaxedLengthClass,
     ) grammar_prior.Cost {
+        if (bits == 1) return self.at(production, 2);
         const minimum_admitted: usize = switch (length_class) {
             .one => switch (production) {
                 .literal,
@@ -611,12 +766,20 @@ const RelaxedGrammarHeuristic = struct {
                             if (length_class == .one) 2 else 1,
                         )
                     else
-                        rule_costs.belowDepthCap(.literal, length_class);
+                        rule_costs.belowDepthCap(
+                            .literal,
+                            bits,
+                            length_class,
+                        );
 
                     const constant_cost: u64 = if (depth == result.max_depth)
                         rule_costs.at(.constant, 2)
                     else
-                        rule_costs.belowDepthCap(.constant, length_class);
+                        rule_costs.belowDepthCap(
+                            .constant,
+                            bits,
+                            length_class,
+                        );
                     best = @min(best, constant_cost);
 
                     if (depth < result.max_depth) {
@@ -647,6 +810,7 @@ const RelaxedGrammarHeuristic = struct {
                                 saturatingCostAdd(
                                     rule_costs.belowDepthCap(
                                         .repeat,
+                                        bits,
                                         length_class,
                                     ),
                                     cheapest_positive_child,
@@ -662,6 +826,7 @@ const RelaxedGrammarHeuristic = struct {
                                 saturatingCostAdd(
                                     rule_costs.belowDepthCap(
                                         .concat,
+                                        bits,
                                         length_class,
                                     ),
                                     saturatingCostMul(
@@ -683,6 +848,7 @@ const RelaxedGrammarHeuristic = struct {
                                     saturatingCostAdd(
                                         rule_costs.belowDepthCap(
                                             production,
+                                            bits,
                                             length_class,
                                         ),
                                         same_width_child,
@@ -700,6 +866,7 @@ const RelaxedGrammarHeuristic = struct {
                                 saturatingCostAdd(
                                     rule_costs.belowDepthCap(
                                         production,
+                                        bits,
                                         length_class,
                                     ),
                                     same_width_child,
@@ -715,6 +882,7 @@ const RelaxedGrammarHeuristic = struct {
                                 saturatingCostAdd(
                                     rule_costs.belowDepthCap(
                                         .map_rotate_left,
+                                        bits,
                                         length_class,
                                     ),
                                     same_width_child,
@@ -731,6 +899,7 @@ const RelaxedGrammarHeuristic = struct {
                                     saturatingCostAdd(
                                         rule_costs.belowDepthCap(
                                             production,
+                                            bits,
                                             length_class,
                                         ),
                                         cheapest_positive_child,
@@ -762,6 +931,7 @@ const RelaxedGrammarHeuristic = struct {
                                     saturatingCostAdd(
                                         rule_costs.belowDepthCap(
                                             .merge_fields,
+                                            bits,
                                             length_class,
                                         ),
                                         children,
@@ -797,6 +967,7 @@ const RelaxedGrammarHeuristic = struct {
                                     saturatingCostAdd(
                                         rule_costs.belowDepthCap(
                                             .merge_float_fields,
+                                            bits,
                                             length_class,
                                         ),
                                         children,
@@ -810,6 +981,7 @@ const RelaxedGrammarHeuristic = struct {
                                 saturatingCostAdd(
                                     rule_costs.belowDepthCap(
                                         .merge_bit_planes,
+                                        bits,
                                         length_class,
                                     ),
                                     saturatingCostMul(
@@ -849,6 +1021,7 @@ const RelaxedGrammarHeuristic = struct {
                                 saturatingCostAdd(
                                     rule_costs.belowDepthCap(
                                         .merge_byte_planes,
+                                        bits,
                                         length_class,
                                     ),
                                     children,
@@ -964,12 +1137,12 @@ test "relaxed c chooses a recursive derivation and h orders the queue" {
 
     const leaf_cost = heuristic.completionCost(8, target.count, 1);
     const recursive_cost = saturatingCostAdd(
-        rule_costs.belowDepthCap(.map_zigzag, .many),
+        rule_costs.belowDepthCap(.map_zigzag, 8, .many),
         leaf_cost,
     );
     const root_cost = heuristic.completionCost(8, target.count, 0);
     const direct_literal_cost =
-        rule_costs.belowDepthCap(.literal, .many);
+        rule_costs.belowDepthCap(.literal, 8, .many);
 
     // This is a genuine two-rule shortest derivation:
     // Map(zigzag, Lit(_)), not the cheapest first rule renamed as c(A).
@@ -1012,6 +1185,29 @@ test "relaxed c chooses a recursive derivation and h orders the queue" {
     defer second.deinit(alloc);
     try std.testing.expectEqual(@as(u64, 1), first.serial);
     try std.testing.expectEqual(@as(u64, 0), second.serial);
+}
+
+test "one-bit relaxed rule costs use the two-family admitted lower bound" {
+    const rule_costs = try RelaxedRuleCosts.init(.{});
+    inline for (std.enums.values(RelaxedLengthClass)) |length_class| {
+        for (grammar_prior.PRODUCTIONS) |production|
+            try std.testing.expectEqual(
+                rule_costs.at(production, 2),
+                rule_costs.belowDepthCap(production, 1, length_class),
+            );
+    }
+    try std.testing.expectEqual(
+        rule_costs.at(.literal, 5),
+        rule_costs.belowDepthCap(.literal, 8, .one),
+    );
+    try std.testing.expectEqual(
+        rule_costs.at(.literal, 6),
+        rule_costs.belowDepthCap(.literal, 8, .many),
+    );
+    try std.testing.expectEqual(
+        rule_costs.at(.repeat, 7),
+        rule_costs.belowDepthCap(.repeat, 8, .many),
+    );
 }
 
 fn replayOpenHoles(
@@ -1101,7 +1297,16 @@ fn buildProgram(
     dtype: Dtype,
 ) !dsl.Program {
     var cursor: usize = 0;
-    var program = try buildNode(alloc, choices, &cursor, target, dtype);
+    var root_target = target;
+    root_target.owns_data = false;
+    var program = try buildNode(
+        alloc,
+        choices,
+        &cursor,
+        &root_target,
+        dtype,
+        false,
+    );
     errdefer program.deinit(alloc);
     if (cursor != choices.len) return error.InvalidPartialProgram;
     return program;
@@ -1111,19 +1316,28 @@ fn buildNode(
     alloc: Allocator,
     choices: []const grammar.Choice,
     cursor: *usize,
-    target: Stream,
+    target: *Stream,
     dtype: Dtype,
+    adopt_literal_target: bool,
 ) !dsl.Program {
     if (cursor.* >= choices.len) return error.InvalidPartialProgram;
     const choice = choices[cursor.*];
     cursor.* += 1;
 
-    var child_targets = try grammar.childTargets(alloc, choice, target, dtype);
+    var child_targets = try grammar.childTargets(
+        alloc,
+        choice,
+        target.*,
+        dtype,
+    );
     defer child_targets.deinit(alloc);
 
     if (child_targets.streams.len == 0) {
         return switch (choice) {
-            .literal => dsl.Program.literalFromStream(alloc, target),
+            .literal => if (adopt_literal_target)
+                adoptLiteralTarget(alloc, target)
+            else
+                dsl.Program.literalFromStream(alloc, target.*),
             .constant => |word| dsl.Program.constant(
                 target.bits_per_elem,
                 target.count,
@@ -1143,13 +1357,14 @@ fn buildNode(
         for (children[0..initialized]) |*child| child.deinit(alloc);
         alloc.free(children);
     };
-    for (child_targets.streams, 0..) |child_target, index| {
+    for (child_targets.streams, 0..) |*child_target, index| {
         children[index] = try buildNode(
             alloc,
             choices,
             cursor,
             child_target,
             dtype,
+            true,
         );
         initialized += 1;
     }
@@ -1213,6 +1428,26 @@ fn buildNode(
         },
         .literal, .constant => error.InvalidPartialProgram,
     };
+}
+
+fn borrowedLiteral(target: Stream) !dsl.Program {
+    var view = target;
+    view.owns_data = false;
+    const program: dsl.Program = .{ .kind = .{ .literal = view } };
+    _ = try program.typeOf();
+    return program;
+}
+
+fn adoptLiteralTarget(
+    alloc: Allocator,
+    target: *Stream,
+) !dsl.Program {
+    if (!target.owns_data)
+        return dsl.Program.literalFromStream(alloc, target.*);
+    const program: dsl.Program = .{ .kind = .{ .literal = target.* } };
+    _ = try program.typeOf();
+    target.owns_data = false;
+    return program;
 }
 
 fn streamsEqual(left: Stream, right: Stream) bool {

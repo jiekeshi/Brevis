@@ -28,13 +28,32 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run brevis CLI");
     run_step.dependOn(&run_cmd.step);
 
-    const test_mod = b.createModule(.{
-        .root_source_file = b.path("src/tests.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const tests = b.addTest(.{ .root_module = test_mod });
-    const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&run_tests.step);
+    const test_roots = [_][]const u8{
+        "src/tests.zig",
+        "src/api_tests.zig",
+        "src/codec_tests.zig",
+        "src/grammar_tests.zig",
+        "src/grammar_prior_tests.zig",
+        "src/interpreter_tests.zig",
+        "src/literal_encoding_tests.zig",
+        "src/main.zig",
+        "src/paper_calibration_tests.zig",
+        "src/paper_pipeline_tests.zig",
+        "src/paper_tests.zig",
+        "src/program_format_tests.zig",
+        "src/safetensors_tests.zig",
+        "src/synthesizer_tests.zig",
+        "src/tensor_archive_tests.zig",
+    };
+    for (test_roots) |root| {
+        const test_mod = b.createModule(.{
+            .root_source_file = b.path(root),
+            .target = target,
+            .optimize = optimize,
+        });
+        const tests = b.addTest(.{ .root_module = test_mod });
+        const run_tests = b.addRunArtifact(tests);
+        test_step.dependOn(&run_tests.step);
+    }
 }

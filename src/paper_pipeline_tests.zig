@@ -375,13 +375,22 @@ test "file APIs atomically compress decompress and verify complete tensors" {
     defer alloc.free(source);
     try writeFile(io, source_path, source);
     try writeFile(io, archive_path, "stale archive");
+    var serial = try pipeline.compressBytes(
+        alloc,
+        source,
+        .{ .synthesis = .{ .max_expansions = 0 } },
+    );
+    defer serial.deinit(alloc);
 
     var compressed = try pipeline.compressFile(
         alloc,
         io,
         source_path,
         archive_path,
-        .{ .synthesis = .{ .max_expansions = 0 } },
+        .{
+            .synthesis = .{ .max_expansions = 0 },
+            .workers = 2,
+        },
     );
     defer compressed.deinit(alloc);
     try std.testing.expectEqual(source.len, compressed.source_bytes);
@@ -397,6 +406,11 @@ test "file APIs atomically compress decompress and verify complete tensors" {
         u8,
         &tensor_archive.MAGIC,
         archive_bytes[0..tensor_archive.MAGIC.len],
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        serial.archive_bytes,
+        archive_bytes,
     );
 
     try std.testing.expectError(
@@ -425,7 +439,7 @@ test "file APIs atomically compress decompress and verify complete tensors" {
         io,
         archive_path,
         source_path,
-        .{},
+        .{ .workers = 2 },
     );
     try std.testing.expectEqual(archive_bytes.len, verified.archive_bytes);
     try std.testing.expectEqual(source.len, verified.output_bytes);
@@ -437,7 +451,7 @@ test "file APIs atomically compress decompress and verify complete tensors" {
         io,
         archive_path,
         restored_path,
-        .{},
+        .{ .workers = 2 },
     );
     try std.testing.expectEqual(source.len, decompressed.output_bytes);
     try std.testing.expectEqual(@as(usize, 3), decompressed.tensor_count);
@@ -458,6 +472,37 @@ test "file APIs atomically compress decompress and verify complete tensors" {
             wrong_source_path,
             .{},
         ),
+    );
+
+    const parsed_header = try tensor_archive.parseHeader(archive_bytes, .{});
+    var truncated_at = parsed_header.next_offset;
+    _ = try tensor_archive.nextTensorRecordFrame(
+        archive_bytes,
+        &truncated_at,
+        .{},
+    );
+    try writeFile(io, corrupt_path, archive_bytes[0..truncated_at]);
+    try writeFile(io, failed_output_path, "keep me");
+    try std.testing.expectError(
+        error.Truncated,
+        pipeline.decompressFile(
+            alloc,
+            io,
+            corrupt_path,
+            failed_output_path,
+            .{ .workers = 2 },
+        ),
+    );
+    const preserved_truncated = try readFile(
+        alloc,
+        io,
+        failed_output_path,
+    );
+    defer alloc.free(preserved_truncated);
+    try std.testing.expectEqualSlices(
+        u8,
+        "keep me",
+        preserved_truncated,
     );
 
     const corrupted = try alloc.dupe(u8, archive_bytes);

@@ -14,15 +14,20 @@ import benchmarking
 
 
 class RegistryTests(unittest.TestCase):
-    def test_registry_has_raw_and_three_profiles_for_every_codec(self):
-        self.assertEqual(19, len(benchmarking.BASELINE_SPECS))
+    def test_registry_has_raw_standard_profiles_and_unique_identifiers(self):
+        self.assertEqual(20, len(benchmarking.BASELINE_SPECS))
+        identifiers = [spec.identifier for spec in benchmarking.BASELINE_SPECS]
+        self.assertEqual(len(identifiers), len(set(identifiers)))
         self.assertEqual({"raw/copy"}, {
             spec.identifier for spec in benchmarking.BASELINE_SPECS if spec.method == "raw"
         })
         for method in ("gzip", "bzip2", "xz", "zstd", "lz4", "brotli"):
             with self.subTest(method=method):
                 specs = [spec for spec in benchmarking.BASELINE_SPECS if spec.method == method]
-                self.assertEqual(set(benchmarking.PROFILES), {spec.profile for spec in specs})
+                expected_profiles = set(benchmarking.PROFILES)
+                if method == "zstd":
+                    expected_profiles.add("ultra")
+                self.assertEqual(expected_profiles, {spec.profile for spec in specs})
                 for spec in specs:
                     self.assertTrue(spec.version_args)
                     self.assertTrue(spec.compress_args)
@@ -31,11 +36,11 @@ class RegistryTests(unittest.TestCase):
                     self.assertIn("oriented", spec.notes.lower())
                     json.dumps(spec.to_dict())
 
-    def test_all_19_registry_argv_are_fully_pinned(self):
+    def test_all_20_registry_argv_are_fully_pinned(self):
         expected = {
             "raw/copy": (
-                ("--reflink=never", "--sparse=never", "--", "{input}", "{output}"),
-                ("--reflink=never", "--sparse=never", "--", "{input}", "{output}"),
+                ("-c", benchmarking.RAW_COPY_PROGRAM, "{input}", "{output}"),
+                ("-c", benchmarking.RAW_COPY_PROGRAM, "{input}", "{output}"),
             ),
             "gzip/speed": (
                 ("-n", "-k", "-f", "-1", "{input}"),
@@ -103,6 +108,16 @@ class RegistryTests(unittest.TestCase):
                     "{input}", "-o", "{output}",
                 ),
             ),
+            "zstd/ultra": (
+                (
+                    "-q", "-f", "--single-thread", "--no-asyncio", "--ultra", "-22",
+                    "{input}", "-o", "{output}",
+                ),
+                (
+                    "-d", "-q", "-f", "--no-asyncio", "--no-sparse",
+                    "{input}", "-o", "{output}",
+                ),
+            ),
             "lz4/speed": (
                 ("-q", "-f", "--fast=5", "{input}", "{output}"),
                 ("-d", "-q", "-f", "--no-sparse", "{input}", "{output}"),
@@ -137,9 +152,10 @@ class RegistryTests(unittest.TestCase):
     def test_registry_documents_equivalent_and_serialized_profiles(self):
         raw = benchmarking.SPEC_BY_ID["raw/copy"]
         for arguments in (raw.compress_args, raw.decompress_args):
-            self.assertIn("--reflink=never", arguments)
-            self.assertIn("--sparse=never", arguments)
+            self.assertEqual("-c", arguments[0])
+            self.assertEqual(benchmarking.RAW_COPY_PROGRAM, arguments[1])
         self.assertIn("regular-file", raw.notes)
+        self.assertIn("1 MiB", raw.notes)
 
         bzip_default = benchmarking.SPEC_BY_ID["bzip2/default"]
         bzip_ratio = benchmarking.SPEC_BY_ID["bzip2/ratio"]
@@ -153,6 +169,7 @@ class RegistryTests(unittest.TestCase):
             benchmarking.SPEC_BY_ID["zstd/speed"],
             zstd_default,
             benchmarking.SPEC_BY_ID["zstd/ratio"],
+            benchmarking.SPEC_BY_ID["zstd/ultra"],
         ):
             self.assertIn("--single-thread", spec.compress_args)
             self.assertIn("--no-asyncio", spec.compress_args)
@@ -162,6 +179,22 @@ class RegistryTests(unittest.TestCase):
                 ("--single-thread", "--no-asyncio"),
                 spec.thread_policy.cli_args,
             )
+        zstd_ultra = benchmarking.SPEC_BY_ID["zstd/ultra"]
+        self.assertIn("ceiling-oriented", zstd_ultra.notes.lower())
+        self.assertIn("ultra level 22", zstd_ultra.notes)
+
+    def test_raw_copy_uses_a_portable_versioned_streaming_backend(self):
+        raw = benchmarking.SPEC_BY_ID["raw/copy"]
+        self.assertEqual(
+            pathlib.Path(sys.executable).resolve(),
+            pathlib.Path(raw.executable).resolve(),
+        )
+        self.assertEqual(("--version",), raw.version_args)
+        for arguments in (raw.compress_args, raw.decompress_args):
+            self.assertEqual("-c", arguments[0])
+            self.assertNotIn("--reflink=never", arguments)
+            self.assertNotIn("--sparse=never", arguments)
+            self.assertEqual(("{input}", "{output}"), arguments[-2:])
 
     def test_select_specs_rejects_unknown_and_empty_selections(self):
         with self.assertRaisesRegex(ValueError, "unknown baseline"):
@@ -196,6 +229,201 @@ class BenchmarkTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def _python_copy_spec(self, method):
+        copy_code = (
+            "import pathlib,sys; pathlib.Path(sys.argv[2]).write_bytes("
+            "pathlib.Path(sys.argv[1]).read_bytes())"
+        )
+        return benchmarking.BaselineSpec(
+            method=method,
+            profile="default",
+            executable=sys.executable,
+            version_args=("--version",),
+            compress_args=("-c", copy_code, "{input}", "{output}"),
+            decompress_args=("-c", copy_code, "{input}", "{output}"),
+            thread_policy=benchmarking.SERIAL_CLI,
+        )
+
+    def test_durable_output_fsync_is_inside_wall_clock(self):
+        output = self.root / "durable.bin"
+        events = []
+        clock_values = iter((100, 175))
+
+        def clock():
+            events.append("clock")
+            return next(clock_values)
+
+        def fsync_file(path):
+            events.append(f"fsync:{path}")
+
+        with (
+            mock.patch.object(benchmarking.time, "perf_counter_ns", side_effect=clock),
+            mock.patch.object(benchmarking, "_fsync_file", side_effect=fsync_file),
+        ):
+            record = benchmarking._run_process(
+                [
+                    sys.executable,
+                    "-c",
+                    "import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(b'x')",
+                    str(output),
+                ],
+                self.root,
+                "durable-output",
+                None,
+                durable_output=output,
+            )
+
+        self.assertEqual(["clock", f"fsync:{output}", "clock"], events)
+        self.assertEqual(75, record["wall_time_ns"])
+        self.assertEqual("ok", record["status_code"])
+        self.assertEqual(
+            "file_fsync_after_successful_exit_before_wall_clock_stop",
+            record["durability"]["policy"],
+        )
+        self.assertEqual("ok", record["durability"]["status_code"])
+        self.assertTrue(record["durability"]["attempted"])
+        self.assertTrue(record["durability"]["succeeded"])
+        self.assertIsNone(record["durability"]["error"])
+        self.assertTrue(record["durability"]["included_in_wall_time"])
+
+    def test_missing_durable_output_is_a_structured_failure(self):
+        missing = self.root / "missing.bin"
+        record = benchmarking._run_process(
+            [sys.executable, "-c", "raise SystemExit(0)"],
+            self.root,
+            "missing-durable-output",
+            None,
+            durable_output=missing,
+        )
+
+        self.assertEqual(0, record["exit_code"])
+        self.assertEqual("durability_failed", record["status_code"])
+        self.assertEqual("failed", record["durability"]["status_code"])
+        self.assertTrue(record["durability"]["attempted"])
+        self.assertFalse(record["durability"]["succeeded"])
+        self.assertIn("FileNotFoundError", record["durability"]["error"])
+
+    def test_nonzero_process_does_not_attempt_output_durability(self):
+        missing = self.root / "not-written.bin"
+        with mock.patch.object(benchmarking, "_fsync_file") as fsync_file:
+            record = benchmarking._run_process(
+                [sys.executable, "-c", "raise SystemExit(7)"],
+                self.root,
+                "failed-before-durability",
+                None,
+                durable_output=missing,
+            )
+
+        fsync_file.assert_not_called()
+        self.assertEqual("nonzero_exit", record["status_code"])
+        self.assertEqual(
+            "not_attempted_process_failed",
+            record["durability"]["status_code"],
+        )
+        self.assertFalse(record["durability"]["attempted"])
+        self.assertIsNone(record["durability"]["error"])
+
+    def test_durability_error_fails_the_benchmark_iteration(self):
+        copy_spec = self._python_copy_spec("durability-fixture")
+        with mock.patch.object(
+            benchmarking,
+            "_fsync_file",
+            side_effect=OSError("fixture durability failure"),
+        ):
+            result = benchmarking.benchmark_file(
+                self.source,
+                warmups=0,
+                repetitions=1,
+                specs=(copy_spec,),
+                work_dir=self.root / "work",
+            )
+
+        run = result["methods"][0]["runs"][0]
+        self.assertFalse(run["success"])
+        self.assertEqual("compression_durability_failed", run["status_code"])
+        self.assertIn("fixture durability failure", run["failure"])
+        self.assertEqual("failed", run["compression"]["durability"]["status_code"])
+        self.assertIsNone(run["decompression"])
+
+    def test_generic_iteration_fsyncs_archive_and_restored_output(self):
+        real_fsync = benchmarking._fsync_file
+        with mock.patch.object(
+            benchmarking,
+            "_fsync_file",
+            wraps=real_fsync,
+        ) as fsync_file:
+            result = benchmarking.benchmark_file(
+                self.source,
+                warmups=0,
+                repetitions=1,
+                specs=(self._python_copy_spec("durable-copy-fixture"),),
+                work_dir=self.root / "work",
+                keep_artifacts=True,
+            )
+
+        try:
+            run = result["methods"][0]["runs"][0]
+            run_dir = pathlib.Path(run["artifact_directory"])
+            self.assertTrue(run["success"], run["failure"])
+            self.assertEqual("ok", run["compression"]["durability"]["status_code"])
+            self.assertEqual("ok", run["decompression"]["durability"]["status_code"])
+            self.assertEqual(
+                [
+                    run_dir / "compress" / "archive.bin",
+                    run_dir / "decompress" / "restored.bin",
+                ],
+                [call.args[0] for call in fsync_file.call_args_list],
+            )
+            self.assertIn("file fsync", result["configuration"]["io_policy"])
+            self.assertIn("output file fsync", result["configuration"]["timing_scope"])
+        finally:
+            shutil.rmtree(result["configuration"]["artifact_root"])
+
+    def test_restored_output_durability_error_fails_the_iteration(self):
+        real_fsync = benchmarking._fsync_file
+
+        def fail_restored(path):
+            if path.name == "restored.bin":
+                raise OSError("fixture restored durability failure")
+            real_fsync(path)
+
+        with mock.patch.object(
+            benchmarking,
+            "_fsync_file",
+            side_effect=fail_restored,
+        ):
+            result = benchmarking.benchmark_file(
+                self.source,
+                warmups=0,
+                repetitions=1,
+                specs=(self._python_copy_spec("restored-durability-fixture"),),
+                work_dir=self.root / "work",
+            )
+
+        run = result["methods"][0]["runs"][0]
+        self.assertFalse(run["success"])
+        self.assertEqual("decompression_durability_failed", run["status_code"])
+        self.assertEqual("ok", run["compression"]["durability"]["status_code"])
+        self.assertEqual("failed", run["decompression"]["durability"]["status_code"])
+        self.assertIn("fixture restored durability failure", run["failure"])
+        self.assertIsNone(run["verification"])
+
+    def test_default_process_call_does_not_request_output_durability(self):
+        with mock.patch.object(benchmarking, "_fsync_file") as fsync_file:
+            record = benchmarking._run_process(
+                [sys.executable, "--version"],
+                self.root,
+                "ordinary-probe",
+                None,
+            )
+
+        fsync_file.assert_not_called()
+        self.assertEqual("ok", record["status_code"])
+        self.assertEqual("none", record["durability"]["policy"])
+        self.assertEqual("not_requested", record["durability"]["status_code"])
+        self.assertFalse(record["durability"]["attempted"])
+        self.assertFalse(record["durability"]["included_in_wall_time"])
+
     def test_raw_records_resources_hashes_storage_and_provenance(self):
         result = benchmarking.benchmark_file(
             self.source,
@@ -209,6 +437,10 @@ class BenchmarkTests(unittest.TestCase):
                 "model_revision": self.model_revision,
                 "shard": self.source.name,
                 "manifest": str(self.manifest),
+            },
+            evidence_policy={
+                "run_class": "engineering",
+                "paper_eligible": False,
             },
             expected_source_size_bytes=self.source.stat().st_size,
             expected_source_sha256=benchmarking._sha256_file(self.source),
@@ -225,15 +457,23 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(self.source.stat().st_size, result["source"]["size_bytes"])
         self.assertEqual(64, len(result["source"]["sha256"]))
         self.assertEqual(self.model_tag, result["input_metadata"]["model_tag"])
+        self.assertEqual("engineering", result["evidence_policy"]["run_class"])
+        self.assertFalse(result["evidence_policy"]["paper_eligible"])
         self.assertTrue(result["integrity"]["source"]["verified"])
         self.assertTrue(result["integrity"]["manifest"]["verified"])
         self.assertTrue(result["integrity"]["manifest_binding"]["verified"])
         self.assertIn("immediately before process spawn", result["configuration"]["timing_scope"])
         self.assertIn("forward/reverse", result["configuration"]["scheduling_policy"])
-        self.assertIn("--sparse=never", result["configuration"]["cache_policy"])
+        self.assertIn("explicit 1 MiB reads", result["configuration"]["cache_policy"])
         self.assertIn("Zstandard", result["configuration"]["io_policy"])
         self.assertIn("--no-sparse", result["configuration"]["io_policy"])
         self.assertIn("--no-asyncio", result["configuration"]["io_policy"])
+        self.assertIn("file fsync", result["configuration"]["io_policy"])
+        self.assertIn(
+            "source and staging files are not fsynced",
+            result["configuration"]["io_policy"],
+        )
+        self.assertIn("output file fsync", result["configuration"]["timing_scope"])
         self.assertEqual(3, len(result["configuration"]["execution_schedule"]))
         self.assertIn("commit", result["provenance"]["git"])
         self.assertIn("dirty", result["provenance"]["git"])
@@ -296,7 +536,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIsNone(result["configuration"]["artifact_root"])
         json.dumps(result)
 
-    def test_all_19_registry_configurations_round_trip_when_installed(self):
+    def test_all_20_registry_configurations_round_trip_when_installed(self):
         result = benchmarking.benchmark_file(
             self.source,
             warmups=0,
@@ -306,7 +546,7 @@ class BenchmarkTests(unittest.TestCase):
             timeout_seconds=30,
         )
 
-        self.assertEqual(19, len(result["methods"]))
+        self.assertEqual(20, len(result["methods"]))
         available = 0
         methods_by_id = {method["id"]: method for method in result["methods"]}
         for method in result["methods"]:
@@ -339,15 +579,44 @@ class BenchmarkTests(unittest.TestCase):
                 bzip_ratio["measured_archive_consistency"]["reference_sha256"],
             )
 
+    def test_zstd_ultra_round_trips_fixture_when_installed(self):
+        result = benchmarking.benchmark_file(
+            self.source,
+            warmups=0,
+            repetitions=1,
+            specs=benchmarking.select_specs(["zstd/ultra"]),
+            work_dir=self.root / "work",
+            timeout_seconds=30,
+        )
+
+        method = result["methods"][0]
+        if not method["available"]:
+            self.assertIn("not found", method["failure"])
+            return
+        self.assertIsNone(method["failure"])
+        self.assertEqual("zstd/ultra", method["id"])
+        self.assertEqual(1, len(method["runs"]))
+        run = method["runs"][0]
+        self.assertTrue(run["success"], run["failure"])
+        self.assertTrue(run["verification"]["bit_exact"])
+        self.assertEqual(
+            result["source"]["sha256"],
+            run["verification"]["restored_sha256"],
+        )
+
     def test_default_measured_schedule_is_seeded_and_forward_reverse_balanced(self):
         specs = tuple(
             benchmarking.BaselineSpec(
                 method=f"copy-{index}",
                 profile="default",
-                executable="cp",
+                executable=sys.executable,
                 version_args=("--version",),
-                compress_args=("--reflink=never", "--", "{input}", "{output}"),
-                decompress_args=("--reflink=never", "--", "{input}", "{output}"),
+                compress_args=(
+                    "-c", benchmarking.RAW_COPY_PROGRAM, "{input}", "{output}",
+                ),
+                decompress_args=(
+                    "-c", benchmarking.RAW_COPY_PROGRAM, "{input}", "{output}",
+                ),
                 thread_policy=benchmarking.RAW_COPY,
             )
             for index in range(3)
@@ -860,7 +1129,7 @@ class BenchmarkTests(unittest.TestCase):
             str(self.source), "--warmups", "0", "--repetitions", "1",
             "--method", "raw/copy",
         ]
-        with mock.patch.dict(os.environ, {"PATH": ""}):
+        with mock.patch.object(benchmarking.shutil, "which", return_value=None):
             self.assertEqual(1, benchmarking.main([*common, "--output", str(first)]))
             self.assertEqual(0, benchmarking.main([
                 *common, "--output", str(second), "--allow-missing",

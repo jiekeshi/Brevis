@@ -36,8 +36,10 @@ const Arguments = struct {
     max_tensors: usize = paper_calibration.DEFAULT_TENSORS,
     synthesis: synthesizer.Options = .{},
     resources: ResourceLimits = .{},
+    workers: usize = pipeline.DEFAULT_WORKERS,
     saw_prior: bool = false,
     saw_tensors: bool = false,
+    saw_workers: bool = false,
     saw_search_option: bool = false,
 
     fn deinit(self: *Arguments, alloc: Allocator) void {
@@ -112,6 +114,7 @@ fn run(
             args.prior_path,
             args.synthesis,
             args.resources,
+            args.workers,
         ),
         .decompress => try commandDecompress(
             alloc,
@@ -120,6 +123,7 @@ fn run(
             args.positional.items[0],
             args.positional.items[1],
             args.resources,
+            args.workers,
         ),
         .verify => try commandVerify(
             alloc,
@@ -128,6 +132,7 @@ fn run(
             args.positional.items[0],
             args.positional.items[1],
             args.resources,
+            args.workers,
         ),
         .calibrate => try commandCalibrate(
             alloc,
@@ -143,6 +148,7 @@ fn run(
             out,
             args.synthesis,
             args.resources,
+            args.workers,
         ),
     }
 }
@@ -184,6 +190,10 @@ fn parseArguments(
         } else if (std.mem.eql(u8, word, "--max-nodes")) {
             args.saw_search_option = true;
             args.synthesis.max_nodes = try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--seed-float-fields")) {
+            args.saw_search_option = true;
+            args.synthesis.seed_float_fields =
+                try parseUnsigned(u1, value) == 1;
         } else if (std.mem.eql(u8, word, "--max-depth")) {
             args.saw_search_option = true;
             args.synthesis.grammar_options.max_depth =
@@ -219,6 +229,9 @@ fn parseArguments(
         } else if (std.mem.eql(u8, word, "--max-prefix-bytes")) {
             args.resources.max_prefix_bytes =
                 try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--workers")) {
+            args.saw_workers = true;
+            args.workers = try parseUnsigned(usize, value);
         } else {
             return error.InvalidArguments;
         }
@@ -235,6 +248,8 @@ fn validateArguments(args: Arguments) !void {
         return error.InvalidArguments;
     if (args.synthesis.max_nodes == 0)
         return error.InvalidArguments;
+    if (args.workers == 0)
+        return error.InvalidArguments;
     const grammar_options = args.synthesis.grammar_options;
     if (grammar_options.max_repeat_period > grammar.HARD_MAX_REPEAT_PERIOD or
         grammar_options.max_concat_splits > grammar.HARD_MAX_CONCAT_SPLITS or
@@ -247,6 +262,8 @@ fn validateArguments(args: Arguments) !void {
     if (args.saw_prior and args.command != .compress)
         return error.InvalidArguments;
     if (args.saw_tensors and args.command != .calibrate)
+        return error.InvalidArguments;
+    if (args.saw_workers and args.command == .calibrate)
         return error.InvalidArguments;
     if (args.saw_search_option and
         args.command != .compress and
@@ -284,6 +301,7 @@ fn commandCompress(
     prior_path: ?[]const u8,
     base_options: synthesizer.Options,
     resources: ResourceLimits,
+    workers: usize,
 ) !void {
     var prior: ?grammar_prior.Prior = if (prior_path) |path|
         try loadPrior(alloc, io, path)
@@ -300,6 +318,7 @@ fn commandCompress(
         archive_path,
         .{
             .synthesis = synthesis,
+            .workers = workers,
             .max_source_bytes = resources.max_total_bytes,
             .max_prefix_bytes = resources.max_prefix_bytes,
             .max_tensor_bytes = resources.max_tensor_bytes,
@@ -354,13 +373,14 @@ fn commandDecompress(
     archive_path: []const u8,
     output_path: []const u8,
     resources: ResourceLimits,
+    workers: usize,
 ) !void {
     const summary = try pipeline.decompressFile(
         alloc,
         io,
         archive_path,
         output_path,
-        decompressLimits(resources),
+        decompressLimits(resources, workers),
     );
     try out.print(
         "decompressed {d} tensors: {d} -> {d} bytes\n",
@@ -375,13 +395,14 @@ fn commandVerify(
     archive_path: []const u8,
     source_path: []const u8,
     resources: ResourceLimits,
+    workers: usize,
 ) !void {
     const summary = try pipeline.verifyFile(
         alloc,
         io,
         archive_path,
         source_path,
-        decompressLimits(resources),
+        decompressLimits(resources, workers),
     );
     try out.print(
         "verified {d} tensors and {d} reconstructed bytes exactly\n",
@@ -448,6 +469,7 @@ fn commandConfig(
     out: *std.Io.Writer,
     options: synthesizer.Options,
     resources: ResourceLimits,
+    workers: usize,
 ) !void {
     var json: std.json.Stringify = .{
         .writer = out,
@@ -464,10 +486,14 @@ fn commandConfig(
     try json.write("queue_order_only");
     try json.objectField("archive");
     try json.write("BRTA-v1");
+    try json.objectField("workers");
+    try json.write(workers);
     try json.objectField("max_expansions");
     try json.write(options.max_expansions);
     try json.objectField("max_nodes");
     try json.write(options.max_nodes);
+    try json.objectField("seed_float_fields");
+    try json.write(options.seed_float_fields);
     try json.objectField("max_decomposition_bytes");
     try json.write(options.max_decomposition_bytes);
     try json.objectField("max_depth");
@@ -492,7 +518,10 @@ fn commandConfig(
     try out.writeByte('\n');
 }
 
-fn decompressLimits(resources: ResourceLimits) pipeline.DecompressLimits {
+fn decompressLimits(
+    resources: ResourceLimits,
+    workers: usize,
+) pipeline.DecompressLimits {
     const program_slack: usize = 16 * 1024 * 1024;
     const program_bytes = @min(
         resources.max_total_bytes,
@@ -503,6 +532,7 @@ fn decompressLimits(resources: ResourceLimits) pipeline.DecompressLimits {
         ) catch std.math.maxInt(usize),
     );
     return .{
+        .workers = workers,
         .max_archive_bytes = resources.max_total_bytes,
         .max_output_bytes = resources.max_total_bytes,
         .archive = .{
@@ -573,12 +603,16 @@ fn usage(writer: *std.Io.Writer) !void {
         \\Search options:
         \\  --max-expansions N
         \\  --max-nodes N
+        \\  --seed-float-fields 0|1
         \\  --max-depth N
         \\  --max-repeat-period N
         \\  --max-concat-splits N
         \\  --max-map-constants N
         \\  --max-rotations N
         \\  --max-field-splits N
+        \\
+        \\Parallel file execution:
+        \\  --workers N
         \\
         \\Resource limits (bytes):
         \\  --max-total-bytes N
@@ -600,15 +634,20 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
         "0",
         "--max-depth",
         "2",
+        "--seed-float-fields",
+        "0",
         "--max-concat-splits",
         "0",
         "--max-tensor-bytes",
         "1048576",
+        "--workers",
+        "4",
     });
     defer args.deinit(alloc);
     try validateArguments(args);
     try std.testing.expectEqual(Command.compress, args.command);
     try std.testing.expectEqual(@as(usize, 0), args.synthesis.max_expansions);
+    try std.testing.expect(!args.synthesis.seed_float_fields);
     try std.testing.expectEqual(
         @as(u8, 2),
         args.synthesis.grammar_options.max_depth,
@@ -626,6 +665,7 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
         @as(usize, 1048576),
         args.synthesis.max_decomposition_bytes,
     );
+    try std.testing.expectEqual(@as(usize, 4), args.workers);
 
     try std.testing.expectError(
         error.InvalidArguments,
@@ -675,6 +715,32 @@ test "CLI rejects command-specific flags and an impossible node cap" {
         error.InvalidArguments,
         validateArguments(excessive_fanout),
     );
+
+    var zero_workers = try parseArguments(alloc, &.{
+        "decompress",
+        "model.brta",
+        "out.safetensors",
+        "--workers",
+        "0",
+    });
+    defer zero_workers.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidArguments,
+        validateArguments(zero_workers),
+    );
+
+    var calibration_workers = try parseArguments(alloc, &.{
+        "calibrate",
+        "model.safetensors",
+        "model.brgp",
+        "--workers",
+        "4",
+    });
+    defer calibration_workers.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidArguments,
+        validateArguments(calibration_workers),
+    );
 }
 
 test "CLI decoder defaults cap one materialized tensor and can be tightened" {
@@ -685,7 +751,10 @@ test "CLI decoder defaults cap one materialized tensor and can be tightened" {
         "out.safetensors",
     });
     defer defaults.deinit(alloc);
-    const default_limits = decompressLimits(defaults.resources);
+    const default_limits = decompressLimits(
+        defaults.resources,
+        defaults.workers,
+    );
     try std.testing.expectEqual(
         DEFAULT_MAX_TENSOR_BYTES,
         default_limits.archive.max_tensor_output_bytes,
@@ -708,7 +777,10 @@ test "CLI decoder defaults cap one materialized tensor and can be tightened" {
     });
     defer tightened.deinit(alloc);
     try validateArguments(tightened);
-    const tight_limits = decompressLimits(tightened.resources);
+    const tight_limits = decompressLimits(
+        tightened.resources,
+        tightened.workers,
+    );
     try std.testing.expectEqual(
         @as(usize, 4096),
         tight_limits.max_output_bytes,

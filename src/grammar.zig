@@ -129,6 +129,18 @@ pub const LegalProductions = struct {
     }
 };
 
+pub fn families(choices: []const Choice) LegalProductions {
+    var result: LegalProductions = .{};
+    for (choices) |choice| {
+        const production = choice.id();
+        if (result.len > 0 and result.storage[result.len - 1] == production)
+            continue;
+        result.storage[result.len] = production;
+        result.len += 1;
+    }
+    return result;
+}
+
 /// Enumerate legal production families in stable ProductionId order. The result
 /// is fixed-capacity and allocation-free; valid targets always include Literal.
 pub fn legal(
@@ -174,22 +186,28 @@ fn productionIsLegal(
         else => if (hole_depth >= options.max_depth)
             false
         else switch (production) {
-            .repeat => minimalRepeatTimes(target, options.max_repeat_period) != null,
+            .repeat => uniformWord(target) == null and
+                minimalRepeatTimes(target, options.max_repeat_period) != null,
             .concat => target.count >= 2 and bounded(
                 options.max_concat_splits,
                 HARD_MAX_CONCAT_SPLITS,
             ) > 0,
-            .map_xor, .map_add_mod => bounded(
+            .map_xor => hasNonzeroRepresentative(
+                target,
                 options.max_map_constants,
-                HARD_MAX_MAP_CONSTANTS,
-            ) > 0,
-            .map_zigzag, .map_gray, .map_bit_reverse => true,
-            .map_rotate_left => bounded(options.max_rotations, HARD_MAX_ROTATIONS) > 0,
-            .scan_xor, .scan_add_mod => target.count >= 2,
-            .merge_fields => target.bits_per_elem > 1 and bounded(
+            ),
+            .map_add_mod => target.bits_per_elem > 1 and
+                hasNonzeroRepresentative(target, options.max_map_constants),
+            .map_zigzag, .map_gray, .map_bit_reverse => target.bits_per_elem > 1,
+            .map_rotate_left => target.bits_per_elem > 1 and
+                bounded(options.max_rotations, HARD_MAX_ROTATIONS) > 0,
+            .scan_xor => target.count >= 2,
+            .scan_add_mod => target.bits_per_elem > 1 and target.count >= 2,
+            .merge_fields => hasCanonicalFieldChoice(
+                target.bits_per_elem,
+                dtype,
                 options.max_field_splits,
-                HARD_MAX_FIELD_SPLITS,
-            ) > 0,
+            ),
             .merge_float_fields => if (dtype.floatFields()) |fields|
                 fields.total == target.bits_per_elem
             else
@@ -219,14 +237,17 @@ pub fn propose(
     if (target.count == 0)
         return choices.toOwnedSlice(alloc);
 
-    if (uniformWord(target)) |word|
+    const uniform = uniformWord(target);
+    if (uniform) |word|
         try choices.append(alloc, .{ .constant = word });
 
     if (hole_depth >= options.max_depth)
         return choices.toOwnedSlice(alloc);
 
-    if (minimalRepeatTimes(target, options.max_repeat_period)) |times|
-        try choices.append(alloc, .{ .repeat = times });
+    if (uniform == null) {
+        if (minimalRepeatTimes(target, options.max_repeat_period)) |times|
+            try choices.append(alloc, .{ .repeat = times });
+    }
 
     try appendConcatChoices(alloc, &choices, target.count, options.max_concat_splits);
 
@@ -236,40 +257,50 @@ pub fn propose(
         options.max_map_constants,
         &representative,
     );
-    for (representative[0..representative_count]) |word|
-        try choices.append(alloc, .{ .map_xor = word });
-
-    var add_parameters: [HARD_MAX_MAP_CONSTANTS]u32 = undefined;
-    var add_count: usize = 0;
-    const mask = target.mask();
     for (representative[0..representative_count]) |word| {
-        const parameter = (0 -% word) & mask;
-        if (!contains(u32, add_parameters[0..add_count], parameter)) {
-            add_parameters[add_count] = parameter;
-            add_count += 1;
-            try choices.append(alloc, .{ .map_add_mod = parameter });
+        if (word == 0) continue;
+        try choices.append(alloc, .{ .map_xor = word });
+    }
+
+    if (target.bits_per_elem > 1) {
+        var add_parameters: [HARD_MAX_MAP_CONSTANTS]u32 = undefined;
+        var add_count: usize = 0;
+        const mask = target.mask();
+        for (representative[0..representative_count]) |word| {
+            const parameter = (0 -% word) & mask;
+            if (parameter != 0 and
+                !contains(u32, add_parameters[0..add_count], parameter))
+            {
+                add_parameters[add_count] = parameter;
+                add_count += 1;
+                try choices.append(alloc, .{ .map_add_mod = parameter });
+            }
         }
     }
 
-    try choices.append(alloc, .map_zigzag);
-    try choices.append(alloc, .map_gray);
-    try appendRotationChoices(
-        alloc,
-        &choices,
-        target.bits_per_elem,
-        options.max_rotations,
-    );
-    try choices.append(alloc, .map_bit_reverse);
+    if (target.bits_per_elem > 1) {
+        try choices.append(alloc, .map_zigzag);
+        try choices.append(alloc, .map_gray);
+        try appendRotationChoices(
+            alloc,
+            &choices,
+            target.bits_per_elem,
+            options.max_rotations,
+        );
+        try choices.append(alloc, .map_bit_reverse);
+    }
 
     if (target.count >= 2) {
         try choices.append(alloc, .{ .scan_xor = target.getU32(0) });
-        try choices.append(alloc, .{ .scan_add_mod = target.getU32(0) });
+        if (target.bits_per_elem > 1)
+            try choices.append(alloc, .{ .scan_add_mod = target.getU32(0) });
     }
 
     try appendFieldChoices(
         alloc,
         &choices,
         target.bits_per_elem,
+        dtype,
         options.max_field_splits,
     );
     if (dtype.floatFields()) |fields| {
@@ -514,7 +545,11 @@ fn copyRange(
     start: usize,
     end: usize,
 ) (Allocator.Error || dsl.ValidationError)!Stream {
-    var output = try Stream.init(alloc, end - start, target.bits_per_elem);
+    var output = try Stream.initUninitialized(
+        alloc,
+        end - start,
+        target.bits_per_elem,
+    );
     for (start..end, 0..) |source, destination|
         output.setU32(destination, target.getU32(source));
     return output;
@@ -558,15 +593,50 @@ fn appendFieldChoices(
     alloc: Allocator,
     choices: *std.ArrayList(Choice),
     bits: u8,
+    dtype: Dtype,
     requested: usize,
 ) Allocator.Error!void {
     if (bits < 2) return;
-    const possible: usize = bits - 1;
-    const n = @min(bounded(requested, HARD_MAX_FIELD_SPLITS), possible);
+    const n = fieldChoiceCount(bits, requested);
     for (1..n + 1) |index| {
-        const low_bits: u8 = @intCast(evenInteriorPoint(possible, index, n));
+        const low_bits = fieldSplit(bits, dtype, index, n);
+        if (!fieldChoiceIsCanonical(bits, low_bits)) continue;
         try choices.append(alloc, .{ .merge_fields = low_bits });
     }
+}
+
+fn fieldChoiceCount(bits: u8, requested: usize) usize {
+    if (bits < 2) return 0;
+    return @min(bounded(requested, HARD_MAX_FIELD_SPLITS), bits - 1);
+}
+
+fn fieldSplit(bits: u8, dtype: Dtype, index: usize, count: usize) u8 {
+    return if (index == count and switch (dtype) {
+        .f8_e4m3, .f8_e5m2 => true,
+        else => false,
+    })
+        bits - 1
+    else
+        @intCast(evenInteriorPoint(bits - 1, index, count));
+}
+
+fn hasCanonicalFieldChoice(
+    bits: u8,
+    dtype: Dtype,
+    requested: usize,
+) bool {
+    const count = fieldChoiceCount(bits, requested);
+    for (1..count + 1) |index|
+        if (fieldChoiceIsCanonical(
+            bits,
+            fieldSplit(bits, dtype, index, count),
+        )) return true;
+    return false;
+}
+
+fn fieldChoiceIsCanonical(bits: u8, low_bits: u8) bool {
+    if (bits == 2 and low_bits == 1) return false;
+    return bits < 9 or bits > 16 or low_bits != 8;
 }
 
 /// `index` is 1-based and the result is a distinct point in `1...maximum`.
@@ -600,6 +670,14 @@ fn representativeWords(
         }
     }
     return written;
+}
+
+fn hasNonzeroRepresentative(target: Stream, requested: usize) bool {
+    var representative: [HARD_MAX_MAP_CONSTANTS]u32 = undefined;
+    const count = representativeWords(target, requested, &representative);
+    for (representative[0..count]) |word|
+        if (word != 0) return true;
+    return false;
 }
 
 fn minimalRepeatTimes(target: Stream, requested_period: usize) ?u32 {
@@ -654,8 +732,10 @@ fn validateTarget(target: Stream) dsl.ValidationError!void {
         target.elemBytes(),
     ) catch return error.LengthOverflow;
     if (target.data.len != required) return error.InvalidLiteralValue;
-    const mask = target.mask();
-    for (0..target.count) |index|
-        if (target.getU32(index) & ~mask != 0)
-            return error.InvalidLiteralValue;
+    if (target.bits_per_elem != types.roundUpToPow2(target.bits_per_elem)) {
+        const mask = target.mask();
+        for (0..target.count) |index|
+            if (target.getU32(index) & ~mask != 0)
+                return error.InvalidLiteralValue;
+    }
 }

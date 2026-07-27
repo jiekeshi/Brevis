@@ -113,13 +113,22 @@ pub const Stream = struct {
     }
 
     pub fn init(alloc: Allocator, count: usize, bits_per_elem: u8) !Stream {
+        const stream = try initUninitialized(alloc, count, bits_per_elem);
+        @memset(stream.data, 0);
+        return stream;
+    }
+
+    pub fn initUninitialized(
+        alloc: Allocator,
+        count: usize,
+        bits_per_elem: u8,
+    ) !Stream {
         if (bits_per_elem == 0 or bits_per_elem > 32)
             return error.InvalidWordWidth;
         const w = roundUpToPow2(bits_per_elem) / 8;
         const byte_count = std.math.mul(usize, count, w) catch
             return error.LengthOverflow;
         const buf = try alloc.alloc(u8, byte_count);
-        @memset(buf, 0);
         return .{ .data = buf, .count = count, .bits_per_elem = bits_per_elem };
     }
 
