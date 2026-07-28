@@ -228,6 +228,7 @@ The main compute controls are:
 | --- | ---: | --- |
 | `--max-expansions` | `1` | Maximum expanded partial programs per tensor. |
 | `--max-nodes` | `64` | Maximum nodes in a completed program. |
+| `--astar-heuristic` | `1` | Use the admissible relaxed-grammar A* completion heuristic; set to `0` for the Dijkstra-style research control. |
 | `--max-depth` | `4` | Maximum grammar depth. |
 | `--max-repeat-period` | `32` | Largest proposed minimal repeat period. |
 | `--max-concat-splits` | `3` | Maximum proposed binary split points. |
@@ -286,6 +287,14 @@ zig build test -Doptimize=ReleaseSafe
 ```
 
 Tests cover DSL typing and execution, target decomposition, canonical literal codecs, program round trips, bounded synthesis, PHOG behavior, archive validation, safetensors validation, calibration, and complete byte-for-byte reconstruction.
+
+## Paper benchmark
+
+Download the frozen ten-checkpoint corpus with
+`scripts/download_benchmark_checkpoints.py`, then use
+`scripts/run_benchmarks.py` for the resumable single-run evaluation. The
+[benchmark runbook](docs/research/benchmark-runbook.md) defines the cold/hot
+cache protocol, baseline adapters, sweeps, result schema, and output tables.
 
 ## Source layout
 

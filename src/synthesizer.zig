@@ -19,6 +19,7 @@ const Stream = types.Stream;
 pub const Options = struct {
     max_expansions: usize = 1,
     max_nodes: usize = 64,
+    astar_heuristic: bool = true,
     seed_float_fields: bool = false,
     /// Maximum total storage of simultaneously open target streams. Choices
     /// that would exceed it are pruned before decomposition allocation.
@@ -273,13 +274,13 @@ fn synthesizeImpl(
     defer queue.deinit(alloc);
 
     var serial: u64 = 0;
-    var relaxed_heuristic = try RelaxedGrammarHeuristic.init(
+    var search_heuristic = try SearchHeuristic.init(
         alloc,
         dtype,
         options,
     );
-    defer relaxed_heuristic.deinit(alloc);
-    const initial_heuristic = relaxed_heuristic.completionCost(
+    defer search_heuristic.deinit(alloc);
+    const initial_heuristic = search_heuristic.completionCost(
         target.bits_per_elem,
         target.count,
         0,
@@ -400,7 +401,7 @@ fn synthesizeImpl(
         for (open_holes.items.items[0 .. open_holes.items.items.len - 1]) |other| {
             retained_heuristic = saturatingCostAdd(
                 retained_heuristic,
-                relaxed_heuristic.completionCost(
+                search_heuristic.completionCost(
                     other.target.bits_per_elem,
                     other.target.count,
                     other.depth,
@@ -483,7 +484,7 @@ fn synthesizeImpl(
             for (child_shapes.slice()) |child| {
                 heuristic = saturatingCostAdd(
                     heuristic,
-                    relaxed_heuristic.completionCost(
+                    search_heuristic.completionCost(
                         child.bits,
                         child.count,
                         child_depth,
@@ -1242,6 +1243,52 @@ const RelaxedGrammarHeuristic = struct {
         ] = cost;
     }
 };
+
+const SearchHeuristic = struct {
+    relaxed: ?RelaxedGrammarHeuristic,
+
+    fn init(
+        alloc: Allocator,
+        dtype: Dtype,
+        options: Options,
+    ) !SearchHeuristic {
+        return .{
+            .relaxed = if (options.astar_heuristic)
+                try RelaxedGrammarHeuristic.init(alloc, dtype, options)
+            else
+                null,
+        };
+    }
+
+    fn deinit(self: *SearchHeuristic, alloc: Allocator) void {
+        if (self.relaxed) |*relaxed| relaxed.deinit(alloc);
+        self.* = undefined;
+    }
+
+    fn completionCost(
+        self: *const SearchHeuristic,
+        bits: u8,
+        count: usize,
+        depth: u8,
+    ) u64 {
+        const relaxed = self.relaxed orelse return 0;
+        return relaxed.completionCost(bits, count, depth);
+    }
+};
+
+test "disabled A-star heuristic contributes zero completion cost" {
+    const alloc = std.testing.allocator;
+    var heuristic = try SearchHeuristic.init(
+        alloc,
+        .u8,
+        .{ .astar_heuristic = false },
+    );
+    defer heuristic.deinit(alloc);
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        heuristic.completionCost(8, 1024, 0),
+    );
+}
 
 test "relaxed c chooses a recursive derivation and h orders the queue" {
     const alloc = std.testing.allocator;

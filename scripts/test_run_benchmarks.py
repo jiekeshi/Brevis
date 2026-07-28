@@ -1,0 +1,171 @@
+import csv
+import json
+import struct
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run_benchmarks as bench
+
+
+def write_safetensors(path: Path, tensors: list[tuple[str, str, list[int], bytes]]) -> None:
+    offset = 0
+    header = {}
+    payload = bytearray()
+    for name, dtype, shape, data in tensors:
+        header[name] = {
+            "dtype": dtype,
+            "shape": shape,
+            "data_offsets": [offset, offset + len(data)],
+        }
+        payload.extend(data)
+        offset += len(data)
+    encoded = json.dumps(header, separators=(",", ":")).encode()
+    path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + payload)
+
+
+def read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open() as source:
+        return list(csv.DictReader(source))
+
+
+class BenchmarkHarnessTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_manifest_loads_only_declared_shards(self):
+        model = self.root / "model"
+        model.mkdir()
+        first = model / "model-00001-of-00002.safetensors"
+        second = model / "model-00002-of-00002.safetensors"
+        write_safetensors(first, [("a", "U8", [2], b"\x01\x02")])
+        write_safetensors(second, [("b", "U8", [1], b"\x03")])
+        write_safetensors(model / "consolidated.safetensors", [("x", "U8", [1], b"x")])
+        manifest = {
+            "name": "fixture",
+            "repo_id": "test/fixture",
+            "revision": "a" * 40,
+            "weights": [
+                {"path": first.name},
+                {"path": second.name},
+            ],
+        }
+        (model / "download-manifest.json").write_text(json.dumps(manifest))
+
+        checkpoint = bench.load_manifest_checkpoint(model)
+
+        self.assertEqual("fixture", checkpoint.name)
+        self.assertEqual((first, second), checkpoint.files)
+        self.assertNotIn(model / "consolidated.safetensors", checkpoint.files)
+
+    def test_tensor_exact_ignores_header_order_but_not_payload_changes(self):
+        source = self.root / "source.safetensors"
+        reordered = self.root / "reordered.safetensors"
+        corrupt = self.root / "corrupt.safetensors"
+        write_safetensors(
+            source,
+            [
+                ("a", "U8", [2], b"\x01\x02"),
+                ("b", "U8", [2], b"\x03\x04"),
+            ],
+        )
+        write_safetensors(
+            reordered,
+            [
+                ("b", "U8", [2], b"\x03\x04"),
+                ("a", "U8", [2], b"\x01\x02"),
+            ],
+        )
+        write_safetensors(
+            corrupt,
+            [
+                ("b", "U8", [2], b"\x03\x05"),
+                ("a", "U8", [2], b"\x01\x02"),
+            ],
+        )
+
+        self.assertTrue(bench.tensor_exact(source, reordered))
+        self.assertFalse(bench.byte_exact(source, reordered))
+        self.assertFalse(bench.tensor_exact(source, corrupt))
+
+    def test_brevis_commands_freeze_paper_controls(self):
+        source = self.root / "model.safetensors"
+        archive = self.root / "model.brv"
+        restored = self.root / "restored.safetensors"
+        source.write_bytes(b"x" * 128)
+        archive.write_bytes(b"y" * 64)
+        config = bench.BrevisConfig(
+            workers=4,
+            max_expansions=512,
+            tensors=0,
+            astar_heuristic=False,
+        )
+
+        compress = bench.command_for(
+            "brevis",
+            "compress",
+            source,
+            archive,
+            4,
+            Path("/bin/brevis"),
+            config,
+        )
+        decompress = bench.command_for(
+            "brevis",
+            "decompress",
+            archive,
+            restored,
+            4,
+            Path("/bin/brevis"),
+            config,
+        )
+
+        self.assertIn("--max-expansions", compress)
+        self.assertEqual("0", compress[compress.index("--tensors") + 1])
+        self.assertEqual("0", compress[compress.index("--astar-heuristic") + 1])
+        self.assertNotIn("--max-expansions", decompress)
+
+    def test_summary_reuses_core_full_for_all_three_sweeps(self):
+        results = self.root / "results"
+        log = bench.ResultLog(results / "raw" / "runs.jsonl")
+        log.append(
+            {
+                "run_id": "full",
+                "status": "ok",
+                "stage": "core",
+                "checkpoint": "qwen2.5-7b-local",
+                "shard": "model.safetensors",
+                "method": "brevis",
+                "operation": "compress",
+                "cache": "hot",
+                "workers": 1,
+                "max_expansions": 512,
+                "source_bytes": 100,
+                "output_bytes": 70,
+                "wall_seconds": 2,
+                "peak_rss_bytes": 1024,
+            }
+        )
+
+        bench.summarize(results)
+
+        figure1 = read_csv(
+            results / "tables" / "figure1-archive-size-vs-time.csv"
+        )
+        figure2 = read_csv(
+            results / "tables" / "figure2-throughput-rss-vs-workers.csv"
+        )
+        table4 = read_csv(results / "tables" / "table4-ablation.csv")
+        self.assertEqual("budget-512", figure1[0]["variant"])
+        self.assertEqual("1", figure2[0]["workers"])
+        self.assertEqual("full", table4[0]["variant"])
+
+
+if __name__ == "__main__":
+    unittest.main()

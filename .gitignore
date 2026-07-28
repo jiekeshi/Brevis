@@ -1,5 +1,7 @@
 zig-out/
 .zig-cache/
 .DS_Store
+__pycache__/
+results/
 
 .claude

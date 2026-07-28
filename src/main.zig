@@ -196,6 +196,10 @@ fn parseArguments(
         } else if (std.mem.eql(u8, word, "--max-nodes")) {
             args.saw_search_option = true;
             args.synthesis.max_nodes = try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--astar-heuristic")) {
+            args.saw_search_option = true;
+            args.synthesis.astar_heuristic =
+                try parseUnsigned(u1, value) == 1;
         } else if (std.mem.eql(u8, word, "--seed-float-fields")) {
             args.saw_search_option = true;
             args.synthesis.seed_float_fields =
@@ -517,6 +521,8 @@ fn commandConfig(
     try json.write(options.max_expansions);
     try json.objectField("max_nodes");
     try json.write(options.max_nodes);
+    try json.objectField("astar_heuristic");
+    try json.write(options.astar_heuristic);
     try json.objectField("seed_float_fields");
     try json.write(options.seed_float_fields);
     try json.objectField("max_decomposition_bytes");
@@ -628,6 +634,7 @@ fn usage(writer: *std.Io.Writer) !void {
         \\Search options:
         \\  --max-expansions N
         \\  --max-nodes N
+        \\  --astar-heuristic 0|1
         \\  --seed-float-fields 0|1
         \\  --max-depth N
         \\  --max-repeat-period N
@@ -659,6 +666,8 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
         "7",
         "--max-expansions",
         "0",
+        "--astar-heuristic",
+        "0",
         "--max-depth",
         "2",
         "--seed-float-fields",
@@ -674,6 +683,7 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
     try validateArguments(args);
     try std.testing.expectEqual(Command.compress, args.command);
     try std.testing.expectEqual(@as(usize, 0), args.synthesis.max_expansions);
+    try std.testing.expect(!args.synthesis.astar_heuristic);
     try std.testing.expect(!args.synthesis.seed_float_fields);
     try std.testing.expectEqual(
         @as(u8, 2),
