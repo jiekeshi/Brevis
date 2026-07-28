@@ -26,6 +26,7 @@ from typing import Any, Iterable
 
 from benchmark_corpus import CHECKPOINTS as PAPER_CHECKPOINTS
 from benchmark_corpus import CHECKPOINT_BY_NAME
+from benchmark_utils import human_bytes
 
 ROOT = Path(__file__).resolve().parent.parent
 CODEC_HELPER = ROOT / "scripts" / "benchmark_codecs.py"
@@ -444,15 +445,6 @@ def fsync_output(path: Path | None) -> None:
     for file in files:
         with file.open("rb", buffering=0) as output:
             os.fsync(output.fileno())
-
-
-def human_bytes(size: int) -> str:
-    value = float(size)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if value < 1024 or unit == "TiB":
-            return f"{value:.2f} {unit}"
-        value /= 1024
-    raise AssertionError("unreachable")
 
 
 def current_file_size(path: Path | None) -> int | None:
@@ -1513,7 +1505,6 @@ def execution_provenance(
             "harness_sha256": harness_sha256,
             "host": args.host_context,
             "method_version": version,
-            "progress_interval_seconds": args.progress_interval,
         }
         for method, version in versions.items()
     }

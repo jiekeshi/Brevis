@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from benchmark_corpus import CHECKPOINTS, CheckpointSpec as Checkpoint
+from benchmark_utils import human_bytes
 
 MODEL_SUPPORT_FILES = (
     "config.json",
@@ -64,15 +65,6 @@ class DownloadPlan:
     @property
     def total_bytes(self) -> int:
         return sum(file.size for file in self.weights)
-
-
-def human_bytes(size: int) -> str:
-    value = float(size)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if value < 1024 or unit == "TiB":
-            return f"{value:.2f} {unit}"
-        value /= 1024
-    raise AssertionError("unreachable")
 
 
 def parse_args() -> argparse.Namespace:

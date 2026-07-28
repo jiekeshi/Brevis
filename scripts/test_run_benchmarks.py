@@ -211,6 +211,16 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertNotEqual(bench.run_id(first), bench.run_id(second))
         self.assertNotEqual(bench.run_id(first), bench.run_id(other_host))
 
+    def test_progress_interval_does_not_change_execution_identity(self):
+        host = {"hostname": "fixture"}
+        first = SimpleNamespace(host_context=host, progress_interval=1.0)
+        second = SimpleNamespace(host_context=host, progress_interval=30.0)
+
+        self.assertEqual(
+            bench.execution_provenance(first, {"zstd-9": "version"}, {}),
+            bench.execution_provenance(second, {"zstd-9": "version"}, {}),
+        )
+
     def test_specialized_baselines_require_model_assets(self):
         with self.assertRaisesRegex(SystemExit, "missing model config"):
             specialized_baselines.require_model_config(self.root)
