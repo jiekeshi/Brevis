@@ -19,7 +19,8 @@ pub const COST_SCALE: Cost = 1024;
 pub const MAX_DEPTH_BUCKET: u8 = 7;
 pub const ROOT_PARENT_WIRE: u16 = 0xffff;
 
-const MAGIC = "BRGP";
+const MAGIC = types.MAGIC;
+const KIND = types.Kind.prior;
 const VERSION: u16 = 1;
 const LEVEL_COUNT: usize = 3;
 const MAX_SERIALIZED_ROWS: usize = 262_144;
@@ -406,7 +407,8 @@ pub const Prior = struct {
         var output: std.ArrayList(u8) = .empty;
         errdefer output.deinit(alloc);
 
-        try output.appendSlice(alloc, MAGIC);
+        try output.appendSlice(alloc, &MAGIC);
+        try output.append(alloc, @intFromEnum(KIND));
         try appendInt(u16, alloc, &output, VERSION);
         try appendInt(u16, alloc, &output, COST_SCALE);
         try appendInt(u32, alloc, &output, self.config.learned_numerator);
@@ -468,8 +470,9 @@ pub const Prior = struct {
 
     pub fn deserialize(alloc: Allocator, bytes: []const u8) !Prior {
         var reader: Reader = .{ .bytes = bytes };
-        if (!std.mem.eql(u8, try reader.take(4), MAGIC))
+        if (!std.mem.eql(u8, try reader.take(4), &MAGIC))
             return error.BadMagic;
+        if (try reader.readByte() != @intFromEnum(KIND)) return error.BadMagic;
         if (try reader.readInt(u16) != VERSION) return error.BadVersion;
         if (try reader.readInt(u16) != COST_SCALE)
             return error.BadCostScale;

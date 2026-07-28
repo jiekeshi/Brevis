@@ -1,10 +1,17 @@
-//! Budgeted A* synthesis over target-directed semantic programs.
+//! Budgeted best-first synthesis over target-directed semantic programs.
 //!
-//! Search order is determined by grammar description length. Complete
-//! candidates are compared only by their exact canonical serialized bytes.
+//! States are ordered by an estimate of the completed program's serialized
+//! size; the PHOG breaks ties. Complete candidates are compared only by exact
+//! canonical bytes.
+//!
+//! Grammar description length alone cannot find structure: rule costs are
+//! nonnegative and paid per node, so that score is monotone in derivation
+//! length and a wide `Merge` ranks last exactly when splitting is what
+//! collapses the children's entropy. `data_cost_ordering = false` restores it.
 
 const std = @import("std");
 const builtin = @import("builtin");
+const cost_model = @import("cost_model.zig");
 const dsl = @import("dsl.zig");
 const grammar = @import("grammar.zig");
 const grammar_prior = @import("grammar_prior.zig");
@@ -15,6 +22,9 @@ const types = @import("types.zig");
 const Allocator = std.mem.Allocator;
 const Dtype = types.Dtype;
 const Stream = types.Stream;
+
+/// Upper bound on simultaneously retained budget-cut frontier states.
+pub const MAX_FRONTIER_CANDIDATES: usize = 32;
 
 pub const Options = struct {
     max_expansions: usize = 1,
@@ -27,6 +37,37 @@ pub const Options = struct {
     /// Encoder-only PHOG policy. It changes queue order but never legality,
     /// canonical byte cost, or complete-candidate selection.
     rule_model: ?*const grammar_prior.Prior = null,
+    /// Order the queue by estimated final size rather than grammar cost.
+    data_cost_ordering: bool = true,
+    /// Bounded sample per target used by that estimate.
+    estimate_sample_elements: usize = cost_model.DEFAULT_SAMPLE_ELEMENTS,
+    /// Open states completed with `Lit` and measured exactly, chosen by the
+    /// size estimate. Algorithm 1 retains one, deciding the program from a
+    /// state never measured. Each extra candidate costs one decomposition and
+    /// encoding of the tensor.
+    frontier_candidates: usize = 1,
+    /// Estimate only the prior's cheapest `prior_gate` families per hole.
+    /// Measured to save no time: estimation is O(sample), not O(n).
+    prior_gate: usize = 0,
+    /// Skip a retained state whose estimate exceeds the best-estimated state's
+    /// by more than this percentage. The estimate ranks the frontier, so a
+    /// state it places far behind is not worth a full decomposition and
+    /// encoding. Zero measures every retained state.
+    ///
+    /// This compares estimates to each other, not to a measured size, so it is
+    /// a fixed property of the frontier and cannot make a larger budget return
+    /// a worse program.
+    frontier_margin_percent: u32 = 0,
+    /// Exact-measurement slots owned by the rule prior, which ranks by paid
+    /// rule cost rather than by estimated size.
+    ///
+    /// The size estimate is a bounded zeroth-order sample and its ranking is
+    /// weakest exactly where the checkpoint is most homogeneous: on BF16
+    /// weights the winning decomposition can sit 20-30% behind in estimated
+    /// size, outside any affordable estimate-ranked frontier. The prior has
+    /// seen which decomposition actually won on sibling tensors, so its
+    /// nominations are complementary rather than competing.
+    prior_frontier_candidates: usize = 2,
 };
 
 pub const SearchStatus = enum {
@@ -79,6 +120,11 @@ const Partial = struct {
     grammar_cost: u64,
     /// f(s) = g(s) + h(s), where h is an admissible completion bound.
     priority_cost: u64,
+    /// Estimated Q10 bits of the completed archive record: the exact bits of
+    /// every selected instruction field plus, for each open hole, the data cost
+    /// its target still owes. Zero when data-cost ordering is disabled, which
+    /// makes the queue fall back to the grammar-cost key alone.
+    estimated_bits: u64,
     /// Exact encoded bytes of the file prefix and every selected node's fixed
     /// instruction/parameter fields, plus literal framing lower bounds.
     fixed_bytes: usize,
@@ -86,13 +132,95 @@ const Partial = struct {
     serial: u64,
 };
 
+/// Explore by estimated final size first, and let the PHOG order states whose
+/// estimates agree. The exact byte lower bound and the insertion serial keep
+/// the traversal total and deterministic.
 fn comparePartial(_: void, left: Partial, right: Partial) std.math.Order {
+    if (left.estimated_bits != right.estimated_bits)
+        return std.math.order(left.estimated_bits, right.estimated_bits);
     if (left.priority_cost != right.priority_cost)
         return std.math.order(left.priority_cost, right.priority_cost);
     if (left.size_lower_bound != right.size_lower_bound)
         return std.math.order(left.size_lower_bound, right.size_lower_bound);
     return std.math.order(left.serial, right.serial);
 }
+
+/// Order by paid PHOG rule cost, then by the size estimate.
+///
+/// This is the ranking the learned prior owns. It is deliberately not the same
+/// key the queue uses, so the prior selects states the size estimate would not
+/// have selected on its own.
+fn comparePartialByPrior(_: void, left: Partial, right: Partial) std.math.Order {
+    if (left.grammar_cost != right.grammar_cost)
+        return std.math.order(left.grammar_cost, right.grammar_cost);
+    if (left.estimated_bits != right.estimated_bits)
+        return std.math.order(left.estimated_bits, right.estimated_bits);
+    return std.math.order(left.serial, right.serial);
+}
+
+const Ranking = struct {
+    items: [MAX_FRONTIER_CANDIDATES]Partial = undefined,
+    len: usize = 0,
+    capacity: usize,
+    order: *const fn (void, Partial, Partial) std.math.Order,
+
+    fn admits(self: *const Ranking, candidate: Partial) bool {
+        if (self.capacity == 0) return false;
+        if (self.len < self.capacity) return true;
+        return self.order({}, candidate, self.items[self.len - 1]) == .lt;
+    }
+
+    fn insert(self: *Ranking, candidate: Partial) void {
+        if (!self.admits(candidate)) return;
+        if (self.len < self.capacity) self.len += 1;
+        var index = self.len - 1;
+        while (index > 0 and
+            self.order({}, candidate, self.items[index - 1]) == .lt) : (index -= 1)
+            self.items[index] = self.items[index - 1];
+        self.items[index] = candidate;
+    }
+};
+
+/// States to complete with `Lit` and measure exactly, split between two
+/// experts: the size estimate and the rule prior.
+const Frontier = struct {
+    by_size: Ranking,
+    by_prior: Ranking,
+
+    fn init(size_slots: usize, prior_slots: usize) Frontier {
+        return .{
+            .by_size = .{
+                .capacity = std.math.clamp(size_slots, 1, MAX_FRONTIER_CANDIDATES),
+                .order = comparePartial,
+            },
+            .by_prior = .{
+                .capacity = @min(prior_slots, MAX_FRONTIER_CANDIDATES),
+                .order = comparePartialByPrior,
+            },
+        };
+    }
+
+    fn insert(self: *Frontier, candidate: Partial) void {
+        self.by_size.insert(candidate);
+        self.by_prior.insert(candidate);
+    }
+
+    /// Distinct retained states, size-ranked first.
+    fn collect(self: *const Frontier, out: []Partial) usize {
+        var len: usize = 0;
+        for (self.by_size.items[0..self.by_size.len]) |candidate| {
+            out[len] = candidate;
+            len += 1;
+        }
+        outer: for (self.by_prior.items[0..self.by_prior.len]) |candidate| {
+            for (out[0..len]) |kept|
+                if (kept.serial == candidate.serial) continue :outer;
+            out[len] = candidate;
+            len += 1;
+        }
+        return len;
+    }
+};
 
 const Queue = std.PriorityQueue(Partial, void, comparePartial);
 
@@ -231,6 +359,8 @@ fn synthesizeImpl(
 
     var best_serialized: []u8 = &.{};
     errdefer alloc.free(best_serialized);
+    var best_prepared: ?program_format.Prepared = null;
+    defer if (best_prepared) |*value| value.deinit(alloc);
     var best_bytes = switch (output_mode) {
         .serialized => blk: {
             best_serialized = try program_format.serialize(alloc, best);
@@ -242,8 +372,20 @@ fn synthesizeImpl(
     var completed_candidates: usize = 0;
     var expanded: usize = 0;
     var cutoff_size_lower_bound: usize = std.math.maxInt(usize);
-    var rollout_frontier: ?Partial = null;
+    var frontier = Frontier.init(
+        options.frontier_candidates,
+        if (options.rule_model) |model|
+            (if (model.isEmpty()) 0 else options.prior_frontier_candidates)
+        else
+            0,
+    );
     var shallow_float_fields_evaluated = false;
+
+    var estimator: ?cost_model.Estimator = if (options.data_cost_ordering)
+        try cost_model.Estimator.init(alloc, options.estimate_sample_elements)
+    else
+        null;
+    defer if (estimator) |*value| value.deinit(alloc);
 
     if (try shallowFloatFieldsCandidate(alloc, target, dtype, options)) |candidate_value| {
         shallow_float_fields_evaluated = true;
@@ -256,6 +398,7 @@ fn synthesizeImpl(
             &best,
             &best_serialized,
             &best_bytes,
+            &best_prepared,
             candidate,
         )) {
             candidate_owned = false;
@@ -281,14 +424,19 @@ fn synthesizeImpl(
         target.count,
         0,
     );
+    const prefix_bytes: usize = 0;
     try queue.push(alloc, .{
         .path = null,
         .choice_count = 0,
         .holes = 1,
         .grammar_cost = 0,
         .priority_cost = initial_heuristic,
-        .fixed_bytes = program_format.MAGIC.len + 1,
-        .size_lower_bound = program_format.MAGIC.len + 1 + 1,
+        .estimated_bits = if (estimator) |*value| saturatingCostAdd(
+            instructionBits(prefix_bytes),
+            try value.literalBits(target),
+        ) else 0,
+        .fixed_bytes = prefix_bytes,
+        .size_lower_bound = prefix_bytes + 1,
         .serial = serial,
     });
 
@@ -323,6 +471,7 @@ fn synthesizeImpl(
                 &best,
                 &best_serialized,
                 &best_bytes,
+                &best_prepared,
                 candidate,
             )) {
                 candidate_owned = false;
@@ -339,7 +488,6 @@ fn synthesizeImpl(
                 cutoff_size_lower_bound,
                 partial.size_lower_bound,
             );
-            retainPreferredPartial(&rollout_frontier, partial);
             continue;
         }
 
@@ -390,6 +538,24 @@ fn synthesizeImpl(
             );
         }
 
+        var gated: [grammar_prior.PRODUCTION_COUNT]bool = @splat(true);
+        if (options.rule_model != null and options.prior_gate > 0 and
+            options.prior_gate < admitted.len)
+        {
+            var sorted: [grammar_prior.PRODUCTION_COUNT]grammar_prior.Cost =
+                undefined;
+            @memcpy(sorted[0..admitted.len], production_costs[0..admitted.len]);
+            std.mem.sort(
+                grammar_prior.Cost,
+                sorted[0..admitted.len],
+                {},
+                std.sort.asc(grammar_prior.Cost),
+            );
+            const threshold = sorted[options.prior_gate - 1];
+            for (admitted, production_costs[0..admitted.len]) |production, cost|
+                gated[productionSlot(production)] = cost <= threshold;
+        }
+
         const current_open_storage = open_holes.storage_bytes;
         var retained_heuristic: u64 = 0;
         for (open_holes.items.items[0 .. open_holes.items.items.len - 1]) |other| {
@@ -402,7 +568,16 @@ fn synthesizeImpl(
                 ),
             );
         }
+        // The data cost this hole contributes to its parent's estimate. Each
+        // expansion replaces it with the instruction bits it pays plus the
+        // costs its own children inherit.
+        const hole_bits: u64 = if (estimator) |*value|
+            try value.literalBits(hole.target)
+        else
+            0;
+        var child_bits: [cost_model.MAX_CHILDREN]u64 = undefined;
         for (choices) |choice| {
+            if (!gated[productionSlot(choice.id())]) continue;
             const child_storage = grammar.childTargetStorageBytesForProposal(
                 choice,
                 hole.target,
@@ -485,6 +660,37 @@ fn synthesizeImpl(
                     ),
                 );
             }
+
+            // A terminal `Lit` still owes this hole's data; `Const` carries its
+            // word in the instruction and owes nothing further.
+            var pending_child_bits: u64 = 0;
+            if (estimator) |*value| switch (choice) {
+                .literal => pending_child_bits = hole_bits,
+                .constant => {},
+                else => {
+                    const written = try value.childBits(
+                        choice,
+                        hole.target,
+                        dtype,
+                        &child_bits,
+                    );
+                    for (child_bits[0..written]) |bits|
+                        pending_child_bits = saturatingCostAdd(
+                            pending_child_bits,
+                            bits,
+                        );
+                },
+            };
+            const estimated_bits: u64 = if (estimator == null) 0 else
+                saturatingCostAdd(
+                    saturatingCostAdd(
+                        partial.estimated_bits -| hole_bits,
+                        instructionBits(node_fixed_bytes),
+                    ),
+                    pending_child_bits,
+                );
+
+            serial +%= 1;
             var next: Partial = .{
                 .path = partial.path,
                 .choice_count = new_filled,
@@ -494,44 +700,56 @@ fn synthesizeImpl(
                     grammar_cost,
                     heuristic,
                 ),
+                .estimated_bits = estimated_bits,
                 .fixed_bytes = fixed_bytes,
                 .size_lower_bound = size_lower_bound,
                 .serial = serial,
             };
-            if (new_holes > options.max_expansions - expanded) {
-                cutoff_size_lower_bound = @min(
-                    cutoff_size_lower_bound,
-                    size_lower_bound,
-                );
-                if (rollout_frontier == null or
-                    comparePartial({}, next, rollout_frontier.?) == .lt)
-                {
-                    next.path = try extendChoicePath(
-                        path_alloc,
-                        partial.path,
-                        choice,
-                    );
-                    rollout_frontier = next;
-                }
-                continue;
-            }
-
             next.path = try extendChoicePath(
                 path_alloc,
                 partial.path,
                 choice,
             );
-            serial +%= 1;
-            next.serial = serial;
+
+                // Candidacy is decided at creation: a budget pops only a handful
+            // of states, so recording at pop time discards every state that was
+            // queued and never reached.
+            frontier.insert(next);
+
+            if (new_holes > options.max_expansions - expanded) {
+                cutoff_size_lower_bound = @min(
+                    cutoff_size_lower_bound,
+                    size_lower_bound,
+                );
+                continue;
+            }
+
             queue.push(alloc, next) catch |err| return err;
         }
     }
 
-    if (rollout_frontier) |partial| if (partial.size_lower_bound < best_bytes and
-        !(shallow_float_fields_evaluated and options.rule_model == null) and
-        !(shallow_float_fields_evaluated and
-            isShallowFloatFieldsCompletion(partial, dtype)))
-    {
+    var retained: [2 * MAX_FRONTIER_CANDIDATES]Partial = undefined;
+    const retained_len = frontier.collect(&retained);
+    const measure_ceiling: u64 = if (options.frontier_margin_percent == 0 or
+        retained_len == 0)
+        std.math.maxInt(u64)
+    else
+        saturatingCostMul(
+            retained[0].estimated_bits / 100,
+            100 + options.frontier_margin_percent,
+        );
+    for (retained[0..retained_len]) |partial| {
+        if (partial.estimated_bits > measure_ceiling) continue;
+        if (partial.size_lower_bound >= best_bytes) continue;
+        // The seeded shallow float-field program is already in the incumbent.
+        if (shallow_float_fields_evaluated and
+            isShallowFloatFieldsCompletion(partial, dtype)) continue;
+        // Only `size_lower_bound` may skip a candidate, because only it is a
+        // bound. Skipping on the size *estimate* is unsound and measurably so:
+        // the estimate is sampled and can rank a good shallow completion above
+        // the incumbent, and dropping it there is what let a larger budget
+        // return a worse program. `frontier_candidates` is the cost knob.
+
         const choices = try materializeLiteralCompletion(
             alloc,
             partial,
@@ -552,12 +770,13 @@ fn synthesizeImpl(
             &best,
             &best_serialized,
             &best_bytes,
+            &best_prepared,
             candidate,
         )) {
             candidate_owned = false;
             used_literal_fallback = false;
         }
-    };
+    }
 
     const status: SearchStatus = if (queue.count() == 0 and
         cutoff_size_lower_bound >= best_bytes)
@@ -582,6 +801,8 @@ fn synthesizeImpl(
     const serialized_program: []u8 = switch (output_mode) {
         .serialized => if (best_serialized.len != 0)
             best_serialized
+        else if (best_prepared) |prepared|
+            try program_format.emitPrepared(alloc, best, prepared)
         else
             try program_format.serialize(alloc, best),
         .size_only => &.{},
@@ -682,10 +903,23 @@ fn materializeLiteralCompletion(
     return output;
 }
 
-fn retainPreferredPartial(slot: *?Partial, candidate: Partial) void {
-    if (slot.* == null or comparePartial({}, candidate, slot.*.?) == .lt)
-        slot.* = candidate;
+/// Exact instruction bytes expressed in the estimator's Q10 bit unit.
+fn productionSlot(production: grammar.ProductionId) usize {
+    for (grammar_prior.PRODUCTIONS, 0..) |known, index|
+        if (known == production) return index;
+    unreachable;
 }
+
+fn instructionBits(bytes: usize) u64 {
+    return std.math.mul(u64, @as(u64, bytes), 8 * cost_model.BIT_SCALE) catch
+        std.math.maxInt(u64);
+}
+
+fn estimatedBytes(bits: u64) usize {
+    return std.math.cast(usize, bits / (8 * cost_model.BIT_SCALE)) orelse
+        std.math.maxInt(usize);
+}
+
 
 /// Bytes fixed by one selected production. Literal payload data remains a
 /// lower bound (one codec tag), while all chosen operation ids and parameters
@@ -1305,6 +1539,7 @@ test "relaxed c chooses a recursive derivation and h orders the queue" {
             paid_cost,
             direct_literal_cost,
         ),
+        .estimated_bits = 0,
         .fixed_bytes = 0,
         .size_lower_bound = 0,
         .serial = 0,
@@ -1315,6 +1550,7 @@ test "relaxed c chooses a recursive derivation and h orders the queue" {
         .holes = 1,
         .grammar_cost = paid_cost,
         .priority_cost = saturatingCostAdd(paid_cost, root_cost),
+        .estimated_bits = 0,
         .fixed_bytes = 0,
         .size_lower_bound = 0,
         // If h were ignored, the earlier serial above would win.
@@ -1598,23 +1834,31 @@ fn buildNode(
     };
 }
 
+/// Adopt `candidate` when it is strictly smaller, keeping the literal codec
+/// analyses that sizing already produced so the final serialization does not
+/// repeat them.
 fn adoptIfSmaller(
     alloc: Allocator,
     winner: *dsl.Program,
     serialized: *[]u8,
     byte_size: *usize,
+    prepared: *?program_format.Prepared,
     candidate: dsl.Program,
 ) !bool {
-    const candidate_bytes = (try program_format.serializedSizeAtMost(
+    var candidate_prepared = (try program_format.prepareAtMost(
         alloc,
         candidate,
         byte_size.*,
     )) orelse return false;
+    errdefer candidate_prepared.deinit(alloc);
+
     winner.deinit(alloc);
     alloc.free(serialized.*);
+    if (prepared.*) |*old| old.deinit(alloc);
     winner.* = candidate;
     serialized.* = &.{};
-    byte_size.* = candidate_bytes;
+    byte_size.* = candidate_prepared.size;
+    prepared.* = candidate_prepared;
     return true;
 }
 

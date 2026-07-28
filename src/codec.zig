@@ -73,7 +73,21 @@ pub const BitReader = struct {
         return .{ .bytes = bytes };
     }
 
+    /// Refill the MSB-aligned bit buffer. The bulk path absorbs eight bytes
+    /// with one load; the byte loop only runs out near the end of the payload.
     inline fn fill(self: *BitReader) void {
+        if (self.nbits <= 56 and self.byte_pos + 8 <= self.bytes.len) {
+            const chunk = std.mem.readInt(
+                u64,
+                self.bytes[self.byte_pos..][0..8],
+                .big,
+            );
+            self.bits |= chunk >> @intCast(self.nbits);
+            const consumed = (64 - self.nbits) >> 3;
+            self.byte_pos += consumed;
+            self.nbits += consumed * 8;
+            return;
+        }
         while (self.nbits <= 56 and self.byte_pos < self.bytes.len) {
             self.bits |= @as(u64, self.bytes[self.byte_pos]) << @intCast(56 - self.nbits);
             self.nbits += 8;
@@ -773,6 +787,12 @@ fn bitpackByteCount(count: usize, width: u8) !usize {
 pub const RANS_PROB_BITS: u6 = 14;
 pub const RANS_PROB_SCALE: u32 = 1 << RANS_PROB_BITS;
 pub const RANS_L: u32 = 1 << 23; // lower bound on state
+/// Independent rANS lanes. Symbol i belongs to lane i % RANS_LANES, and each
+/// lane owns a private byte sub-stream so neither its state nor its
+/// renormalization cursor depends on another lane. Sharing one cursor would
+/// leave the byte reads serialized and defeat the interleaving entirely.
+pub const RANS_LANES: usize = 4;
+const RANS_LANE_HEADER: usize = 4 * RANS_LANES;
 
 pub const RansSymbol = struct {
     freq: u32, // quantized to RANS_PROB_SCALE
@@ -946,6 +966,45 @@ pub fn ransEncode(alloc: Allocator, stream: Stream, table: RansTable) ![]u8 {
     return ransEncodeImpl(alloc, stream, table, .reciprocal);
 }
 
+fn ransEncodeLane(
+    alloc: Allocator,
+    stream: Stream,
+    table: RansTable,
+    lookup: *RansSymbolLookup,
+    lane: usize,
+    comptime method: RansAdvance,
+    out: *std.ArrayList(u8),
+) !void {
+    const start = out.items.len;
+    var state: u32 = RANS_L;
+    var i = lastLanePosition(stream.count, lane);
+    while (i) |pos| : (i = if (pos < RANS_LANES) null else pos - RANS_LANES) {
+        const idx = try lookup.get(stream.getU32(pos));
+        const info = table.info[idx];
+        const encoder = lookup.encoders[idx];
+        const x_max = if (method == .division)
+            ((RANS_L >> RANS_PROB_BITS) << 8) * info.freq
+        else
+            encoder.x_max;
+        while (state >= x_max) {
+            try out.append(alloc, @intCast(state & 0xFF));
+            state >>= 8;
+        }
+        state = ransAdvance(method, state, info, encoder);
+    }
+    try out.append(alloc, @intCast(state & 0xFF));
+    try out.append(alloc, @intCast((state >> 8) & 0xFF));
+    try out.append(alloc, @intCast((state >> 16) & 0xFF));
+    try out.append(alloc, @intCast((state >> 24) & 0xFF));
+    std.mem.reverse(u8, out.items[start..]);
+}
+
+/// Highest position belonging to `lane`, or null when the lane is empty.
+fn lastLanePosition(count: usize, lane: usize) ?usize {
+    if (lane >= count) return null;
+    return count - 1 - ((count - 1 - lane) % RANS_LANES);
+}
+
 fn ransEncodeImpl(
     alloc: Allocator,
     stream: Stream,
@@ -955,39 +1014,19 @@ fn ransEncodeImpl(
     var lookup = try RansSymbolLookup.init(alloc, table);
     defer lookup.deinit();
 
-    // Encode in REVERSE so decoder reads forward.
     var out: std.ArrayList(u8) = .empty;
-    try out.ensureTotalCapacity(alloc, stream.count + 8);
+    try out.ensureTotalCapacity(alloc, stream.count + RANS_LANE_HEADER + 8);
     defer out.deinit(alloc);
+    try out.appendNTimes(alloc, 0, RANS_LANE_HEADER);
 
-    var state: u32 = RANS_L;
-    var i: usize = stream.count;
-    while (i > 0) {
-        i -= 1;
-        const sym = stream.getU32(i);
-        const idx = try lookup.get(sym);
-        const info = table.info[idx];
-        const encoder = lookup.encoders[idx];
-
-        const x_max = if (method == .division)
-            ((RANS_L >> RANS_PROB_BITS) << 8) * info.freq
-        else
-            encoder.x_max;
-        while (state >= x_max) {
-            try out.append(alloc, @intCast(state & 0xFF));
-            state >>= 8;
-        }
-
-        state = ransAdvance(method, state, info, encoder);
+    for (0..RANS_LANES) |lane| {
+        const start = out.items.len;
+        try ransEncodeLane(alloc, stream, table, &lookup, lane, method, &out);
+        const length = std.math.cast(u32, out.items.len - start) orelse
+            return error.RansSizeOverflow;
+        std.mem.writeInt(u32, out.items[lane * 4 ..][0..4], length, .big);
     }
-    try out.append(alloc, @intCast(state & 0xFF));
-    try out.append(alloc, @intCast((state >> 8) & 0xFF));
-    try out.append(alloc, @intCast((state >> 16) & 0xFF));
-    try out.append(alloc, @intCast((state >> 24) & 0xFF));
-
-    const owned = try out.toOwnedSlice(alloc);
-    std.mem.reverse(u8, owned);
-    return owned;
+    return out.toOwnedSlice(alloc);
 }
 
 pub fn ransEncodedSize(
@@ -1007,24 +1046,27 @@ fn ransEncodedSizeImpl(
     var lookup = try RansSymbolLookup.init(alloc, table);
     defer lookup.deinit();
 
-    var size: usize = 4;
-    var state: u32 = RANS_L;
-    var i = stream.count;
-    while (i > 0) {
-        i -= 1;
-        const idx = try lookup.get(stream.getU32(i));
-        const info = table.info[idx];
-        const encoder = lookup.encoders[idx];
-        const x_max = if (method == .division)
-            ((RANS_L >> RANS_PROB_BITS) << 8) * info.freq
-        else
-            encoder.x_max;
-        while (state >= x_max) {
-            size = std.math.add(usize, size, 1) catch
-                return error.RansSizeOverflow;
-            state >>= 8;
+    var size: usize = RANS_LANE_HEADER;
+    for (0..RANS_LANES) |lane| {
+        size = std.math.add(usize, size, 4) catch
+            return error.RansSizeOverflow;
+        var state: u32 = RANS_L;
+        var i = lastLanePosition(stream.count, lane);
+        while (i) |pos| : (i = if (pos < RANS_LANES) null else pos - RANS_LANES) {
+            const idx = try lookup.get(stream.getU32(pos));
+            const info = table.info[idx];
+            const encoder = lookup.encoders[idx];
+            const x_max = if (method == .division)
+                ((RANS_L >> RANS_PROB_BITS) << 8) * info.freq
+            else
+                encoder.x_max;
+            while (state >= x_max) {
+                size = std.math.add(usize, size, 1) catch
+                    return error.RansSizeOverflow;
+                state >>= 8;
+            }
+            state = ransAdvance(method, state, info, encoder);
         }
-        state = ransAdvance(method, state, info, encoder);
     }
     return size;
 }
@@ -1156,7 +1198,7 @@ pub const ransTesting = if (@import("builtin").is_test) struct {
 pub const RansDecodeResult = struct {
     stream: Stream,
     consumed_bytes: usize,
-    final_state: u32,
+    final_states: [RANS_LANES]u32,
 };
 
 const RansDecodeStorage = enum { runtime, byte, word, dword };
@@ -1199,6 +1241,38 @@ pub fn ransDecodeWithState(
     };
 }
 
+const RansStep = struct { state: u32, pos: usize };
+
+inline fn ransStep(
+    state: u32,
+    pos: usize,
+    bytes: []const u8,
+    table: RansTable,
+    cum2sym: []const u16,
+    out: *Stream,
+    index: usize,
+    comptime storage: RansDecodeStorage,
+) !RansStep {
+    const slot = state & (RANS_PROB_SCALE - 1);
+    const idx = cum2sym[slot];
+    const sym = table.symbols[idx];
+    switch (storage) {
+        .runtime => out.setU32(index, sym),
+        .byte => out.data[index] = @truncate(sym),
+        .word => std.mem.writeInt(u16, out.data[index * 2 ..][0..2], @truncate(sym), .little),
+        .dword => std.mem.writeInt(u32, out.data[index * 4 ..][0..4], sym, .little),
+    }
+    var x = table.info[idx].freq * (state >> RANS_PROB_BITS) + slot -
+        table.info[idx].cum;
+    var p = pos;
+    while (x < RANS_L) {
+        if (p >= bytes.len) return error.CorruptRansStream;
+        x = (x << 8) | bytes[p];
+        p += 1;
+    }
+    return .{ .state = x, .pos = p };
+}
+
 fn ransDecodeWithStateImpl(
     alloc: Allocator,
     payload: []const u8,
@@ -1209,7 +1283,8 @@ fn ransDecodeWithStateImpl(
 ) !RansDecodeResult {
     if (bits_per_elem == 0 or bits_per_elem > 32)
         return error.InvalidWordWidth;
-    if (count != 0 and payload.len < 4) return error.CorruptRansStream;
+    if (count != 0 and payload.len < RANS_LANE_HEADER)
+        return error.CorruptRansStream;
     // Build cum->sym lookup locally so the table stays read-only.
     const cum2sym = try alloc.alloc(u16, RANS_PROB_SCALE);
     defer alloc.free(cum2sym);
@@ -1224,48 +1299,49 @@ fn ransDecodeWithStateImpl(
     if (count == 0) return .{
         .stream = s,
         .consumed_bytes = 0,
-        .final_state = RANS_L,
+        .final_states = @splat(RANS_L),
     };
 
-    var pos: usize = 0;
-    var state: u32 = std.mem.readInt(u32, payload[pos..][0..4], .big);
-    pos += 4;
+    var lanes: [RANS_LANES][]const u8 = undefined;
+    var cursor: usize = RANS_LANE_HEADER;
+    for (&lanes, 0..) |*lane_bytes, lane| {
+        const length = std.mem.readInt(u32, payload[lane * 4 ..][0..4], .big);
+        if (length < 4 or payload.len - cursor < length)
+            return error.CorruptRansStream;
+        lane_bytes.* = payload[cursor..][0..length];
+        cursor += length;
+    }
+
+    var states: [RANS_LANES]u32 = undefined;
+    var positions: [RANS_LANES]usize = undefined;
+    inline for (0..RANS_LANES) |lane| {
+        states[lane] = std.mem.readInt(u32, lanes[lane][0..4], .big);
+        positions[lane] = 4;
+    }
 
     var i: usize = 0;
-    while (i < count) : (i += 1) {
-        const slot = state & (RANS_PROB_SCALE - 1);
-        const idx = cum2sym[slot];
-        const sym = table.symbols[idx];
-        switch (storage) {
-            .runtime => s.setU32(i, sym),
-            .byte => s.data[i] = @truncate(sym),
-            .word => std.mem.writeInt(
-                u16,
-                s.data[i * 2 ..][0..2],
-                @truncate(sym),
-                .little,
-            ),
-            .dword => std.mem.writeInt(
-                u32,
-                s.data[i * 4 ..][0..4],
-                sym,
-                .little,
-            ),
-        }
-        const f = table.info[idx].freq;
-        const c = table.info[idx].cum;
-        state = f * (state >> RANS_PROB_BITS) + slot - c;
-        // Renormalize.
-        while (state < RANS_L) {
-            if (pos >= payload.len) return error.CorruptRansStream;
-            state = (state << 8) | payload[pos];
-            pos += 1;
+    while (i + RANS_LANES <= count) : (i += RANS_LANES) {
+        inline for (0..RANS_LANES) |lane| {
+            const r = try ransStep(states[lane], positions[lane], lanes[lane], table, cum2sym, &s, i + lane, storage);
+            states[lane] = r.state;
+            positions[lane] = r.pos;
         }
     }
+    inline for (0..RANS_LANES) |lane| {
+        if (i + lane < count) {
+            const r = try ransStep(states[lane], positions[lane], lanes[lane], table, cum2sym, &s, i + lane, storage);
+            states[lane] = r.state;
+            positions[lane] = r.pos;
+        }
+    }
+    inline for (0..RANS_LANES) |lane| {
+        if (positions[lane] != lanes[lane].len) return error.CorruptRansStream;
+    }
+    const pos = cursor;
     return .{
         .stream = s,
         .consumed_bytes = pos,
-        .final_state = state,
+        .final_states = states,
     };
 }
 

@@ -8,6 +8,7 @@ test "paper-aligned module surface compiles" {
     inline for (.{
         @import("brevis.zig"),
         @import("codec.zig"),
+        @import("cost_model.zig"),
         @import("decomposition.zig"),
         @import("dsl.zig"),
         @import("grammar.zig"),

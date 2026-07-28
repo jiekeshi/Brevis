@@ -224,6 +224,25 @@ fn parseArguments(
             args.saw_search_option = true;
             args.synthesis.grammar_options.max_field_splits =
                 try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--data-cost-ordering")) {
+            args.saw_search_option = true;
+            args.synthesis.data_cost_ordering =
+                try parseUnsigned(u1, value) == 1;
+        } else if (std.mem.eql(u8, word, "--frontier-candidates")) {
+            args.saw_search_option = true;
+            args.synthesis.frontier_candidates =
+                try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--frontier-margin")) {
+            args.saw_search_option = true;
+            args.synthesis.frontier_margin_percent =
+                try parseUnsigned(u32, value);
+        } else if (std.mem.eql(u8, word, "--prior-gate")) {
+            args.saw_search_option = true;
+            args.synthesis.prior_gate = try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--prior-frontier-candidates")) {
+            args.saw_search_option = true;
+            args.synthesis.prior_frontier_candidates =
+                try parseUnsigned(usize, value);
         } else if (std.mem.eql(u8, word, "--max-total-bytes")) {
             args.resources.max_total_bytes =
                 try parseUnsigned(usize, value);
@@ -253,6 +272,13 @@ fn validateArguments(args: Arguments) !void {
     if (args.positional.items.len != expected_positionals)
         return error.InvalidArguments;
     if (args.synthesis.max_nodes == 0)
+        return error.InvalidArguments;
+    if (args.synthesis.frontier_candidates == 0 or
+        args.synthesis.frontier_candidates >
+            synthesizer.MAX_FRONTIER_CANDIDATES or
+        args.synthesis.prior_frontier_candidates >
+            synthesizer.MAX_FRONTIER_CANDIDATES or
+        args.synthesis.prior_gate > grammar_prior.PRODUCTION_COUNT)
         return error.InvalidArguments;
     if (args.workers == 0)
         return error.InvalidArguments;
@@ -517,6 +543,12 @@ fn commandConfig(
     try json.write(options.max_expansions);
     try json.objectField("max_nodes");
     try json.write(options.max_nodes);
+    try json.objectField("data_cost_ordering");
+    try json.write(options.data_cost_ordering);
+    try json.objectField("frontier_candidates");
+    try json.write(options.frontier_candidates);
+    try json.objectField("prior_frontier_candidates");
+    try json.write(options.prior_frontier_candidates);
     try json.objectField("seed_float_fields");
     try json.write(options.seed_float_fields);
     try json.objectField("max_decomposition_bytes");
@@ -619,10 +651,10 @@ fn usage(writer: *std.Io.Writer) !void {
     try writer.writeAll(
         \\Brevis — exact whole-tensor program synthesis
         \\
-        \\  brevis compress   <model.safetensors> <model.brv> [--prior model.brgp] [--tensors N] [search options]
+        \\  brevis compress   <model.safetensors> <model.brv> [--prior model.brvp] [--tensors N] [search options]
         \\  brevis decompress <model.brv> <restored.safetensors>
         \\  brevis verify     <model.brv> <model.safetensors>
-        \\  brevis calibrate  <model.safetensors> <model.brgp> [--tensors N] [search options]
+        \\  brevis calibrate  <model.safetensors> <model.brvp> [--tensors N] [search options]
         \\  brevis config [search options]
         \\
         \\Search options:
@@ -635,6 +667,11 @@ fn usage(writer: *std.Io.Writer) !void {
         \\  --max-map-constants N
         \\  --max-rotations N
         \\  --max-field-splits N
+        \\  --data-cost-ordering 0|1   order the queue by estimated archive size
+        \\  --frontier-candidates N    budget-cut states measured by exact bytes
+        \\
+        \\  --data-cost-ordering 0 --frontier-candidates 1 restores the
+        \\  published grammar-cost search.
         \\
         \\Parallel file execution and calibration:
         \\  --workers N
@@ -654,7 +691,7 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
         "model.safetensors",
         "model.brv",
         "--prior",
-        "model.brgp",
+        "model.brvp",
         "--tensors",
         "7",
         "--max-expansions",
@@ -683,7 +720,7 @@ test "CLI accepts only paper-aligned whole-tensor controls" {
         @as(usize, 0),
         args.synthesis.grammar_options.max_concat_splits,
     );
-    try std.testing.expectEqualStrings("model.brgp", args.prior_path.?);
+    try std.testing.expectEqualStrings("model.brvp", args.prior_path.?);
     try std.testing.expectEqual(@as(usize, 7), args.max_tensors);
     try std.testing.expectEqual(
         @as(usize, 1048576),
@@ -780,7 +817,7 @@ test "CLI rejects command-specific flags and an impossible node cap" {
     var calibration_workers = try parseArguments(alloc, &.{
         "calibrate",
         "model.safetensors",
-        "model.brgp",
+        "model.brvp",
         "--workers",
         "4",
     });

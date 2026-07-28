@@ -18,6 +18,9 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 pub const DEFAULT_WORKERS: usize = 32;
+/// Streaming a multi-gigabyte tensor file through a small buffer costs one
+/// syscall per buffer; at 64 KiB that is tens of thousands of them.
+const FILE_BUFFER_BYTES: usize = 4 << 20;
 const ONE_EXPANSION_TEACHER_TENSORS: usize = 4;
 const ONE_EXPANSION_TEACHER_BUDGET: usize = 6;
 const ONE_EXPANSION_TEACHER_SAMPLE: usize = 1 << 20;
@@ -183,8 +186,9 @@ pub fn compressFile(
         source_file.identity,
     );
     defer archive_file.close(io);
-    var file_buffer: [64 * 1024]u8 = undefined;
-    var file_writer = archive_file.writer(io, &file_buffer);
+    const file_buffer = try alloc.alloc(u8, FILE_BUFFER_BYTES);
+    defer alloc.free(file_buffer);
+    var file_writer = archive_file.writer(io, file_buffer);
     var sink = OutputSink.file(
         alloc,
         &file_writer,
@@ -258,8 +262,9 @@ pub fn decompressFile(
         archive_file.identity,
     );
     defer output_file.close(io);
-    var file_buffer: [64 * 1024]u8 = undefined;
-    var file_writer = output_file.writer(io, &file_buffer);
+    const file_buffer = try alloc.alloc(u8, FILE_BUFFER_BYTES);
+    defer alloc.free(file_buffer);
+    var file_writer = output_file.writer(io, file_buffer);
     var sink = OutputSink.file(
         alloc,
         &file_writer,
@@ -1228,8 +1233,9 @@ fn loadFileBytes(
     } else |_| {
         const bytes = try alloc.alloc(u8, file_len);
         errdefer alloc.free(bytes);
-        var read_buffer: [64 * 1024]u8 = undefined;
-        var reader = file.reader(io, &read_buffer);
+        const read_buffer = try alloc.alloc(u8, FILE_BUFFER_BYTES);
+        defer alloc.free(read_buffer);
+        var reader = file.reader(io, read_buffer);
         try reader.interface.readSliceAll(bytes);
         const final_stat = try file.stat(io);
         if (final_stat.size != initial_stat.size)

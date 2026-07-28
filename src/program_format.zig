@@ -11,9 +11,6 @@ const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const MAGIC = [_]u8{ 'B', 'R', 'P', 'G' };
-pub const VERSION: u8 = 1;
-
 /// These values are part of the persistent format. Never derive them from the
 /// in-memory union tag order.
 pub const NodeWireId = enum(u8) {
@@ -112,6 +109,70 @@ pub fn serialize(alloc: Allocator, program: dsl.Program) ![]u8 {
     return output.toOwnedSlice(alloc);
 }
 
+/// A program's exact size together with the literal codec analyses that
+/// produced it, so `emitPrepared` can write the bytes without repeating the
+/// selection work.
+pub const Prepared = struct {
+    encodings: std.ArrayList(literal_encoding.PreparedEncoding),
+    size: usize,
+
+    pub fn deinit(self: *Prepared, alloc: Allocator) void {
+        for (self.encodings.items) |*encoding| encoding.deinit(alloc);
+        self.encodings.deinit(alloc);
+        self.* = undefined;
+    }
+};
+
+/// Size `program` while retaining its literal analyses. A null result means the
+/// program provably reaches `limit`, exactly as `serializedSizeAtMost` reports.
+pub fn prepareAtMost(
+    alloc: Allocator,
+    program: dsl.Program,
+    limit: usize,
+) !?Prepared {
+    _ = try program.typeOf();
+
+    var encodings: std.ArrayList(literal_encoding.PreparedEncoding) = .empty;
+    errdefer {
+        for (encodings.items) |*encoding| encoding.deinit(alloc);
+        encodings.deinit(alloc);
+    }
+    var emitter = Emitter{
+        .allocator = alloc,
+        .limit = limit,
+        .collect = &encodings,
+    };
+    emitFile(&emitter, program) catch |err| switch (err) {
+        error.SizeLimitReached => {
+            for (encodings.items) |*encoding| encoding.deinit(alloc);
+            encodings.deinit(alloc);
+            return null;
+        },
+        else => return err,
+    };
+    return .{ .encodings = encodings, .size = emitter.count };
+}
+
+/// Serialize using analyses captured by `prepareAtMost` for the same program.
+pub fn emitPrepared(
+    alloc: Allocator,
+    program: dsl.Program,
+    prepared: Prepared,
+) ![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(alloc);
+    try output.ensureTotalCapacity(alloc, prepared.size);
+
+    var emitter = Emitter{
+        .allocator = alloc,
+        .output = &output,
+        .cached = prepared.encodings.items,
+    };
+    try emitFile(&emitter, program);
+    if (emitter.count != prepared.size) return error.LiteralSizeMismatch;
+    return output.toOwnedSlice(alloc);
+}
+
 /// Exact canonical byte length. This uses the same emitter and literal codec
 /// selection as `serialize`; there is no parallel cost model to drift from
 /// the persisted bytes.
@@ -153,9 +214,6 @@ pub fn deserialize(
     limits: DecodeLimits,
 ) DecodeError!dsl.Program {
     var reader = Reader{ .bytes = bytes };
-    const magic = try reader.take(MAGIC.len);
-    if (!std.mem.eql(u8, magic, &MAGIC)) return error.BadMagic;
-    if (try reader.readByte() != VERSION) return error.UnsupportedVersion;
 
     var state = DecodeState{ .limits = limits };
     var program = try readNode(alloc, &reader, &state, 1);
@@ -187,6 +245,11 @@ const Emitter = struct {
     output: ?*std.ArrayList(u8) = null,
     count: usize = 0,
     limit: usize = literal_encoding.NO_LIMIT,
+    /// Receives each literal's codec analysis so a later emission can reuse it.
+    collect: ?*std.ArrayList(literal_encoding.PreparedEncoding) = null,
+    /// Analyses captured by an earlier sizing pass, in emission order.
+    cached: []const literal_encoding.PreparedEncoding = &.{},
+    cursor: usize = 0,
 
     fn advance(self: *Emitter, next: usize) !void {
         if (next >= self.limit) return error.SizeLimitReached;
@@ -246,8 +309,6 @@ const Emitter = struct {
 };
 
 fn emitFile(emitter: *Emitter, program: dsl.Program) !void {
-    try emitter.writeAll(&MAGIC);
-    try emitter.writeByte(VERSION);
     try emitNode(emitter, program);
 }
 
@@ -256,12 +317,29 @@ fn emitLiteral(emitter: *Emitter, literal: types.Stream) !void {
     try emitter.writeByte(literal.bits_per_elem);
     try emitter.writeUleb128(try usizeToU64(literal.count));
 
+    // Selecting a literal's codec means histogramming the stream and sizing
+    // every applicable body. Sizing a program and then emitting it would pay
+    // that twice for the same literal, so a sizing pass can hand its analyses
+    // to the emission pass.
+    if (emitter.cursor < emitter.cached.len) {
+        const encoding = emitter.cached[emitter.cursor];
+        emitter.cursor += 1;
+        try emitter.writeUleb128(try usizeToU64(encoding.wireSize()));
+        try emitter.writeLiteral(encoding);
+        return;
+    }
+
     var encoding = (try literal_encoding.prepareBestWithin(
         emitter.allocator,
         literal,
         emitter.literalBudget(),
     )) orelse return error.SizeLimitReached;
-    defer encoding.deinit(emitter.allocator);
+    var owned = true;
+    defer if (owned) encoding.deinit(emitter.allocator);
+    if (emitter.collect) |list| {
+        try list.append(emitter.allocator, encoding);
+        owned = false;
+    }
     try emitter.writeUleb128(try usizeToU64(encoding.wireSize()));
     try emitter.writeLiteral(encoding);
 }

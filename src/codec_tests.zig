@@ -464,12 +464,14 @@ test "rANS round trip reports canonical state and exact consumption" {
             reference_decoded.consumed_bytes,
             decoded.consumed_bytes,
         );
-        try std.testing.expectEqual(
-            reference_decoded.final_state,
-            decoded.final_state,
+        try std.testing.expectEqualSlices(
+            u32,
+            &reference_decoded.final_states,
+            &decoded.final_states,
         );
         try std.testing.expectEqual(first_payload.len, decoded.consumed_bytes);
-        try std.testing.expectEqual(codec.RANS_L, decoded.final_state);
+        for (decoded.final_states) |lane|
+            try std.testing.expectEqual(codec.RANS_L, lane);
 
         const with_trailing = try alloc.alloc(u8, first_payload.len + 1);
         defer alloc.free(with_trailing);
@@ -501,12 +503,14 @@ test "rANS round trip reports canonical state and exact consumption" {
             reference_bounded.consumed_bytes,
             bounded.consumed_bytes,
         );
-        try std.testing.expectEqual(
-            reference_bounded.final_state,
-            bounded.final_state,
+        try std.testing.expectEqualSlices(
+            u32,
+            &reference_bounded.final_states,
+            &bounded.final_states,
         );
         try std.testing.expectEqual(first_payload.len, bounded.consumed_bytes);
-        try std.testing.expectEqual(codec.RANS_L, bounded.final_state);
+        for (bounded.final_states) |lane|
+            try std.testing.expectEqual(codec.RANS_L, lane);
 
         try std.testing.expectError(
             error.CorruptRansStream,

@@ -33,6 +33,7 @@ pub fn build(b: *std.Build) void {
         "src/tests.zig",
         "src/api_tests.zig",
         "src/codec_tests.zig",
+        "src/cost_model.zig",
         "src/decomposition_tests.zig",
         "src/grammar_tests.zig",
         "src/grammar_prior_tests.zig",

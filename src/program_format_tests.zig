@@ -6,7 +6,6 @@ const format = @import("program_format.zig");
 const Allocator = std.mem.Allocator;
 
 const all_kinds_golden = [_]u8{
-    'B',  'R',  'P',  'G',  0x01,
     0x03, 0x02, 0x04, 0x02, 0x05,
     0x01, 0x01, 0x01, 0x08, 0x02,
     0x03, 0x00, 0x01, 0x02, 0x06,
@@ -138,8 +137,8 @@ test "literal raw words use canonical storage widths and ULEB128 lengths" {
     const bytes = try format.serialize(alloc, program);
     defer alloc.free(bytes);
 
-    try std.testing.expectEqual(@as(u8, 0x80), bytes[7]);
-    try std.testing.expectEqual(@as(u8, 0x01), bytes[8]);
+    try std.testing.expectEqual(@as(u8, 0x80), bytes[2]);
+    try std.testing.expectEqual(@as(u8, 0x01), bytes[3]);
     try std.testing.expectEqual(
         bytes.len,
         try format.serializedSize(alloc, program),
@@ -154,7 +153,6 @@ test "empty Lit round trips and valid non-minimal literal bodies decode" {
     try expectCanonicalRoundtrip(alloc, empty);
 
     const non_minimal_raw = [_]u8{
-        'B',  'R',  'P',  'G',  0x01,
         0x01, 0x08, 0x03, 0x04, 0x00,
         0x00, 0x00, 0x00,
     };
@@ -175,7 +173,6 @@ test "decoder rejects trailing overlong unknown and truncated encodings" {
     );
 
     const overlong = [_]u8{
-        'B',  'R',  'P',  'G',  0x01,
         0x01, 0x08, 0x81, 0x00, 0x00,
     };
     try std.testing.expectError(
@@ -183,32 +180,31 @@ test "decoder rejects trailing overlong unknown and truncated encodings" {
         format.deserialize(alloc, &overlong, .{}),
     );
 
-    const unknown_node = [_]u8{ 'B', 'R', 'P', 'G', 0x01, 0xff };
+    const unknown_node = [_]u8{ 0xff };
     try std.testing.expectError(
         error.UnknownNode,
         format.deserialize(alloc, &unknown_node, .{}),
     );
 
-    const unknown_map = [_]u8{ 'B', 'R', 'P', 'G', 0x01, 0x05, 0xff };
+    const unknown_map = [_]u8{ 0x05, 0xff };
     try std.testing.expectError(
         error.UnknownMapOp,
         format.deserialize(alloc, &unknown_map, .{}),
     );
 
-    const unknown_scan = [_]u8{ 'B', 'R', 'P', 'G', 0x01, 0x06, 0xff };
+    const unknown_scan = [_]u8{ 0x06, 0xff };
     try std.testing.expectError(
         error.UnknownScanOp,
         format.deserialize(alloc, &unknown_scan, .{}),
     );
 
-    const unknown_merge = [_]u8{ 'B', 'R', 'P', 'G', 0x01, 0x07, 0xff };
+    const unknown_merge = [_]u8{ 0x07, 0xff };
     try std.testing.expectError(
         error.UnknownMergeOp,
         format.deserialize(alloc, &unknown_merge, .{}),
     );
 
     const unknown_dtype = [_]u8{
-        'B',  'R',  'P',  'G', 0x01,
         0x07, 0x02, 0xff,
     };
     try std.testing.expectError(
@@ -230,20 +226,13 @@ test "decoder rejects trailing overlong unknown and truncated encodings" {
 test "decoder validates header integers and literal bodies" {
     const alloc = std.testing.allocator;
 
-    const bad_magic = [_]u8{ 'N', 'O', 'P', 'E', 0x01, 0x01 };
+    const unknown_node = [_]u8{0xff};
     try std.testing.expectError(
-        error.BadMagic,
-        format.deserialize(alloc, &bad_magic, .{}),
-    );
-
-    const bad_version = [_]u8{ 'B', 'R', 'P', 'G', 0x02, 0x01 };
-    try std.testing.expectError(
-        error.UnsupportedVersion,
-        format.deserialize(alloc, &bad_version, .{}),
+        error.UnknownNode,
+        format.deserialize(alloc, &unknown_node, .{}),
     );
 
     const overflow = [_]u8{
-        'B',  'R',  'P',  'G',  0x01,
         0x02, 0x08, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff, 0xff,
         0xff, 0x02,
@@ -254,7 +243,6 @@ test "decoder validates header integers and literal bodies" {
     );
 
     const high_padding_bits = [_]u8{
-        'B',  'R',  'P',  'G',  0x01,
         0x01, 0x03, 0x01, 0x02, 0x00,
         0x08,
     };
@@ -267,7 +255,6 @@ test "decoder validates header integers and literal bodies" {
 test "decoder calls typeOf and rejects an ill-typed complete tree" {
     const alloc = std.testing.allocator;
     const mismatched_concat = [_]u8{
-        'B',  'R',  'P',  'G',  0x01,
         0x03, 0x02, 0x01, 0x08, 0x01,
         0x02, 0x00, 0x01, 0x01, 0x10,
         0x01, 0x03, 0x00, 0x02, 0x00,
@@ -359,7 +346,6 @@ test "literal output limit precedes constant-size rANS decoding allocation" {
     // semantic count is. With the check in the wrong place this tiny program
     // attempts count-proportional allocations before reporting the limit.
     const million_zero_bytes = [_]u8{
-        'B', 'R', 'P', 'G', 0x01,
         0x01, 0x08, // Lit<u8>
         0xc0, 0x84, 0x3d, // count = 1,000,000
         0x19, // literal body length = 25
@@ -385,7 +371,6 @@ test "literal output limit precedes constant-size rANS decoding allocation" {
 
 test "literal storage arithmetic overflow is an output-limit failure" {
     const overflowing_literal = [_]u8{
-        'B', 'R', 'P', 'G', 0x01,
         0x01, 0x20, // Lit<u32>
         0xff, 0xff, 0xff, 0xff, 0xff, // count = max u64
         0xff, 0xff, 0xff, 0xff, 0x01,

@@ -301,7 +301,7 @@ test "prior decoder rejects trailing data duplicate and invalid stable ids" {
     // records. Make the second production id duplicate the first one.
     var duplicate = try alloc.dupe(u8, canonical);
     defer alloc.free(duplicate);
-    const first_id_offset: usize = 42;
+    const first_id_offset: usize = 43;
     const second_id_offset = first_id_offset + 10;
     duplicate[second_id_offset] = duplicate[first_id_offset];
     duplicate[second_id_offset + 1] = duplicate[first_id_offset + 1];

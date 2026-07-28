@@ -681,8 +681,9 @@ fn decodeRans(
     );
     var decoded = result.stream;
     errdefer decoded.deinit(alloc);
-    if (result.consumed_bytes != payload.len or
-        result.final_state != codec.RANS_L)
+    var lanes_clean = true;
+    for (result.final_states) |lane| lanes_clean = lanes_clean and lane == codec.RANS_L;
+    if (result.consumed_bytes != payload.len or !lanes_clean)
         return error.CorruptLiteralEncoding;
     return decoded;
 }

@@ -19,6 +19,14 @@ pub const defaultExecutionByteLimit: usize =
     else
         std.math.maxInt(usize);
 
+/// Every Brevis file starts with this magic, a kind byte, and a version byte.
+pub const MAGIC = [_]u8{ 'B', 'R', 'E', 'V' };
+
+pub const Kind = enum(u8) {
+    archive = 1,
+    prior = 2,
+};
+
 pub const Dtype = enum(u8) {
     f16 = 0,
     bf16 = 1,

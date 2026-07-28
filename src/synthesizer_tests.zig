@@ -269,7 +269,7 @@ test "the final permitted expansion still contributes complete candidates" {
     });
 }
 
-test "bounded search seeds the existing shallow float-fields program" {
+test "one expansion finds structure without the hardcoded float-field seed" {
     const alloc = std.testing.allocator;
     var target = try types.Stream.init(alloc, 256, 32);
     defer target.deinit(alloc);
@@ -304,18 +304,38 @@ test "bounded search seeds the existing shallow float-fields program" {
     );
     defer unseeded.deinit(alloc);
 
-    try std.testing.expect(switch (seeded.program.kind) {
-        .merge => |operation| switch (operation) {
-            .float_fields => true,
-            else => false,
-        },
-        else => false,
-    });
+    // The seed exists because grammar-cost ordering could not reach any
+    // structured root at one expansion. With the data term in the queue key the
+    // search reaches one on its own, so the seed no longer decides the outcome.
     try std.testing.expect(switch (unseeded.program.kind) {
+        .literal => false,
+        else => true,
+    });
+    try std.testing.expect(!unseeded.used_literal_fallback);
+    try std.testing.expectEqual(seeded.serialized_bytes, unseeded.serialized_bytes);
+
+    var literal = try dsl.Program.literalFromStream(alloc, target);
+    defer literal.deinit(alloc);
+    try std.testing.expect(
+        unseeded.serialized_bytes <
+            try program_format.serializedSize(alloc, literal),
+    );
+    var output = try interpreter.execute(alloc, unseeded.program);
+    defer output.deinit(alloc);
+    try expectStreamsEqual(target, output);
+
+    // Under the published grammar-cost ordering the seed is still what puts a
+    // structured program in front of the incumbent at this budget.
+    var legacy_options = options;
+    legacy_options.data_cost_ordering = false;
+    legacy_options.frontier_candidates = 1;
+    legacy_options.seed_float_fields = false;
+    var legacy = try synthesizer.synthesize(alloc, target, .f32, legacy_options);
+    defer legacy.deinit(alloc);
+    try std.testing.expect(switch (legacy.program.kind) {
         .literal => true,
         else => false,
     });
-    try std.testing.expect(seeded.serialized_bytes < unseeded.serialized_bytes);
 }
 
 test "bounded A-star selects the paper Repeat program by canonical bytes" {
@@ -473,10 +493,15 @@ test "PHOG guides one-expansion structural completion" {
     });
     defer learned.deinit(alloc);
 
+    // The published configuration: grammar-cost ordering and a single retained
+    // frontier state. This is the regime the PHOG was introduced to rescue.
     const bounded_options: synthesizer.Options = .{
         .max_expansions = 1,
         .max_nodes = 8,
         .seed_float_fields = false,
+        .data_cost_ordering = false,
+        .frontier_candidates = 1,
+        .prior_frontier_candidates = 0,
         .grammar_options = .{
             .max_depth = 1,
             .max_repeat_period = 0,
@@ -518,6 +543,28 @@ test "PHOG guides one-expansion structural completion" {
         else => false,
     });
     try std.testing.expect(guided.serialized_bytes < uniform.serialized_bytes);
+
+    // With the data term in the queue key the same one-expansion search reaches
+    // a structured program with no prior at all, and a smaller one than the
+    // learned prior found under grammar-cost ordering.
+    var data_options = bounded_options;
+    data_options.data_cost_ordering = true;
+    data_options.frontier_candidates = 8;
+    var data_ordered = try synthesizer.synthesize(
+        alloc,
+        target,
+        .f32,
+        data_options,
+    );
+    defer data_ordered.deinit(alloc);
+    try std.testing.expectEqual(@as(usize, 1), data_ordered.expanded);
+    try std.testing.expect(switch (data_ordered.program.kind) {
+        .literal => false,
+        else => true,
+    });
+    try std.testing.expect(
+        data_ordered.serialized_bytes < guided.serialized_bytes,
+    );
 
     var guided_output = try interpreter.execute(alloc, guided.program);
     defer guided_output.deinit(alloc);
@@ -607,8 +654,10 @@ test "lazy frontier matches the canonical search golden" {
         .{},
     );
     try std.testing.expectEqual(@as(usize, 96), result.expanded);
-    try std.testing.expectEqual(@as(usize, 91), result.completed_candidates);
-    try std.testing.expectEqual(@as(usize, 86), result.serialized_bytes);
+    // Data-cost ordering reaches the same winning program after measuring far
+    // fewer complete candidates than grammar-cost ordering did.
+    try std.testing.expectEqual(@as(usize, 39), result.completed_candidates);
+    try std.testing.expectEqual(@as(usize, 81), result.serialized_bytes);
     try std.testing.expectEqual(
         synthesizer.SearchStatus.budget_exhausted,
         result.status,
@@ -616,10 +665,10 @@ test "lazy frontier matches the canonical search golden" {
     try std.testing.expectEqualSlices(
         u8,
         &.{
-            0x8f, 0xb0, 0x7d, 0x99, 0x2a, 0x1b, 0xde, 0x14,
-            0x2c, 0x6d, 0xa9, 0x75, 0x11, 0x29, 0xa5, 0x7c,
-            0xc9, 0x07, 0x98, 0xa6, 0x09, 0x3e, 0xdc, 0x4d,
-            0x12, 0x8e, 0x0c, 0xb8, 0x85, 0xd5, 0xf1, 0xb9,
+            0x49, 0x73, 0x73, 0x75, 0xbc, 0x46, 0x7f, 0x06,
+            0x08, 0xb0, 0x74, 0x47, 0xda, 0x69, 0xee, 0xd0,
+            0xae, 0x0c, 0x70, 0xed, 0x8a, 0xda, 0x7c, 0xcc,
+            0xdd, 0xe0, 0xf6, 0x47, 0x29, 0x87, 0xc3, 0xd4,
         },
         &digest,
     );

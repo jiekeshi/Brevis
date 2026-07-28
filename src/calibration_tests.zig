@@ -176,7 +176,7 @@ test "training is canonical and ignores any caller supplied rule model" {
         uniform.completed_candidates,
         ignored.completed_candidates,
     );
-    try std.testing.expectEqualStrings("BRGP", uniform_bytes[0..4]);
+    try std.testing.expectEqualStrings("BREV", uniform_bytes[0..4]);
     try std.testing.expect(std.mem.indexOf(u8, uniform_bytes, &data) == null);
 }
 
