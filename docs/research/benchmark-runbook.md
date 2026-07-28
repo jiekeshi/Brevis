@@ -1,5 +1,21 @@
 # Brevis 单晚实验
 
+已有本地 Qwen2.5-7B 时，可以一键安装通用依赖、补齐十个正式 checkpoint 并启动：
+
+```bash
+scripts/run_paper_benchmark.sh \
+  /data/brevis-checkpoints \
+  /data/Qwen2.5-7B \
+  /data/brevis-results
+```
+
+默认每 5 秒显示压缩 heartbeat，并把控制台输出追加到
+`results/benchmark-console.log`。重复执行同一命令会断点续跑。正式无进度采表使用
+`PAPER_TIMING=1 scripts/run_paper_benchmark.sh ...`。脚本支持 Debian/Ubuntu、
+Fedora/RHEL 和 macOS；会在仓库内安装固定的 Zig 0.16.0 和隔离 Python venv。
+若十个 checkpoint 已下载，设 `SKIP_MODEL_DOWNLOAD=1`。第四个可选参数是
+`specialized-baselines.json`；不传时只跑六个可自动安装的通用方法。
+
 `scripts/run_benchmarks.py` 按以下顺序执行当前实验计划：
 
 1. 本地 Qwen2.5-7B 上六个通用方法的单 worker end-to-end；

@@ -3,5 +3,7 @@ zig-out/
 .DS_Store
 __pycache__/
 results/
+.tools/
+.venv-benchmark/
 
 .claude

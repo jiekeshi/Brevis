@@ -3,6 +3,7 @@ import io
 import json
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -206,6 +207,20 @@ class BenchmarkHarnessTests(unittest.TestCase):
         benchmark_codecs.CODECS["libdeflate-1"].decompress(archive, restored, 1)
 
         self.assertEqual(source.read_bytes(), restored.read_bytes())
+
+    def test_one_click_launcher_exposes_progress_and_current_methods(self):
+        launcher = Path(__file__).with_name("run_paper_benchmark.sh")
+        result = subprocess.run(
+            ["bash", str(launcher), "--help"],
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+
+        self.assertIn("PROGRESS_INTERVAL=5", result.stdout)
+        self.assertIn("PAPER_TIMING=0", result.stdout)
+        self.assertNotIn("libdeflate-6", launcher.read_text())
+        self.assertIn("libdeflate-1", launcher.read_text())
 
     def test_run_identity_is_bound_to_method_provenance(self):
         source = self.root / "model.safetensors"
