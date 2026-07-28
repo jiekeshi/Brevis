@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download the canonical safetensors files for the Brevis benchmark corpus."""
+"""Download the canonical model files for the Brevis benchmark corpus."""
 
 from __future__ import annotations
 
@@ -44,6 +44,7 @@ class DownloadPlan:
     revision: str
     directory: Path
     index_file: str | None
+    support_files: tuple[str, ...]
     weights: tuple[WeightFile, ...]
 
     @property
@@ -64,8 +65,8 @@ def parse_args() -> argparse.Namespace:
     names = ", ".join(item.name for item in CHECKPOINTS)
     parser = argparse.ArgumentParser(
         description=(
-            "Download only the canonical safetensors shards referenced by each "
-            "checkpoint index."
+            "Download the canonical safetensors shards and model configuration "
+            "needed by the benchmark."
         )
     )
     parser.add_argument(
@@ -162,13 +163,27 @@ def resolve_plan(
         index = json.loads(Path(index_path).read_text())
         names = sorted(set(index["weight_map"].values()))
 
+    support_files = tuple(
+        name
+        for name in ("config.json", "model_index.json")
+        if name in siblings
+    )
+    if not checkpoint.single_file and "config.json" not in support_files:
+        raise RuntimeError(f"{checkpoint.repo_id} has no config.json")
     missing = [name for name in names if name not in siblings]
     if missing:
         raise RuntimeError(
             f"{checkpoint.repo_id} index references missing files: {missing}"
         )
     weights = tuple(file_metadata(siblings[name]) for name in names)
-    return DownloadPlan(checkpoint, revision, directory, index_file, weights)
+    return DownloadPlan(
+        checkpoint,
+        revision,
+        directory,
+        index_file,
+        support_files,
+        weights,
+    )
 
 
 def missing_bytes(plan: DownloadPlan) -> int:
@@ -209,6 +224,20 @@ def download_weight(
     raise AssertionError("unreachable")
 
 
+def download_support_files(
+    plan: DownloadPlan,
+    token: str | None,
+) -> None:
+    for name in plan.support_files:
+        hf_hub_download(
+            plan.checkpoint.repo_id,
+            name,
+            revision=plan.revision,
+            local_dir=plan.directory,
+            token=token,
+        )
+
+
 def hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     buffer = bytearray(16 * 1024 * 1024)
@@ -241,6 +270,7 @@ def write_manifest(plan: DownloadPlan, sha256_verified: bool) -> dict[str, objec
         "repo_id": plan.checkpoint.repo_id,
         "revision": plan.revision,
         "index_file": plan.index_file,
+        "support_files": list(plan.support_files),
         "source_bytes": plan.total_bytes,
         "sha256_verified": sha256_verified,
         "weights": [asdict(item) for item in plan.weights],
@@ -304,6 +334,7 @@ def main() -> int:
             f"\nDownloading {plan.checkpoint.name}: "
             f"{len(plan.weights)} file(s), {human_bytes(plan.total_bytes)}"
         )
+        download_support_files(plan, token)
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = [
                 pool.submit(download_weight, plan, item, token)

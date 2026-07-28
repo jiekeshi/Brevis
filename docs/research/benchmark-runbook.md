@@ -21,7 +21,8 @@ zig build -Doptimize=ReleaseFast
 python3 -m pip install zipnn==0.5.4 python-snappy==0.7.3 safetensors torch
 ```
 
-`preflight` 会记录 Brevis revision、CPU、RAM、方法版本和 cache-control 状态：
+`preflight` 会记录 Brevis revision、执行脚本摘要、CPU、RAM、方法版本和
+cache-control 状态；这些 provenance 也会进入 run ID，版本变化后不会误复用旧结果：
 
 ```bash
 python3 scripts/run_benchmarks.py preflight \
@@ -46,6 +47,8 @@ python3 scripts/run_benchmarks.py all \
 `--core-model` 可以指向单个 safetensors 或完整 checkpoint 目录。
 `--models-root` 是下载脚本的输出目录；harness 只读取各模型
 `download-manifest.json` 引用的 canonical shard，不会纳入重复的 consolidated 权重。
+下载脚本也会保存 `config.json`/`model_index.json`，供 DFloat11 和 ECF8 的官方
+model loader 使用，但 archive size 仍只统计 manifest 中的权重。
 默认还会核对十个模型的 repo ID 和固定 commit，并要求十个全部存在。临时开发 fixture
 只能显式加 `--allow-custom-corpus`，不能误产出正式表。
 

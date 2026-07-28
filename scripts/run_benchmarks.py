@@ -601,6 +601,7 @@ def operation_identity(
     cache: str,
     workers: int | None,
     stage: str,
+    provenance: dict[str, Any],
     brevis_config: BrevisConfig | None = None,
     variant: str | None = None,
 ) -> dict[str, Any]:
@@ -615,6 +616,7 @@ def operation_identity(
         "operation": operation,
         "cache": cache,
         "workers": workers,
+        "provenance": provenance,
         "max_expansions": (
             brevis_config.max_expansions
             if is_brevis and brevis_config
@@ -653,6 +655,7 @@ def append_failure(
 
 
 def append_not_run(
+    args: argparse.Namespace,
     log: ResultLog,
     checkpoint: Checkpoint,
     source: Path,
@@ -667,6 +670,7 @@ def append_not_run(
         "unconditioned",
         None,
         "corpus",
+        args.run_provenance[method],
     )
     log.append(
         {
@@ -703,6 +707,7 @@ def execute_operation(
         cache,
         workers,
         stage,
+        args.run_provenance[method],
         brevis_config,
         variant,
     )
@@ -804,6 +809,7 @@ def record_exactness(
             "operation": "verify",
             "cache": record["cache"],
             "workers": record["workers"],
+            "provenance": record["provenance"],
             "exact": exact,
             "verified_attempts": [
                 [item["run_id"], item.get("attempt_id")]
@@ -841,6 +847,7 @@ def run_pair(
         cache,
         workers,
         stage,
+        args.run_provenance[method],
         brevis_config,
     )
     verify_id = f"{run_id(verify_identity)}-verify"
@@ -963,6 +970,7 @@ def run_brevis_variant(
             "hot",
             config.workers,
             stage,
+            args.run_provenance["brevis"],
             config,
             variant,
         )
@@ -1095,6 +1103,7 @@ def run_generic_corpus(
                     and row.get("stage") == "corpus"
                     and row.get("checkpoint") == checkpoint.name
                     and row.get("method") == method
+                    and row.get("provenance") == args.run_provenance[method]
                     and row.get("shard") == first.name
                     and row.get("operation") in ("compress", "decompress")
                 ):
@@ -1115,7 +1124,7 @@ def run_generic_corpus(
                 )
                 print(f"  stop {checkpoint.name}/{method}: {reason}")
                 for source in remaining:
-                    append_not_run(log, checkpoint, source, method, reason)
+                    append_not_run(args, log, checkpoint, source, method, reason)
                 continue
             if jobs == 1:
                 for source in remaining:
@@ -1161,6 +1170,7 @@ def specialized_identity(
     checkpoint: Checkpoint,
     method: str,
     workers: int,
+    provenance: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "stage": "specialized",
@@ -1172,17 +1182,24 @@ def specialized_identity(
         "operation": "conversion",
         "cache": "unconditioned",
         "workers": workers,
+        "provenance": provenance,
     }
 
 
 def record_specialized_skip(
+    args: argparse.Namespace,
     log: ResultLog,
     checkpoint: Checkpoint,
     method: str,
     workers: int,
     reason: str,
 ) -> None:
-    identity = specialized_identity(checkpoint, method, workers)
+    identity = specialized_identity(
+        checkpoint,
+        method,
+        workers,
+        args.run_provenance[method],
+    )
     log.append(
         {
             **identity,
@@ -1208,6 +1225,7 @@ def run_specialized(
             if not pattern.search(checkpoint.name):
                 if not args.dry_run:
                     record_specialized_skip(
+                        args,
                         log,
                         checkpoint,
                         method,
@@ -1231,7 +1249,12 @@ def run_specialized(
                     workers,
                 )[0]
             )
-            identity = specialized_identity(checkpoint, method, workers)
+            identity = specialized_identity(
+                checkpoint,
+                method,
+                workers,
+                args.run_provenance[method],
+            )
             identifier = run_id(identity)
             if not args.rerun and log.get(identifier) and archive.exists():
                 print(f"  resume {checkpoint.name}/{method}/conversion")
@@ -1309,12 +1332,20 @@ def command_version(
     return result.stdout.strip().splitlines()[0] if result.stdout.strip() else "available"
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def method_versions(
     args: argparse.Namespace,
     specialized: dict[str, Any],
 ) -> dict[str, str | None]:
     commands = {
-        "brevis": ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+        "brevis": ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
         "zstd-9": ["zstd", "--version"],
         "lz4-hc-9": ["lz4", "--version"],
         "zipnn": [sys.executable, str(CODEC_HELPER), "zipnn", "version"],
@@ -1340,6 +1371,40 @@ def method_versions(
             else None
         )
     return versions
+
+
+def execution_provenance(
+    args: argparse.Namespace,
+    versions: dict[str, str | None],
+    specialized: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    harness_sha256 = file_sha256(Path(__file__))
+    revision = command_version(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
+    provenance = {
+        method: {
+            "harness_revision": revision,
+            "harness_sha256": harness_sha256,
+            "method_version": version,
+        }
+        for method, version in versions.items()
+    }
+    if "brevis" in provenance:
+        provenance["brevis"]["brevis_revision"] = revision
+        provenance["brevis"]["binary_sha256"] = (
+            file_sha256(args.brevis_bin)
+            if args.brevis_bin.is_file()
+            else None
+        )
+    for method in ("zipnn", "snappy"):
+        if method in provenance:
+            provenance[method]["adapter_sha256"] = file_sha256(CODEC_HELPER)
+    for method in SPECIALIZED_METHODS:
+        if method in provenance:
+            provenance[method]["adapter_sha256"] = file_sha256(
+                ROOT / "scripts" / "specialized_baselines.py"
+            )
+            provenance[method]["config"] = specialized.get(method)
+    return provenance
 
 
 def build_brevis(args: argparse.Namespace) -> None:
@@ -1398,12 +1463,20 @@ def write_environment(
     versions: dict[str, str | None],
     corpus: list[Checkpoint],
 ) -> None:
-    revision = command_version(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
     path = args.results / "environment.json"
     existing = json.loads(path.read_text()) if path.exists() else {}
+    existing_provenance = existing.get("run_provenance", {})
     method_versions = {
-        **existing.get("method_versions", {}),
+        **{
+            method: version
+            for method, version in existing.get("method_versions", {}).items()
+            if method in existing_provenance
+        },
         **versions,
+    }
+    run_provenance = {
+        **existing_provenance,
+        **args.run_provenance,
     }
     corpus_by_name = {
         checkpoint["name"]: checkpoint
@@ -1423,7 +1496,9 @@ def write_environment(
     )
     environment = {
         "generated_at": utc_now(),
-        "brevis_revision": revision,
+        "brevis_revision": run_provenance.get("brevis", {}).get(
+            "brevis_revision"
+        ),
         "platform": platform.platform(),
         "python": platform.python_version(),
         "logical_cpus": os.cpu_count(),
@@ -1432,6 +1507,7 @@ def write_environment(
         "workers": args.workers,
         "shard_jobs": args.shard_jobs,
         "method_versions": method_versions,
+        "run_provenance": run_provenance,
         "corpus": list(corpus_by_name.values()),
         "frozen_corpus": (
             existing.get("frozen_corpus", True)
@@ -1461,6 +1537,7 @@ def preflight(
             + "; install them or pass --allow-missing"
         )
     args.methods = [method for method in args.methods if method not in missing]
+    args.run_provenance = execution_provenance(args, versions, specialized)
     return versions
 
 
@@ -1480,6 +1557,24 @@ def latest_records(path: Path) -> list[dict[str, Any]]:
     for record in read_jsonl(path):
         latest[record["run_id"]] = record
     return list(latest.values())
+
+
+def current_provenance_records(
+    results: Path,
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    path = results / "environment.json"
+    if not path.exists():
+        return records
+    provenance = json.loads(path.read_text()).get("run_provenance", {})
+    if not provenance:
+        return records
+    return [
+        record
+        for record in records
+        if record.get("method") in provenance
+        and record.get("provenance") == provenance[record["method"]]
+    ]
 
 
 def aggregate(
@@ -1671,7 +1766,10 @@ def compression_effectiveness_table(
 
 
 def summarize(results: Path) -> None:
-    latest = latest_records(results / "raw" / "runs.jsonl")
+    latest = current_provenance_records(
+        results,
+        latest_records(results / "raw" / "runs.jsonl"),
+    )
     records = [
         record
         for record in latest

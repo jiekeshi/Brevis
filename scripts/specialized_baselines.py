@@ -23,6 +23,13 @@ LLM_LINEAR_PATHS = (
     "mlp.down_proj",
 )
 DFLOAT11_MODEL_CLASSES = {"LlamaForCausalLM", "Qwen3ForCausalLM"}
+UPSTREAM_ECF8_NAMESPACE = "DFloat11"
+UPSTREAM_ECF8_SUFFIX = "DF6.5"
+
+
+def require_model_config(source: Path) -> None:
+    if not (source / "config.json").is_file():
+        raise SystemExit(f"missing model config: {source / 'config.json'}")
 
 
 def run_dfloat11(
@@ -31,6 +38,7 @@ def run_dfloat11(
     workers: int,
     validate: bool,
 ) -> None:
+    require_model_config(source)
     os.environ["OMP_NUM_THREADS"] = str(workers)
     import torch
     from dfloat11 import compress_model
@@ -57,10 +65,10 @@ def run_dfloat11(
     )
 
 
-def ecf8_output_path(source: Path, root: Path) -> Path:
+def upstream_ecf8_output_path(source: Path, root: Path) -> Path:
     parts = str(source).split("/")
-    parts[0] = "DFloat11"
-    return root / f"models--{'--'.join(parts)}-DF6.5"
+    parts[0] = UPSTREAM_ECF8_NAMESPACE
+    return root / f"models--{'--'.join(parts)}-{UPSTREAM_ECF8_SUFFIX}"
 
 
 def run_ecf8(
@@ -70,6 +78,7 @@ def run_ecf8(
     upstream: Path,
     validate: bool,
 ) -> None:
+    require_model_config(source)
     scripts = upstream / "scripts"
     if not (scripts / "compress.py").is_file():
         raise SystemExit(f"invalid ECF8 checkout: {upstream}")
@@ -102,7 +111,7 @@ def run_ecf8(
             filter(None, (str(upstream), environment.get("PYTHONPATH")))
         )
         subprocess.run(command, cwd=scripts, env=environment, check=True)
-        converted = ecf8_output_path(source, model_root)
+        converted = upstream_ecf8_output_path(source, model_root)
         shutil.rmtree(converted / "cache")
         converted.rename(output)
 

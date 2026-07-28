@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_benchmarks as bench
+import specialized_baselines
 
 
 def write_safetensors(path: Path, tensors: list[tuple[str, str, list[int], bytes]]) -> None:
@@ -144,6 +145,37 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertEqual("0", compress[compress.index("--astar-heuristic") + 1])
         self.assertNotIn("--max-expansions", decompress)
 
+    def test_run_identity_is_bound_to_method_provenance(self):
+        source = self.root / "model.safetensors"
+        source.write_bytes(b"x")
+        checkpoint = bench.Checkpoint("fixture", self.root, (source,))
+        arguments = (
+            checkpoint,
+            source,
+            "zstd-9",
+            "compress",
+            "hot",
+            1,
+            "core",
+        )
+
+        first = bench.operation_identity(
+            *arguments,
+            {"method_version": "zstd 1.5.6"},
+        )
+        second = bench.operation_identity(
+            *arguments,
+            {"method_version": "zstd 1.5.7"},
+        )
+
+        self.assertNotEqual(bench.run_id(first), bench.run_id(second))
+
+    def test_specialized_baselines_require_model_config(self):
+        with self.assertRaisesRegex(SystemExit, "missing model config"):
+            specialized_baselines.require_model_config(self.root)
+        (self.root / "config.json").write_text("{}")
+        specialized_baselines.require_model_config(self.root)
+
     def test_summary_reuses_core_full_for_all_three_sweeps(self):
         results = self.root / "results"
         log = bench.ResultLog(results / "raw" / "runs.jsonl")
@@ -234,6 +266,66 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertEqual("1", figure2[0]["workers"])
         self.assertEqual("full", table4[0]["variant"])
         self.assertEqual({"brevis"}, {row["method"] for row in table3})
+
+    def test_summary_uses_only_current_method_provenance(self):
+        results = self.root / "results"
+        results.mkdir()
+        current = {"method_version": "current"}
+        (results / "environment.json").write_text(
+            json.dumps(
+                {
+                    "method_versions": {"brevis": "current"},
+                    "run_provenance": {"brevis": current},
+                    "corpus": [],
+                }
+            )
+        )
+        log = bench.ResultLog(results / "raw" / "runs.jsonl")
+        for run_id, provenance, output_bytes in (
+            ("old", {"method_version": "old"}, 20),
+            ("current", current, 60),
+        ):
+            log.append(
+                {
+                    "run_id": run_id,
+                    "attempt_id": run_id,
+                    "status": "ok",
+                    "stage": "core",
+                    "checkpoint": "fixture",
+                    "shard": "model.safetensors",
+                    "method": "brevis",
+                    "operation": "compress",
+                    "cache": "hot",
+                    "workers": 1,
+                    "max_expansions": 512,
+                    "provenance": provenance,
+                    "source_bytes": 100,
+                    "output_bytes": output_bytes,
+                    "wall_seconds": 1,
+                    "peak_rss_bytes": 1024,
+                }
+            )
+            log.append(
+                {
+                    "run_id": f"{run_id}-verify",
+                    "status": "ok",
+                    "stage": "core",
+                    "checkpoint": "fixture",
+                    "shard": "model.safetensors",
+                    "method": "brevis",
+                    "operation": "verify",
+                    "cache": "hot",
+                    "workers": 1,
+                    "provenance": provenance,
+                    "exact": True,
+                    "verified_attempts": [[run_id, run_id]],
+                }
+            )
+
+        bench.summarize(results)
+
+        table = read_csv(results / "tables" / "table3-end-to-end.csv")
+        self.assertEqual("60.0", table[0]["archive_percent"])
 
 
 if __name__ == "__main__":
