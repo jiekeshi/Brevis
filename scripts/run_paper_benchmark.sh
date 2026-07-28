@@ -69,6 +69,8 @@ install_system_tools() {
   for tool in python3 curl git xz zstd lz4 libdeflate-gzip; do
     command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
   done
+  python3 -c 'import ensurepip, venv' >/dev/null 2>&1 ||
+    missing+=(python3-venv)
   (( ${#missing[@]} == 0 )) && return
 
   echo "Installing missing system tools: ${missing[*]}"
@@ -162,6 +164,41 @@ python -m pip install \
 
 cd "$ROOT"
 
+validate_specialized_config() {
+  python - "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config = json.loads(Path(sys.argv[1]).read_text())
+for method, settings in config.items():
+    for name in ("version_command", "compress_command", "validate_command"):
+        command = settings.get(name)
+        executable = Path(command[0]) if command else None
+        if (
+            executable
+            and executable.name in {"python", "python3"}
+            and not executable.is_absolute()
+        ):
+            sys.exit(
+                f"{method}.{name} must use an absolute environment-specific "
+                "Python path or an explicit environment runner"
+            )
+PY
+}
+
+paper_methods=(brevis zstd-9 zipnn lz4-hc-9 libdeflate-1 snappy)
+benchmark_args=()
+if [[ -n "$SPECIALIZED_CONFIG" ]]; then
+  [[ -f "$SPECIALIZED_CONFIG" ]] || {
+    echo "SPECIALIZED_CONFIG does not exist: $SPECIALIZED_CONFIG" >&2
+    exit 1
+  }
+  validate_specialized_config "$SPECIALIZED_CONFIG"
+  paper_methods+=(dfloat11 ecf8)
+  benchmark_args+=(--specialized-config "$SPECIALIZED_CONFIG")
+fi
+
 if [[ ! -e "$CORE_MODEL" ]]; then
   echo "CORE_MODEL does not exist: $CORE_MODEL" >&2
   exit 1
@@ -175,24 +212,14 @@ elif [[ ! -d "$MODELS_ROOT" ]]; then
   exit 1
 fi
 
-methods=(brevis zstd-9 zipnn lz4-hc-9 libdeflate-1 snappy)
-extra=()
-if [[ -n "$SPECIALIZED_CONFIG" ]]; then
-  [[ -f "$SPECIALIZED_CONFIG" ]] || {
-    echo "SPECIALIZED_CONFIG does not exist: $SPECIALIZED_CONFIG" >&2
-    exit 1
-  }
-  methods+=(dfloat11 ecf8)
-  extra+=(--specialized-config "$SPECIALIZED_CONFIG")
-fi
 if [[ "${PAPER_TIMING:-0}" == 1 ]]; then
   PROGRESS_INTERVAL=0
 fi
 if [[ -n "${WORKERS:-}" ]]; then
-  extra+=(--workers "$WORKERS" --shard-jobs "$WORKERS")
+  benchmark_args+=(--workers "$WORKERS" --shard-jobs "$WORKERS")
 fi
 if [[ -n "${DROP_CACHES_COMMAND:-}" ]]; then
-  extra+=(--drop-caches-command "$DROP_CACHES_COMMAND")
+  benchmark_args+=(--drop-caches-command "$DROP_CACHES_COMMAND")
 fi
 
 mkdir -p "$RESULTS"
@@ -201,7 +228,7 @@ python -u scripts/run_benchmarks.py all \
   --models-root "$MODELS_ROOT" \
   --core-model "$CORE_MODEL" \
   --results "$RESULTS" \
-  --methods "${methods[@]}" \
+  --methods "${paper_methods[@]}" \
   --deadline-hours "$DEADLINE_HOURS" \
   --progress-interval "$PROGRESS_INTERVAL" \
-  "${extra[@]}" 2>&1 | tee -a "$RESULTS/benchmark-console.log"
+  "${benchmark_args[@]}" 2>&1 | tee -a "$RESULTS/benchmark-console.log"

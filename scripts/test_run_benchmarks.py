@@ -219,8 +219,13 @@ class BenchmarkHarnessTests(unittest.TestCase):
 
         self.assertIn("PROGRESS_INTERVAL=5", result.stdout)
         self.assertIn("PAPER_TIMING=0", result.stdout)
-        self.assertNotIn("libdeflate-6", launcher.read_text())
-        self.assertIn("libdeflate-1", launcher.read_text())
+        script = launcher.read_text()
+        self.assertIn(
+            f"paper_methods=({' '.join(bench.GENERIC_METHODS)})",
+            script,
+        )
+        self.assertIn("import ensurepip, venv", script)
+        self.assertIn("environment-specific", script)
 
     def test_run_identity_is_bound_to_method_provenance(self):
         source = self.root / "model.safetensors"

@@ -14,7 +14,8 @@ scripts/run_paper_benchmark.sh \
 `PAPER_TIMING=1 scripts/run_paper_benchmark.sh ...`。脚本支持 Debian/Ubuntu、
 Fedora/RHEL 和 macOS；会在仓库内安装固定的 Zig 0.16.0 和隔离 Python venv。
 若十个 checkpoint 已下载，设 `SKIP_MODEL_DOWNLOAD=1`。第四个可选参数是
-`specialized-baselines.json`；不传时只跑六个可自动安装的通用方法。
+`specialized-baselines.json`；不传时只跑六个可自动安装的通用方法。DFloat11/ECF8
+必须使用各自 CUDA 环境中 Python 的绝对路径，不能在配置中写裸 `python3`。
 
 `scripts/run_benchmarks.py` 按以下顺序执行当前实验计划：
 
@@ -128,7 +129,7 @@ source/output。正式环境固定 DFloat11 `457733886ce6ebc6d8dda1621fad1ffa266
     "cwd": "/path/to/Brevis",
     "version_command": ["git", "-C", "/opt/DFloat11", "rev-parse", "HEAD"],
     "compress_command": [
-      "python3", "scripts/specialized_baselines.py", "dfloat11",
+      "/opt/dfloat11-venv/bin/python", "scripts/specialized_baselines.py", "dfloat11",
       "--source", "{source_dir}",
       "--output", "{archive}",
       "--workers", "{workers}",
@@ -142,7 +143,7 @@ source/output。正式环境固定 DFloat11 `457733886ce6ebc6d8dda1621fad1ffa266
     "cwd": "/path/to/Brevis",
     "version_command": ["git", "-C", "/opt/ecf8", "rev-parse", "HEAD"],
     "compress_command": [
-      "python3", "scripts/specialized_baselines.py", "ecf8",
+      "/opt/ecf8-venv/bin/python", "scripts/specialized_baselines.py", "ecf8",
       "--source", "{source_dir}",
       "--output", "{archive}",
       "--workers", "{workers}",
