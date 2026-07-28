@@ -63,6 +63,19 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertEqual("fixture", checkpoint.name)
         self.assertEqual((first, second), checkpoint.files)
         self.assertNotIn(model / "consolidated.safetensors", checkpoint.files)
+        with self.assertRaisesRegex(bench.BenchmarkError, "non-paper checkpoint"):
+            bench.load_corpus(self.root, None)
+        self.assertEqual(
+            ["fixture"],
+            [
+                item.name
+                for item in bench.load_corpus(
+                    self.root,
+                    None,
+                    allow_custom=True,
+                )
+            ],
+        )
 
     def test_tensor_exact_ignores_header_order_but_not_payload_changes(self):
         source = self.root / "source.safetensors"
@@ -137,6 +150,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
         log.append(
             {
                 "run_id": "full",
+                "attempt_id": "old",
                 "status": "ok",
                 "stage": "core",
                 "checkpoint": "qwen2.5-7b-local",
@@ -152,6 +166,58 @@ class BenchmarkHarnessTests(unittest.TestCase):
                 "peak_rss_bytes": 1024,
             }
         )
+        log.append(
+            {
+                "run_id": "full",
+                "attempt_id": "latest",
+                "status": "ok",
+                "stage": "core",
+                "checkpoint": "qwen2.5-7b-local",
+                "shard": "model.safetensors",
+                "method": "brevis",
+                "operation": "compress",
+                "cache": "hot",
+                "workers": 1,
+                "max_expansions": 512,
+                "source_bytes": 100,
+                "output_bytes": 60,
+                "wall_seconds": 1,
+                "peak_rss_bytes": 1024,
+            }
+        )
+        log.append(
+            {
+                "run_id": "unverified",
+                "attempt_id": "unverified-attempt",
+                "status": "ok",
+                "stage": "core",
+                "checkpoint": "qwen2.5-7b-local",
+                "shard": "model.safetensors",
+                "method": "zstd-9",
+                "operation": "compress",
+                "cache": "hot",
+                "workers": 1,
+                "source_bytes": 100,
+                "output_bytes": 50,
+                "wall_seconds": 1,
+                "peak_rss_bytes": 1024,
+            }
+        )
+        log.append(
+            {
+                "run_id": "full-verify",
+                "status": "ok",
+                "stage": "core",
+                "checkpoint": "qwen2.5-7b-local",
+                "shard": "model.safetensors",
+                "method": "brevis",
+                "operation": "verify",
+                "cache": "hot",
+                "workers": 1,
+                "exact": True,
+                "verified_attempts": [["full", "latest"]],
+            }
+        )
 
         bench.summarize(results)
 
@@ -162,9 +228,12 @@ class BenchmarkHarnessTests(unittest.TestCase):
             results / "tables" / "figure2-throughput-rss-vs-workers.csv"
         )
         table4 = read_csv(results / "tables" / "table4-ablation.csv")
+        table3 = read_csv(results / "tables" / "table3-end-to-end.csv")
         self.assertEqual("budget-512", figure1[0]["variant"])
+        self.assertEqual("60.0", figure1[0]["archive_percent"])
         self.assertEqual("1", figure2[0]["workers"])
         self.assertEqual("full", table4[0]["variant"])
+        self.assertEqual({"brevis"}, {row["method"] for row in table3})
 
 
 if __name__ == "__main__":

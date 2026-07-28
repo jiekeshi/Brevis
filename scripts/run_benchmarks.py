@@ -17,14 +17,19 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from benchmark_corpus import CHECKPOINTS as PAPER_CHECKPOINTS
+from benchmark_corpus import CHECKPOINT_BY_NAME
+
 ROOT = Path(__file__).resolve().parent.parent
 CODEC_HELPER = ROOT / "scripts" / "benchmark_codecs.py"
+DEFAULT_BREVIS_BIN = ROOT / "zig-out" / "bin" / "brevis"
 GENERIC_METHODS = ("brevis", "zstd-9", "zipnn", "lz4-hc-9", "snappy")
 SPECIALIZED_METHODS = ("dfloat11", "ecf8")
 ALL_METHODS = GENERIC_METHODS + SPECIALIZED_METHODS
@@ -56,6 +61,10 @@ class BrevisConfig:
     max_expansions: int = 512
     tensors: int = 256
     astar_heuristic: bool = True
+
+    @property
+    def phog_enabled(self) -> bool:
+        return self.max_expansions != 0 and self.tensors != 0
 
 
 @dataclass
@@ -176,7 +185,11 @@ def load_checkpoint(path: Path, name: str | None = None) -> Checkpoint:
     return Checkpoint(name or path.name, path, files)
 
 
-def load_corpus(root: Path, names: list[str] | None) -> list[Checkpoint]:
+def load_corpus(
+    root: Path,
+    names: list[str] | None,
+    allow_custom: bool = False,
+) -> list[Checkpoint]:
     root = root.expanduser().resolve()
     if not root.is_dir():
         raise BenchmarkError(f"models root does not exist: {root}")
@@ -186,14 +199,39 @@ def load_corpus(root: Path, names: list[str] | None) -> list[Checkpoint]:
     ]
     if not checkpoints and (root / "download-manifest.json").exists():
         checkpoints = [load_manifest_checkpoint(root)]
-    if names:
-        wanted = set(names)
-        checkpoints = [item for item in checkpoints if item.name in wanted]
-        missing = wanted - {item.name for item in checkpoints}
+    if allow_custom:
+        selected = set(names) if names else None
+    else:
+        unknown = {item.name for item in checkpoints} - CHECKPOINT_BY_NAME.keys()
+        if unknown:
+            raise BenchmarkError(
+                f"non-paper checkpoint(s): {', '.join(sorted(unknown))}"
+            )
+        selected = set(names) if names else {
+            checkpoint.name for checkpoint in PAPER_CHECKPOINTS
+        }
+        unknown_selection = selected - CHECKPOINT_BY_NAME.keys()
+        if unknown_selection:
+            raise BenchmarkError(
+                f"non-paper checkpoint(s): {', '.join(sorted(unknown_selection))}"
+            )
+    if selected:
+        checkpoints = [item for item in checkpoints if item.name in selected]
+        missing = selected - {item.name for item in checkpoints}
         if missing:
             raise BenchmarkError(
                 f"missing downloaded checkpoint(s): {', '.join(sorted(missing))}"
             )
+    if not allow_custom:
+        for checkpoint in checkpoints:
+            expected = CHECKPOINT_BY_NAME[checkpoint.name]
+            if (
+                checkpoint.repo_id != expected.repo_id
+                or checkpoint.revision != expected.revision
+            ):
+                raise BenchmarkError(
+                    f"{checkpoint.name}: manifest is not the frozen paper revision"
+                )
     return sorted(checkpoints, key=lambda item: item.source_bytes)
 
 
@@ -246,6 +284,8 @@ def compare_range(
 def tensor_exact(source: Path, restored: Path) -> bool:
     source_header, source_base = safetensors_header(source)
     restored_header, restored_base = safetensors_header(restored)
+    if source_header.get("__metadata__") != restored_header.get("__metadata__"):
+        return False
     source_names = set(source_header) - {"__metadata__"}
     restored_names = set(restored_header) - {"__metadata__"}
     if source_names != restored_names:
@@ -277,7 +317,7 @@ def byte_exact(source: Path, restored: Path) -> bool:
     return compare_range(source, 0, restored, 0, source.stat().st_size)
 
 
-def warm(path: Path) -> None:
+def warm_page_cache(path: Path) -> None:
     with path.open("rb", buffering=0) as source:
         while source.read(READ_CHUNK):
             pass
@@ -553,6 +593,47 @@ def archive_path(results: Path, checkpoint: str, method: str, source: Path) -> P
     )
 
 
+def operation_identity(
+    checkpoint: Checkpoint,
+    source: Path,
+    method: str,
+    operation: str,
+    cache: str,
+    workers: int | None,
+    stage: str,
+    brevis_config: BrevisConfig | None = None,
+    variant: str | None = None,
+) -> dict[str, Any]:
+    is_brevis = method == "brevis"
+    return {
+        "stage": stage,
+        "checkpoint": checkpoint.name,
+        "shard": source.name,
+        "revision": checkpoint.revision,
+        "source_size_bytes": source.stat().st_size,
+        "method": method,
+        "operation": operation,
+        "cache": cache,
+        "workers": workers,
+        "max_expansions": (
+            brevis_config.max_expansions
+            if is_brevis and brevis_config
+            else None
+        ),
+        "phog": (
+            brevis_config.phog_enabled
+            if is_brevis and brevis_config
+            else None
+        ),
+        "astar_heuristic": (
+            brevis_config.astar_heuristic
+            if is_brevis and brevis_config
+            else None
+        ),
+        "variant": variant,
+    }
+
+
 def append_failure(
     log: ResultLog,
     identity: dict[str, Any],
@@ -578,17 +659,15 @@ def append_not_run(
     method: str,
     reason: str,
 ) -> None:
-    identity = {
-        "stage": "corpus",
-        "checkpoint": checkpoint.name,
-        "shard": source.name,
-        "revision": checkpoint.revision,
-        "source_size_bytes": source.stat().st_size,
-        "method": method,
-        "operation": "compress",
-        "cache": "unconditioned",
-        "workers": None,
-    }
+    identity = operation_identity(
+        checkpoint,
+        source,
+        method,
+        "compress",
+        "unconditioned",
+        None,
+        "corpus",
+    )
     log.append(
         {
             **identity,
@@ -616,23 +695,17 @@ def execute_operation(
     stage: str,
     variant: str | None = None,
 ) -> dict[str, Any] | None:
-    identity = {
-        "stage": stage,
-        "checkpoint": checkpoint.name,
-        "shard": source.name,
-        "revision": checkpoint.revision,
-        "source_size_bytes": source.stat().st_size,
-        "method": method,
-        "operation": operation,
-        "cache": cache,
-        "workers": workers,
-        "max_expansions": brevis_config.max_expansions if method == "brevis" else None,
-        "phog": brevis_config.tensors != 0 if method == "brevis" else None,
-        "astar_heuristic": (
-            brevis_config.astar_heuristic if method == "brevis" else None
-        ),
-        "variant": variant,
-    }
+    identity = operation_identity(
+        checkpoint,
+        source,
+        method,
+        operation,
+        cache,
+        workers,
+        stage,
+        brevis_config,
+        variant,
+    )
     identifier = run_id(identity)
     previous = None if args.rerun else log.get(identifier)
     if previous and output_path.exists():
@@ -657,10 +730,11 @@ def execute_operation(
     if cache == "cold" and not drop_caches(args.drop_caches_command):
         raise BenchmarkError("cold-cache control is unavailable")
     if cache == "hot":
-        warm(input_path)
+        warm_page_cache(input_path)
 
     print(f"  run {checkpoint.name}/{source.name}/{method}/{operation}/{cache}")
     started_at = utc_now()
+    attempt_id = uuid.uuid4().hex
     try:
         measurement = measure(
             command,
@@ -674,6 +748,7 @@ def execute_operation(
             **identity,
             "run_id": identifier,
             "status": "ok",
+            "attempt_id": attempt_id,
             "started_at": started_at,
             "finished_at": utc_now(),
             "command": command,
@@ -714,6 +789,7 @@ def record_exactness(
     log: ResultLog,
     record: dict[str, Any] | None,
     exact: bool,
+    verified_records: Iterable[dict[str, Any] | None],
 ) -> None:
     if record is None:
         return
@@ -729,6 +805,11 @@ def record_exactness(
             "cache": record["cache"],
             "workers": record["workers"],
             "exact": exact,
+            "verified_attempts": [
+                [item["run_id"], item.get("attempt_id")]
+                for item in verified_records
+                if item is not None
+            ],
             "finished_at": utc_now(),
         }
     )
@@ -752,23 +833,16 @@ def run_pair(
     brevis_config: BrevisConfig,
     keep_archive: bool = True,
 ) -> None:
-    verify_identity = {
-        "stage": stage,
-        "checkpoint": checkpoint.name,
-        "shard": source.name,
-        "revision": checkpoint.revision,
-        "source_size_bytes": source.stat().st_size,
-        "method": method,
-        "operation": "decompress",
-        "cache": cache,
-        "workers": workers,
-        "max_expansions": brevis_config.max_expansions if method == "brevis" else None,
-        "phog": brevis_config.tensors != 0 if method == "brevis" else None,
-        "astar_heuristic": (
-            brevis_config.astar_heuristic if method == "brevis" else None
-        ),
-        "variant": None,
-    }
+    verify_identity = operation_identity(
+        checkpoint,
+        source,
+        method,
+        "decompress",
+        cache,
+        workers,
+        stage,
+        brevis_config,
+    )
     verify_id = f"{run_id(verify_identity)}-verify"
     if not args.rerun and log.get(verify_id):
         print(f"  resume {checkpoint.name}/{source.name}/{method}/{cache} pair")
@@ -816,7 +890,12 @@ def run_pair(
     )
     if not args.dry_run:
         exact = validate_restored(method, source, restored)
-        record_exactness(log, decompress_record, exact)
+        record_exactness(
+            log,
+            decompress_record,
+            exact,
+            (compress_record, decompress_record),
+        )
         restored.unlink(missing_ok=True)
         if not keep_archive:
             archive.unlink(missing_ok=True)
@@ -876,21 +955,17 @@ def run_brevis_variant(
     keep: bool,
 ) -> None:
     for source in checkpoint.files:
-        identity = {
-            "stage": stage,
-            "checkpoint": checkpoint.name,
-            "shard": source.name,
-            "revision": checkpoint.revision,
-            "source_size_bytes": source.stat().st_size,
-            "method": "brevis",
-            "operation": "compress",
-            "cache": "hot",
-            "workers": config.workers,
-            "max_expansions": config.max_expansions,
-            "phog": config.tensors != 0,
-            "astar_heuristic": config.astar_heuristic,
-            "variant": variant,
-        }
+        identity = operation_identity(
+            checkpoint,
+            source,
+            "brevis",
+            "compress",
+            "hot",
+            config.workers,
+            stage,
+            config,
+            variant,
+        )
         if not args.rerun and log.get(f"{run_id(identity)}-verify"):
             print(f"  resume {checkpoint.name}/{source.name}/{variant}")
             continue
@@ -923,7 +998,7 @@ def run_brevis_variant(
             check=True,
             stdout=subprocess.DEVNULL,
         )
-        record_exactness(log, record, True)
+        record_exactness(log, record, True, (record,))
         if not keep:
             archive.unlink(missing_ok=True)
 
@@ -1082,6 +1157,43 @@ def format_command(
     return [part.format_map(values) for part in template]
 
 
+def specialized_identity(
+    checkpoint: Checkpoint,
+    method: str,
+    workers: int,
+) -> dict[str, Any]:
+    return {
+        "stage": "specialized",
+        "checkpoint": checkpoint.name,
+        "shard": None,
+        "revision": checkpoint.revision,
+        "source_size_bytes": checkpoint.source_bytes,
+        "method": method,
+        "operation": "conversion",
+        "cache": "unconditioned",
+        "workers": workers,
+    }
+
+
+def record_specialized_skip(
+    log: ResultLog,
+    checkpoint: Checkpoint,
+    method: str,
+    workers: int,
+    reason: str,
+) -> None:
+    identity = specialized_identity(checkpoint, method, workers)
+    log.append(
+        {
+            **identity,
+            "run_id": run_id(identity),
+            "status": "not_run",
+            "reason": reason,
+            "finished_at": utc_now(),
+        }
+    )
+
+
 def run_specialized(
     args: argparse.Namespace,
     log: ResultLog,
@@ -1089,18 +1201,19 @@ def run_specialized(
     config: dict[str, Any],
 ) -> None:
     for method in (item for item in args.methods if item in SPECIALIZED_METHODS):
-        settings = config.get(method)
-        if settings is None:
-            if args.allow_missing:
-                print(f"skip {method}: no specialized command configured")
-                continue
-            raise BenchmarkError(
-                f"{method} requires --specialized-config; see the runbook"
-            )
+        settings = config[method]
         pattern = re.compile(settings.get("checkpoint_pattern", ".*"))
         workers = int(settings.get("workers", 32))
         for checkpoint in checkpoints:
             if not pattern.search(checkpoint.name):
+                if not args.dry_run:
+                    record_specialized_skip(
+                        log,
+                        checkpoint,
+                        method,
+                        workers,
+                        "unsupported checkpoint",
+                    )
                 continue
             args.deadline.require_time()
             default_archive = (
@@ -1118,17 +1231,7 @@ def run_specialized(
                     workers,
                 )[0]
             )
-            identity = {
-                "stage": "specialized",
-                "checkpoint": checkpoint.name,
-                "shard": None,
-                "revision": checkpoint.revision,
-                "source_size_bytes": checkpoint.source_bytes,
-                "method": method,
-                "operation": "conversion",
-                "cache": "unconditioned",
-                "workers": workers,
-            }
+            identity = specialized_identity(checkpoint, method, workers)
             identifier = run_id(identity)
             if not args.rerun and log.get(identifier) and archive.exists():
                 print(f"  resume {checkpoint.name}/{method}/conversion")
@@ -1169,6 +1272,7 @@ def run_specialized(
                         **identity,
                         "run_id": identifier,
                         "status": "ok",
+                        "attempt_id": uuid.uuid4().hex,
                         "command": command,
                         "source_bytes": checkpoint.source_bytes,
                         "output_bytes": archive_bytes,
@@ -1239,7 +1343,9 @@ def method_versions(
 
 
 def build_brevis(args: argparse.Namespace) -> None:
-    if args.brevis_bin.exists():
+    if args.brevis_bin != DEFAULT_BREVIS_BIN:
+        if not args.brevis_bin.is_file():
+            raise BenchmarkError(f"Brevis binary does not exist: {args.brevis_bin}")
         return
     if args.dry_run:
         print("  zig build -Doptimize=ReleaseFast")
@@ -1290,8 +1396,31 @@ def total_memory() -> int | None:
 def write_environment(
     args: argparse.Namespace,
     versions: dict[str, str | None],
+    corpus: list[Checkpoint],
 ) -> None:
     revision = command_version(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
+    path = args.results / "environment.json"
+    existing = json.loads(path.read_text()) if path.exists() else {}
+    method_versions = {
+        **existing.get("method_versions", {}),
+        **versions,
+    }
+    corpus_by_name = {
+        checkpoint["name"]: checkpoint
+        for checkpoint in existing.get("corpus", ())
+    }
+    corpus_by_name.update(
+        {
+            checkpoint.name: {
+                "name": checkpoint.name,
+                "repo_id": checkpoint.repo_id,
+                "revision": checkpoint.revision,
+                "source_bytes": checkpoint.source_bytes,
+                "shards": [source.name for source in checkpoint.files],
+            }
+            for checkpoint in corpus
+        }
+    )
     environment = {
         "generated_at": utc_now(),
         "brevis_revision": revision,
@@ -1302,11 +1431,15 @@ def write_environment(
         "ram_bytes": total_memory(),
         "workers": args.workers,
         "shard_jobs": args.shard_jobs,
-        "method_versions": versions,
+        "method_versions": method_versions,
+        "corpus": list(corpus_by_name.values()),
+        "frozen_corpus": (
+            existing.get("frozen_corpus", True)
+            and not args.allow_custom_corpus
+        ),
         "cold_cache_available": args.cold_available,
         "drop_caches_command": args.drop_caches_command,
     }
-    path = args.results / "environment.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(environment, indent=2, sort_keys=True) + "\n")
 
@@ -1315,7 +1448,8 @@ def preflight(
     args: argparse.Namespace,
     specialized: dict[str, Any],
 ) -> dict[str, str | None]:
-    build_brevis(args)
+    if "brevis" in args.methods:
+        build_brevis(args)
     versions = method_versions(args, specialized)
     missing = [method for method, version in versions.items() if version is None]
     for method, version in versions.items():
@@ -1327,19 +1461,25 @@ def preflight(
             + "; install them or pass --allow-missing"
         )
     args.methods = [method for method in args.methods if method not in missing]
-    if not args.dry_run:
-        write_environment(args, versions)
     return versions
 
 
-def verified_keys(records: list[dict[str, Any]]) -> set[tuple[str, str, str]]:
+def verified_attempts(records: list[dict[str, Any]]) -> set[tuple[str, str | None]]:
     return {
-        (record["checkpoint"], record["method"], record["shard"])
+        (run_id, attempt_id)
         for record in records
         if record.get("operation") == "verify"
         and record.get("status") == "ok"
         and record.get("exact")
+        for run_id, attempt_id in record.get("verified_attempts", ())
     }
+
+
+def latest_records(path: Path) -> list[dict[str, Any]]:
+    latest = {}
+    for record in read_jsonl(path):
+        latest[record["run_id"]] = record
+    return list(latest.values())
 
 
 def aggregate(
@@ -1451,48 +1591,111 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def compression_effectiveness_table(
+    results: Path,
+    latest: list[dict[str, Any]],
+    verified_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    environment_path = results / "environment.json"
+    if not environment_path.exists():
+        return []
+    environment = json.loads(environment_path.read_text())
+    versions = environment.get("method_versions", {})
+    table = []
+    for checkpoint in environment.get("corpus", ()):
+        expected_shards = set(checkpoint["shards"])
+        for method in versions:
+            rows = [
+                row
+                for row in verified_records
+                if row.get("checkpoint") == checkpoint["name"]
+                and row.get("revision") == checkpoint["revision"]
+                and row.get("method") == method
+                and (
+                    (
+                        row.get("stage") == "corpus"
+                        and row.get("operation") == "compress"
+                    )
+                    or (
+                        row.get("stage") == "specialized"
+                        and row.get("operation") == "conversion"
+                    )
+                )
+            ]
+            complete = bool(rows)
+            if method in GENERIC_METHODS:
+                complete = {row["shard"] for row in rows} == expected_shards
+            summary = (
+                aggregate(rows, ("checkpoint", "method"))[0]
+                if complete
+                else None
+            )
+            attempts = [
+                row
+                for row in latest
+                if row.get("checkpoint") == checkpoint["name"]
+                and row.get("revision") == checkpoint["revision"]
+                and row.get("method") == method
+                and row.get("stage") in ("corpus", "specialized")
+            ]
+            if summary:
+                status = "ok"
+            elif versions.get(method) is None:
+                status = "missing dependency/config"
+            elif any(row.get("status") == "failed" for row in attempts):
+                status = "failed"
+            elif any(row.get("status") == "not_run" for row in attempts):
+                reasons = {
+                    row.get("reason", "not run")
+                    for row in attempts
+                    if row.get("status") == "not_run"
+                }
+                status = "; ".join(sorted(reasons))
+            elif rows:
+                status = "incomplete"
+            else:
+                status = "not run"
+            table.append(
+                {
+                    "checkpoint": checkpoint["name"],
+                    "method": method,
+                    "status": status,
+                    "source_bytes": checkpoint["source_bytes"],
+                    "output_bytes": summary["output_bytes"] if summary else None,
+                    "archive_percent": (
+                        summary["archive_percent"] if summary else None
+                    ),
+                }
+            )
+    return table
+
+
 def summarize(results: Path) -> None:
+    latest = latest_records(results / "raw" / "runs.jsonl")
     records = [
         record
-        for record in read_jsonl(results / "raw" / "runs.jsonl")
+        for record in latest
         if record.get("status") == "ok"
     ]
-    verified = verified_keys(records)
-    corpus_compressions = [
-        row
-        for row in records
-        if row.get("stage") == "corpus"
-        and row.get("operation") == "compress"
-        and (row["checkpoint"], row["method"], row["shard"]) in verified
+    verified = verified_attempts(records)
+    verified_records = [
+        record
+        for record in records
+        if (record.get("run_id"), record.get("attempt_id")) in verified
+        or (
+            record.get("stage") == "specialized"
+            and record.get("exact")
+        )
     ]
-    specialized = [
-        row
-        for row in records
-        if row.get("stage") == "specialized"
-        and row.get("operation") == "conversion"
-        and row.get("exact")
-    ]
-    table2 = aggregate(
-        corpus_compressions + specialized,
-        ("checkpoint", "method"),
+    table2 = compression_effectiveness_table(
+        results,
+        latest,
+        verified_records,
     )
-    table2 = [
-        {
-            key: row[key]
-            for key in (
-                "checkpoint",
-                "method",
-                "source_bytes",
-                "output_bytes",
-                "archive_percent",
-            )
-        }
-        for row in table2
-    ]
-    table3 = end_to_end_table(records)
+    table3 = end_to_end_table(verified_records)
     core_full = [
         row
-        for row in records
+        for row in verified_records
         if row.get("stage") == "core"
         and row.get("method") == "brevis"
         and row.get("operation") == "compress"
@@ -1502,7 +1705,7 @@ def summarize(results: Path) -> None:
     ]
     figure1_rows = [
         row
-        for row in records
+        for row in verified_records
         if row.get("stage") == "pareto"
         and row.get("operation") == "compress"
     ] + [{**row, "variant": "budget-512"} for row in core_full]
@@ -1512,7 +1715,7 @@ def summarize(results: Path) -> None:
     )
     figure2_rows = [
         row
-        for row in records
+        for row in verified_records
         if row.get("stage") == "workers"
         and row.get("operation") == "compress"
     ] + core_full
@@ -1522,7 +1725,7 @@ def summarize(results: Path) -> None:
     )
     table4_rows = [
         row
-        for row in records
+        for row in verified_records
         if row.get("stage") == "ablation"
         and row.get("operation") == "compress"
     ] + [
@@ -1547,15 +1750,17 @@ def summarize(results: Path) -> None:
 
     failed = [
         record
-        for record in read_jsonl(results / "raw" / "runs.jsonl")
+        for record in latest
         if record.get("status") == "failed"
     ]
+    incomplete = sum(row["status"] != "ok" for row in table2)
     status = [
         "# Benchmark status",
         "",
         f"- Successful raw records: {len(records)}",
         f"- Failed records: {len(failed)}",
         f"- Table 2 rows: {len(table2)}",
+        f"- Table 2 incomplete/missing cells: {incomplete}",
         f"- End-to-end rows: {len(table3)}",
         "",
         "Table 5 headroom and operator attribution require the read-only archive "
@@ -1587,7 +1792,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--brevis-bin",
         type=Path,
-        default=ROOT / "zig-out" / "bin" / "brevis",
+        default=DEFAULT_BREVIS_BIN,
     )
     parser.add_argument("--methods", nargs="+", choices=ALL_METHODS, default=list(ALL_METHODS))
     parser.add_argument("--models", nargs="+")
@@ -1600,6 +1805,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--drop-caches-command")
     parser.add_argument("--specialized-config", type=Path)
     parser.add_argument("--allow-missing", action="store_true")
+    parser.add_argument("--allow-custom-corpus", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rerun", action="store_true")
     args = parser.parse_args()
@@ -1626,7 +1832,7 @@ def main() -> int:
         return 0
 
     specialized = load_specialized_config(args.specialized_config)
-    preflight(args, specialized)
+    versions = preflight(args, specialized)
     log = ResultLog(args.results / "raw" / "runs.jsonl")
     core = (
         load_checkpoint(args.core_model, "qwen2.5-7b-local")
@@ -1634,10 +1840,16 @@ def main() -> int:
         else None
     )
     corpus = (
-        load_corpus(args.models_root, args.models)
+        load_corpus(
+            args.models_root,
+            args.models,
+            args.allow_custom_corpus,
+        )
         if args.models_root
         else []
     )
+    if not args.dry_run:
+        write_environment(args, versions, corpus)
 
     if args.stage in ("core", "sweeps", "ablation", "all") and core is None:
         raise BenchmarkError("--core-model is required for this stage")

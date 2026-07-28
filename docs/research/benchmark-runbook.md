@@ -35,7 +35,8 @@ python3 scripts/run_benchmarks.py all \
   --models-root /data/brevis-checkpoints \
   --core-model /data/Qwen2.5-7B \
   --results /data/brevis-results \
-  --methods brevis zstd-9 zipnn lz4-hc-9 snappy \
+  --methods brevis zstd-9 zipnn lz4-hc-9 snappy dfloat11 ecf8 \
+  --specialized-config /data/specialized-baselines.json \
   --workers 32 \
   --shard-jobs 32 \
   --deadline-hours 12 \
@@ -45,6 +46,8 @@ python3 scripts/run_benchmarks.py all \
 `--core-model` 可以指向单个 safetensors 或完整 checkpoint 目录。
 `--models-root` 是下载脚本的输出目录；harness 只读取各模型
 `download-manifest.json` 引用的 canonical shard，不会纳入重复的 consolidated 权重。
+默认还会核对十个模型的 repo ID 和固定 commit，并要求十个全部存在。临时开发 fixture
+只能显式加 `--allow-custom-corpus`，不能误产出正式表。
 
 ## 正式运行
 
@@ -55,7 +58,8 @@ python3 scripts/run_benchmarks.py all \
   --models-root /data/brevis-checkpoints \
   --core-model /data/Qwen2.5-7B \
   --results /data/brevis-results \
-  --methods brevis zstd-9 zipnn lz4-hc-9 snappy \
+  --methods brevis zstd-9 zipnn lz4-hc-9 snappy dfloat11 ecf8 \
+  --specialized-config /data/specialized-baselines.json \
   --workers 32 \
   --shard-jobs 32 \
   --deadline-hours 12 \
@@ -83,36 +87,38 @@ python3 scripts/run_benchmarks.py summarize --results /data/brevis-results
 
 两者是 checkpoint-level native converters，不是具有相同 CLI 的逐文件 codec。
 DFloat11 还要求为模型结构提供 block pattern；ECF8 只应用于 FP8 checkpoint。
-因此 harness 不猜测模型结构，通过 `--specialized-config` 调用你按官方仓库固定
-revision 的薄 wrapper。wrapper 必须接收显式 source/output，并做 CUDA bit-exact
-validation：
+仓库内的 `scripts/specialized_baselines.py` 把两个官方入口统一成显式
+source/output。正式环境固定 DFloat11 `457733886ce6ebc6d8dda1621fad1ffa2661e028`
+和 ECF8 `9cbf3d5cf77d6db8cf6f29df1fe6d52bc88fa01e`，按各自 README 安装 CUDA
+依赖后创建配置：
 
 ```json
 {
   "dfloat11": {
-    "checkpoint_pattern": "bf16$",
+    "checkpoint_pattern": "^(llama-3\\.1-(8b|70b)-bf16|qwen3-32b-bf16)$",
     "workers": 32,
-    "cwd": "/opt/dfloat11-benchmark",
-    "version_command": ["git", "rev-parse", "HEAD"],
+    "cwd": "/path/to/Brevis",
+    "version_command": ["git", "-C", "/opt/DFloat11", "rev-parse", "HEAD"],
     "compress_command": [
-      "python3", "run_dfloat11.py",
+      "python3", "scripts/specialized_baselines.py", "dfloat11",
       "--source", "{source_dir}",
       "--output", "{archive}",
       "--workers", "{workers}",
-      "--check-correctness"
+      "--validate-cuda"
     ],
     "validates_during_compression": true
   },
   "ecf8": {
     "checkpoint_pattern": "^qwen3-32b-fp8$",
     "workers": 32,
-    "cwd": "/opt/ecf8-benchmark",
-    "version_command": ["git", "rev-parse", "HEAD"],
+    "cwd": "/path/to/Brevis",
+    "version_command": ["git", "-C", "/opt/ecf8", "rev-parse", "HEAD"],
     "compress_command": [
-      "python3", "run_ecf8.py",
+      "python3", "scripts/specialized_baselines.py", "ecf8",
       "--source", "{source_dir}",
       "--output", "{archive}",
       "--workers", "{workers}",
+      "--upstream", "/opt/ecf8",
       "--validate-cuda"
     ],
     "validates_during_compression": true
@@ -125,12 +131,15 @@ validation：
 `"output_path": "/actual/path/{checkpoint}.brv"`。
 若验证可与转换分开，使用 `"validate_command": [...]` 代替
 `validates_during_compression`，这样验证时间不会计入 compression wall time。
-官方 DFloat11 示例入口是 `compress_model(..., check_correctness=True)`；官方 ECF8
-入口是 `scripts/compress.py --save_model --n_processes N --validate_cuda`。wrapper
-只负责把这两个入口的模型专用路径和输出目录统一为上述接口，不应重实现 codec。
+DFloat11 wrapper 只接受官方已支持且共享标准 decoder-block layout 的 Llama/Qwen3
+BF16 三个 checkpoint；其他 cell 写 `unsupported checkpoint`。ECF8 只运行
+Qwen3-32B-FP8。其官方入口分别仍是
+`compress_model(..., check_correctness=True)` 和
+`scripts/compress.py --save_model --n_processes N --validate_cuda`；wrapper 不重实现
+codec，并会从 ECF8 输出中移除重复的 converter cache 后再统计 archive size。
 
-未配置 specialized converters 时，可加 `--allow-missing` 先完成五个通用方法；结果会
-明确缺失，不会写成 `N/A`。
+未配置 specialized converters 时，可加 `--allow-missing` 先完成五个通用方法；
+Table 2 对应 cell 会写 `missing dependency/config`，不会伪装成成功。
 
 ## 输出
 
@@ -152,6 +161,11 @@ results/
 exactness verification 在计时区间之外。Peak RSS 是周期性汇总主进程及其子进程 RSS
 的单次峰值。跨 shard 的 wall time 和 bytes 求和，peak RSS 取最大值，不把 shard
 当成独立模型平均。
+
+所有表和图只消费有成功 exactness record 的 timing。Table 2 固定展开
+`checkpoint × requested method`，只有全部 canonical shards 都通过才写 `ok` 和
+archive size；依赖、配置、支持范围、deadline 或失败造成的空 cell 都保留明确状态。
+`--rerun` 仍追加 raw record，但汇总只使用同一 run ID 的最后一条记录。
 
 如果 specialized wrapper 在转换命令内部做 correctness check，其 raw wall time
 也会包含该验证，不与五个通用方法的 compression wall time直接比较；它在本计划中
