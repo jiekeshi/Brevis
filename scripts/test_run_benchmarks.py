@@ -221,6 +221,8 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertIn("PAPER_TIMING=0", result.stdout)
         script = launcher.read_text()
         self.assertIn("from run_benchmarks import GENERIC_METHODS", script)
+        self.assertIn("SPECIALIZED_METHODS", script)
+        self.assertNotIn("paper_methods+=(dfloat11 ecf8)", script)
         self.assertIn("import ensurepip, venv", script)
 
     def test_specialized_config_requires_explicit_python_environment(self):

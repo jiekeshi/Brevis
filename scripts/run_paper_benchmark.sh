@@ -164,26 +164,28 @@ python -m pip install \
 
 cd "$ROOT"
 
-method_list=$(
-  PYTHONPATH="$ROOT/scripts" python -c \
-    'from run_benchmarks import GENERIC_METHODS; print(" ".join(GENERIC_METHODS))'
-)
-read -r -a paper_methods <<< "$method_list"
 benchmark_args=()
 if [[ -n "$SPECIALIZED_CONFIG" ]]; then
   [[ -f "$SPECIALIZED_CONFIG" ]] || {
     echo "SPECIALIZED_CONFIG does not exist: $SPECIALIZED_CONFIG" >&2
     exit 1
   }
-  PYTHONPATH="$ROOT/scripts" python -c \
-    'import sys
-from pathlib import Path
-from run_benchmarks import load_specialized_config
-load_specialized_config(Path(sys.argv[1]))' \
-    "$SPECIALIZED_CONFIG"
-  paper_methods+=(dfloat11 ecf8)
   benchmark_args+=(--specialized-config "$SPECIALIZED_CONFIG")
 fi
+method_list=$(
+  PYTHONPATH="$ROOT/scripts" python - "$SPECIALIZED_CONFIG" <<'PY'
+import sys
+from pathlib import Path
+from run_benchmarks import GENERIC_METHODS, SPECIALIZED_METHODS, load_specialized_config
+
+config = load_specialized_config(Path(sys.argv[1])) if sys.argv[1] else {}
+methods = GENERIC_METHODS + tuple(
+    method for method in SPECIALIZED_METHODS if method in config
+)
+print(" ".join(methods))
+PY
+)
+read -r -a paper_methods <<< "$method_list"
 
 if [[ ! -e "$CORE_MODEL" ]]; then
   echo "CORE_MODEL does not exist: $CORE_MODEL" >&2
