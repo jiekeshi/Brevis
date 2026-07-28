@@ -1,6 +1,24 @@
 const std = @import("std");
 pub const Allocator = std.mem.Allocator;
 
+/// The paper implementation uses a 16 GiB defensive ceiling on 64-bit hosts.
+/// Saturating it to the addressable range keeps the same APIs buildable on
+/// narrower targets, where a 16 GiB `usize` cannot be represented.
+pub const defaultLargeByteLimit: usize =
+    if (@bitSizeOf(usize) >= 64)
+        16 * 1024 * 1024 * 1024
+    else
+        std.math.maxInt(usize);
+
+/// Safe defaults for a single materialized tensor and for the cumulative
+/// interpreter passes represented by one decoded program.
+pub const defaultTensorByteLimit: usize = 512 * 1024 * 1024;
+pub const defaultExecutionByteLimit: usize =
+    if (@bitSizeOf(usize) >= 64)
+        4 * 1024 * 1024 * 1024
+    else
+        std.math.maxInt(usize);
+
 pub const Dtype = enum(u8) {
     f16 = 0,
     bf16 = 1,
@@ -95,9 +113,22 @@ pub const Stream = struct {
     }
 
     pub fn init(alloc: Allocator, count: usize, bits_per_elem: u8) !Stream {
+        const stream = try initUninitialized(alloc, count, bits_per_elem);
+        @memset(stream.data, 0);
+        return stream;
+    }
+
+    pub fn initUninitialized(
+        alloc: Allocator,
+        count: usize,
+        bits_per_elem: u8,
+    ) !Stream {
+        if (bits_per_elem == 0 or bits_per_elem > 32)
+            return error.InvalidWordWidth;
         const w = roundUpToPow2(bits_per_elem) / 8;
-        const buf = try alloc.alloc(u8, count * w);
-        @memset(buf, 0);
+        const byte_count = std.math.mul(usize, count, w) catch
+            return error.LengthOverflow;
+        const buf = try alloc.alloc(u8, byte_count);
         return .{ .data = buf, .count = count, .bits_per_elem = bits_per_elem };
     }
 
@@ -127,6 +158,48 @@ pub const Stream = struct {
         return (@as(u32, 1) << @intCast(self.bits_per_elem)) - 1;
     }
 
+    pub fn valuesFitWidth(self: Stream) bool {
+        if (self.bits_per_elem == 0 or self.bits_per_elem > 32) return false;
+        if (self.bits_per_elem == roundUpToPow2(self.bits_per_elem)) return true;
+        var combined: u32 = 0;
+        for (0..self.count) |index| combined |= self.getU32(index);
+        return combined & ~self.mask() == 0;
+    }
+
+    pub fn eql(self: Stream, other: Stream) bool {
+        if (self.bits_per_elem != other.bits_per_elem or
+            self.count != other.count)
+            return false;
+        const byte_len = self.count * self.elemBytes();
+        return std.mem.eql(
+            u8,
+            self.data[0..byte_len],
+            other.data[0..byte_len],
+        );
+    }
+
+    pub fn isUniform(self: Stream) bool {
+        if (self.count <= 1) return true;
+        const stride = self.elemBytes();
+        const byte_len = self.count * stride;
+        return std.mem.eql(
+            u8,
+            self.data[0 .. byte_len - stride],
+            self.data[stride..byte_len],
+        );
+    }
+
+    pub fn hasPeriod(self: Stream, period: usize) bool {
+        if (period == 0 or period > self.count) return false;
+        const offset = period * self.elemBytes();
+        const byte_len = self.count * self.elemBytes();
+        return std.mem.eql(
+            u8,
+            self.data[0 .. byte_len - offset],
+            self.data[offset..byte_len],
+        );
+    }
+
     pub fn dupe(self: Stream, alloc: Allocator) !Stream {
         return .{
             .data = try alloc.dupe(u8, self.data),
@@ -138,15 +211,28 @@ pub const Stream = struct {
 
 /// A typed n-dim view onto bytes. `shape` is row-major.
 pub const TensorView = struct {
-    data: []u8,
+    /// Borrowed tensor bytes are read-only. This is important for views backed
+    /// by a read-only memory map: the public type must not promise writes that
+    /// the operating system will fault.
+    data: []const u8,
     shape: []const u64,
     dtype: Dtype,
     owns_data: bool = false,
     owns_shape: bool = false,
 
-    pub fn numel(self: TensorView) usize {
+    /// Return the number of logical elements, rejecting dimensions that do
+    /// not fit the host address space or whose product overflows `usize`.
+    pub fn numelChecked(self: TensorView) !usize {
+        for (self.shape) |d| {
+            if (d == 0) return 0;
+        }
         var n: usize = 1;
-        for (self.shape) |d| n *= @intCast(d);
+        for (self.shape) |d| {
+            const dim = std.math.cast(usize, d) orelse
+                return error.ShapeOverflow;
+            n = std.math.mul(usize, n, dim) catch
+                return error.ShapeOverflow;
+        }
         return n;
     }
 
@@ -155,7 +241,7 @@ pub const TensorView = struct {
     }
 
     pub fn deinit(self: *TensorView, alloc: Allocator) void {
-        if (self.owns_data) alloc.free(self.data);
+        if (self.owns_data) alloc.free(@constCast(self.data));
         if (self.owns_shape) alloc.free(self.shape);
     }
 
@@ -166,45 +252,3 @@ pub const TensorView = struct {
         return std.mem.eql(u8, self.data, other.data);
     }
 };
-
-pub const TARGET_BLOCK_BYTES: usize = 256 * 1024;
-
-/// A contiguous element range of one tensor: the unit of program execution.
-pub const Block = struct {
-    tensor_idx: u32,
-    elem_offset: usize,
-    elem_count: usize,
-    dtype: Dtype,
-
-    pub fn byteLen(self: Block) usize {
-        return self.elem_count * self.dtype.elemSize();
-    }
-
-    /// Non-owning stream view over this block's bytes inside `tensor_data`.
-    pub fn asStream(self: Block, tensor_data: []u8) Stream {
-        const es = self.dtype.elemSize();
-        return .{
-            .data = tensor_data[self.elem_offset * es ..][0 .. self.elem_count * es],
-            .count = self.elem_count,
-            .bits_per_elem = self.dtype.bitWidth(),
-            .owns_data = false,
-        };
-    }
-};
-
-/// Split a tensor into ~TARGET_BLOCK_BYTES blocks, aligned to `inner` when possible.
-pub fn planBlocks(alloc: Allocator, tensor_idx: u32, dtype: Dtype, numel: usize, inner: usize) ![]Block {
-    var per = TARGET_BLOCK_BYTES / dtype.elemSize();
-    if (inner > 0 and per >= inner) per -= per % inner;
-    if (per == 0 or per > numel) per = numel;
-
-    const n = (numel + per - 1) / per;
-    const out = try alloc.alloc(Block, n);
-    var off: usize = 0;
-    for (out) |*b| {
-        const c = @min(per, numel - off);
-        b.* = .{ .tensor_idx = tensor_idx, .elem_offset = off, .elem_count = c, .dtype = dtype };
-        off += c;
-    }
-    return out;
-}

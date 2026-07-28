@@ -1,1710 +1,850 @@
-//! brevis CLI.
+//! Command-line interface for the paper-aligned whole-tensor implementation.
 
 const std = @import("std");
-const types = @import("types.zig");
-const ops = @import("ops.zig");
-const program = @import("program.zig");
-const prior = @import("prior.zig");
-const calibrate = @import("calibrate.zig");
-const search = @import("search.zig");
-const archive = @import("archive.zig");
+const grammar = @import("grammar.zig");
+const phog = @import("phog.zig");
+const calibration = @import("calibration.zig");
+const checkpoint = @import("checkpoint.zig");
 const safetensors = @import("safetensors.zig");
+const synthesizer = @import("synthesizer.zig");
+const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
-const Dtype = types.Dtype;
-const Block = types.Block;
-const Stream = types.Stream;
+const MAX_PRIOR_BYTES: usize = 512 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES: usize = types.defaultLargeByteLimit;
+/// One embedding matrix of a large-vocabulary checkpoint already exceeds a
+/// gigabyte, so a smaller cap rejects ordinary models rather than bad input.
+const DEFAULT_MAX_TENSOR_BYTES: usize = 4 * 1024 * 1024 * 1024;
+const DEFAULT_MAX_PREFIX_BYTES: usize = 64 * 1024 * 1024;
 
-const N_DTYPE: usize = @typeInfo(Dtype).@"enum".fields.len;
-const PlanMode = enum { search, fixed };
-const ReportFormat = enum { text, json };
+const ResourceLimits = struct {
+    max_total_bytes: usize = DEFAULT_MAX_TOTAL_BYTES,
+    max_tensor_bytes: usize = DEFAULT_MAX_TENSOR_BYTES,
+    max_prefix_bytes: usize = DEFAULT_MAX_PREFIX_BYTES,
+};
+
+const Command = enum {
+    compress,
+    decompress,
+    verify,
+    calibrate,
+    config,
+};
+
+const Arguments = struct {
+    command: Command,
+    positional: std.ArrayList([]const u8) = .empty,
+    prior_path: ?[]const u8 = null,
+    max_tensors: usize = calibration.DEFAULT_TENSORS,
+    synthesis: synthesizer.Options = .{ .seed_float_fields = false },
+    resources: ResourceLimits = .{},
+    workers: usize = checkpoint.DEFAULT_WORKERS,
+    saw_prior: bool = false,
+    saw_tensors: bool = false,
+    saw_workers: bool = false,
+    saw_search_option: bool = false,
+
+    fn deinit(self: *Arguments, alloc: Allocator) void {
+        self.positional.deinit(alloc);
+    }
+};
 
 pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
     const io = init.io;
 
-    var stdout_buf: [4096]u8 = undefined;
-    var stdout = std.Io.File.stdout().writer(io, &stdout_buf);
-    const out = &stdout.interface;
-    var stderr_buf: [1024]u8 = undefined;
-    var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
-    const err = &stderr.interface;
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_file = std.Io.File.stdout().writer(io, &stdout_buffer);
+    const stdout = &stdout_file.interface;
+    var stderr_buffer: [4096]u8 = undefined;
+    var stderr_file = std.Io.File.stderr().writer(io, &stderr_buffer);
+    const stderr = &stderr_file.interface;
 
     var argv: std.ArrayList([]u8) = .empty;
     defer {
-        for (argv.items) |a| alloc.free(a);
+        for (argv.items) |arg| alloc.free(arg);
         argv.deinit(alloc);
     }
-    var it = init.minimal.args.iterate();
-    defer it.deinit();
-    while (it.next()) |a| try argv.append(alloc, try alloc.dupe(u8, a));
-
-    if (argv.items.len < 2) try usage(err);
-    const cmd = argv.items[1];
-
-    var pos: std.ArrayList([]const u8) = .empty;
-    defer pos.deinit(alloc);
-    var opt_prior: ?[]const u8 = null;
-    var opt_jobs: ?usize = null;
-    var opt_tensors: usize = calibrate.DEFAULT_TENSORS;
-    var opt_plan: PlanMode = .search;
-    var opt_format: ReportFormat = .text;
-    var opt_search: search.Options = .{};
-    var saw_prior = false;
-    var saw_jobs = false;
-    var saw_tensors = false;
-    var saw_plan = false;
-    var saw_format = false;
-    var saw_search_option = false;
-
-    const rest = argv.items[2..];
-    var i: usize = 0;
-    while (i < rest.len) : (i += 1) {
-        const a = rest[i];
-        if (!std.mem.startsWith(u8, a, "--")) {
-            try pos.append(alloc, a);
-            continue;
-        }
-        i += 1;
-        if (i >= rest.len) try usage(err);
-        const v = rest[i];
-        if (std.mem.eql(u8, a, "--prior")) {
-            saw_prior = true;
-            opt_prior = v;
-        } else if (std.mem.eql(u8, a, "--jobs")) {
-            saw_jobs = true;
-            opt_jobs = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, a, "--tensors")) {
-            saw_tensors = true;
-            opt_tensors = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, a, "--plan")) {
-            saw_plan = true;
-            if (std.mem.eql(u8, v, "search")) opt_plan = .search else if (std.mem.eql(u8, v, "fixed")) opt_plan = .fixed else try usage(err);
-        } else if (std.mem.eql(u8, a, "--format")) {
-            saw_format = true;
-            if (std.mem.eql(u8, v, "text")) opt_format = .text else if (std.mem.eql(u8, v, "json")) opt_format = .json else try usage(err);
-        } else if (std.mem.eql(u8, a, "--max-expansions")) {
-            saw_search_option = true;
-            opt_search.max_expansions = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, a, "--max-nodes")) {
-            saw_search_option = true;
-            opt_search.max_nodes = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, a, "--max-depth")) {
-            saw_search_option = true;
-            opt_search.max_depth = try std.fmt.parseInt(u8, v, 10);
-        } else if (std.mem.eql(u8, a, "--sample-elems")) {
-            saw_search_option = true;
-            opt_search.sample_elems = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, a, "--rerank-candidates")) {
-            saw_search_option = true;
-            opt_search.rerank_candidates = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, a, "--rerank-blocks")) {
-            saw_search_option = true;
-            opt_search.rerank_blocks = try std.fmt.parseInt(usize, v, 10);
-        } else if (std.mem.eql(u8, a, "--disable-op")) {
-            saw_search_option = true;
-            const op = std.meta.stringToEnum(ops.OpKind, v) orelse try usage(err);
-            if (op == .raw) try usage(err);
-            opt_search.enabled_ops &= ~ops.opMask(op);
-        } else try usage(err);
-    }
-    if (opt_search.max_expansions == 0 or opt_search.max_nodes == 0) try usage(err);
-    if (opt_jobs) |jobs| if (jobs == 0) try usage(err);
-    if (saw_tensors and opt_tensors == 0) try usage(err);
-    const is_calibrate = std.mem.eql(u8, cmd, "calibrate");
-    const is_compress = std.mem.eql(u8, cmd, "compress");
-    const is_decompress = std.mem.eql(u8, cmd, "decompress");
-    const is_bench = std.mem.eql(u8, cmd, "bench");
-    const is_config = std.mem.eql(u8, cmd, "config");
-    if (saw_prior and !(is_compress or is_bench)) try usage(err);
-    if (saw_jobs and !(is_calibrate or is_compress or is_decompress or is_bench)) try usage(err);
-    if (saw_tensors and !is_calibrate) try usage(err);
-    if (saw_plan and !(is_compress or is_bench)) try usage(err);
-    if (saw_format and !(is_calibrate or is_bench)) try usage(err);
-    const accepts_search_options = std.mem.eql(u8, cmd, "calibrate") or
-        is_compress or is_bench or is_config;
-    if (saw_search_option and !accepts_search_options) try usage(err);
-    const p = pos.items;
-
-    if (std.mem.eql(u8, cmd, "calibrate")) {
-        if (p.len != 2) try usage(err);
-        try cmdCalibrate(io, out, p[0], p[1], opt_tensors, opt_jobs, opt_search, opt_format);
-    } else if (std.mem.eql(u8, cmd, "compress")) {
-        if (p.len != 2) try usage(err);
-        try cmdCompress(io, out, p[0], p[1], opt_prior, opt_jobs, opt_plan, opt_search);
-    } else if (std.mem.eql(u8, cmd, "decompress")) {
-        if (p.len != 2) try usage(err);
-        try cmdDecompress(io, out, p[0], p[1], opt_jobs);
-    } else if (std.mem.eql(u8, cmd, "verify")) {
-        if (p.len != 2) try usage(err);
-        try cmdVerify(alloc, io, out, p[0], p[1]);
-    } else if (std.mem.eql(u8, cmd, "bench")) {
-        if (p.len != 1) try usage(err);
-        try cmdBench(io, out, p[0], opt_prior, opt_jobs, opt_plan, opt_format, opt_search);
-    } else if (std.mem.eql(u8, cmd, "config")) {
-        if (p.len != 0) try usage(err);
-        try cmdConfig(out, opt_search);
-    } else if (std.mem.eql(u8, cmd, "demo")) {
-        try cmdDemo(io, out);
-    } else if (std.mem.eql(u8, cmd, "make-fixture")) {
-        if (p.len != 1) try usage(err);
-        try cmdMakeFixture(alloc, io, out, p[0]);
-    } else {
-        try err.print("brevis: unknown command '{s}'\n", .{cmd});
-        try usage(err);
-    }
-    try out.flush();
-}
-
-fn usage(w: *std.Io.Writer) !noreturn {
-    try w.writeAll(
-        \\brevis — bit-exact lossless tensor compression via program synthesis
-        \\
-        \\  brevis calibrate   <model.safetensors> <prior.bin> [--tensors N] [--jobs N] [--format text|json]
-        \\  brevis compress    <model.safetensors> <out.brv> [--plan search|fixed] [--prior p.bin] [--jobs N]
-        \\  brevis decompress  <in.brv> <out.safetensors> [--jobs N]
-        \\  brevis verify      <in.brv> <orig.safetensors>
-        \\  brevis bench       <model.safetensors> [--plan search|fixed] [--prior p.bin] [--jobs N] [--format text|json]
-        \\  brevis config
-        \\  brevis demo
-        \\  brevis make-fixture <out.safetensors>
-        \\
-        \\Search options (calibrate, compress, bench, and config):
-        \\  --max-expansions N --max-nodes N --max-depth N --sample-elems N
-        \\  --rerank-candidates N --rerank-blocks N --disable-op NAME (repeatable)
-        \\
-    );
-    try w.flush();
-    std.process.exit(2);
-}
-
-fn writeSearchConfigFields(json: *std.json.Stringify, options: search.Options) !void {
-    try json.objectField("transform_layers");
-    try json.write(options.max_depth);
-    try json.objectField("max_depth");
-    try json.write(options.max_depth);
-    try json.objectField("max_depth_semantics");
-    try json.write("maximum_transform_layers");
-    try json.objectField("max_entropy_bpe");
-    try json.write(ops.MAX_ENTROPY_BPE);
-    try json.objectField("max_nodes");
-    try json.write(options.max_nodes);
-    try json.objectField("max_nodes_semantics");
-    try json.write("transforms_plus_terminals_per_program");
-    try json.objectField("max_expansions");
-    try json.write(options.max_expansions);
-    try json.objectField("max_expansions_scope");
-    try json.write("partial_program_pops_per_tensor");
-    try json.objectField("max_realizations");
-    try json.write(options.max_realizations);
-    try json.objectField("max_realizations_scope");
-    try json.write("single_stream_search_only");
-    try json.objectField("tensor_search_uses_max_realizations");
-    try json.write(false);
-    try json.objectField("sample_elems");
-    try json.write(options.sample_elems);
-    try json.objectField("sampling_policy");
-    try json.write("single_centered_contiguous_window");
-    try json.objectField("target_block_bytes");
-    try json.write(types.TARGET_BLOCK_BYTES);
-    try json.objectField("rerank_candidates");
-    try json.write(options.rerank_candidates);
-    try json.objectField("rerank_blocks");
-    try json.write(options.rerank_blocks);
-    try json.objectField("rerank_enabled");
-    try json.write(options.rerank_candidates > 0 and options.rerank_blocks > 0);
-    try json.objectField("enabled_ops_mask");
-    try json.write(options.enabled_ops);
-    try json.objectField("enabled_ops");
-    try json.beginArray();
-    for (std.enums.values(ops.OpKind)) |op| {
-        if (options.enabled_ops & ops.opMask(op) != 0) try json.write(@tagName(op));
-    }
-    try json.endArray();
-    try json.objectField("disabled_ops");
-    try json.beginArray();
-    for (std.enums.values(ops.OpKind)) |op| {
-        if (options.enabled_ops & ops.opMask(op) == 0) try json.write(@tagName(op));
-    }
-    try json.endArray();
-    try json.objectField("uniform_score");
-    try json.write(ops.UNIFORM_SCORE);
-    try json.objectField("phog_weight");
-    try json.write(prior.PHOG_WEIGHT);
-    try json.objectField("candidate_collection");
-    try json.write("all_within_expansion_budget");
-    try json.objectField("sample_byte_pruning");
-    try json.write(false);
-}
-
-fn cmdConfig(out: *std.Io.Writer, options: search.Options) !void {
-    var json: std.json.Stringify = .{
-        .writer = out,
-        .options = .{ .whitespace = .indent_2 },
-    };
-    try json.beginObject();
-    try writeSearchConfigFields(&json, options);
-    try json.endObject();
-    try out.writeByte('\n');
-}
-
-// ==================== shared pipeline ====================
-
-fn checkTensors(tensors: []const safetensors.Tensor) !void {
-    for (tensors) |t| {
-        if (t.view.numel() * t.view.dtype.elemSize() != t.view.data.len) return error.ShapeDataMismatch;
-    }
-}
-
-fn planAll(alloc: Allocator, tensors: []const safetensors.Tensor) ![]Block {
-    var list: std.ArrayList(Block) = .empty;
-    errdefer list.deinit(alloc);
-    for (tensors, 0..) |t, ti| {
-        const numel = t.view.numel();
-        if (numel == 0) continue;
-        const inner: usize = if (t.view.shape.len == 0) 1 else @intCast(t.view.shape[t.view.shape.len - 1]);
-        const bs = try types.planBlocks(alloc, @intCast(ti), t.view.dtype, numel, inner);
-        defer alloc.free(bs);
-        try list.appendSlice(alloc, bs);
-    }
-    return list.toOwnedSlice(alloc);
-}
-
-fn loadPrior(alloc: Allocator, path: ?[]const u8) !prior.Prior {
-    if (path) |prior_path| return prior.Prior.load(alloc, prior_path);
-    return .empty;
-}
-
-fn sha256File(io: std.Io, path: []const u8) ![64]u8 {
-    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
-    defer file.close(io);
-    var reader_buffer: [64 * 1024]u8 = undefined;
-    var chunk: [64 * 1024]u8 = undefined;
-    var reader = file.reader(io, &reader_buffer);
-    var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    while (true) {
-        const n = try reader.interface.readSliceShort(&chunk);
-        hash.update(chunk[0..n]);
-        if (n < chunk.len) break;
-    }
-    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-    hash.final(&digest);
-    return std.fmt.bytesToHex(digest, .lower);
-}
-
-const PlanJob = struct {
-    next: std.atomic.Value(usize),
-    fails: std.atomic.Value(usize),
-    tensors: []const safetensors.Tensor,
-    tensor_indices: []const usize,
-    plans: []?search.Plan,
-    pr: *const prior.Prior,
-    mode: PlanMode,
-    search_options: search.Options,
-    alloc: Allocator,
-
-    fn run(self: *PlanJob) void {
-        while (true) {
-            const next = self.next.fetchAdd(1, .acq_rel);
-            if (next >= self.tensor_indices.len) return;
-            const tensor_idx = self.tensor_indices[next];
-            const view = self.tensors[tensor_idx].view;
-            const stream: Stream = .{
-                .data = view.data,
-                .count = view.numel(),
-                .bits_per_elem = view.dtype.bitWidth(),
-                .owns_data = false,
-            };
-            const inner: usize = if (view.shape.len == 0) 1 else @intCast(view.shape[view.shape.len - 1]);
-            self.plans[tensor_idx] = switch (self.mode) {
-                .search => search.synthesizeTensorPlan(
-                    self.alloc,
-                    stream,
-                    view.dtype,
-                    inner,
-                    self.pr,
-                    self.search_options,
-                ),
-                .fixed => search.fixedPlan(self.alloc, view.dtype),
-            } catch |err| {
-                std.debug.print("tensor {d} dtype {s}: {t}\n", .{ tensor_idx, @tagName(view.dtype), err });
-                _ = self.fails.fetchAdd(1, .acq_rel);
-                continue;
-            };
-        }
-    }
-};
-
-const EncodeJob = struct {
-    next: std.atomic.Value(usize),
-    fails: std.atomic.Value(usize),
-    tensors: []const safetensors.Tensor,
-    blocks: []const Block,
-    results: []?search.Result,
-    plans: []const ?search.Plan,
-    alloc: Allocator,
-
-    fn run(self: *EncodeJob) void {
-        while (true) {
-            const i = self.next.fetchAdd(1, .acq_rel);
-            if (i >= self.blocks.len) return;
-            const b = self.blocks[i];
-            const s = b.asStream(self.tensors[b.tensor_idx].view.data);
-            const plan = &self.plans[b.tensor_idx].?;
-            var result = search.encode(self.alloc, plan, s, b.dtype) catch |err| {
-                std.debug.print("block {d} tensor {d} dtype {s}: {t}\n", .{ i, b.tensor_idx, @tagName(b.dtype), err });
-                _ = self.fails.fetchAdd(1, .acq_rel);
-                continue;
-            };
-            result.expanded = plan.expanded;
-            self.results[i] = result;
-        }
-    }
-};
-
-fn runWorkers(alloc: Allocator, n_threads: usize, job: anytype, comptime run: anytype) !void {
-    const threads = try alloc.alloc(std.Thread, n_threads);
-    defer alloc.free(threads);
-    var spawned: usize = 0;
-    errdefer for (threads[0..spawned]) |thread| thread.join();
-    for (threads) |*thread| {
-        thread.* = try std.Thread.spawn(.{}, run, .{job});
-        spawned += 1;
-    }
-    for (threads) |thread| thread.join();
-}
-
-fn BatchPool(comptime Job: type) type {
-    return struct {
-        const Self = @This();
-
-        alloc: Allocator,
-        io: std.Io,
-        threads: []std.Thread,
-        mutex: std.Io.Mutex = .init,
-        ready: std.Io.Condition = .init,
-        done: std.Io.Condition = .init,
-        job: ?*Job = null,
-        epoch: usize = 0,
-        finished: usize = 0,
-        stopping: bool = false,
-
-        fn init(self: *Self, alloc: Allocator, io: std.Io, n_threads: usize) !void {
-            self.* = .{
-                .alloc = alloc,
-                .io = io,
-                .threads = if (n_threads > 1) try alloc.alloc(std.Thread, n_threads) else &.{},
-            };
-            var spawned: usize = 0;
-            errdefer {
-                self.stop();
-                for (self.threads[0..spawned]) |thread| thread.join();
-                if (self.threads.len > 0) alloc.free(self.threads);
-            }
-            for (self.threads) |*thread| {
-                thread.* = try std.Thread.spawn(.{}, worker, .{self});
-                spawned += 1;
-            }
-        }
-
-        fn deinit(self: *Self) void {
-            self.stop();
-            for (self.threads) |thread| thread.join();
-            if (self.threads.len > 0) self.alloc.free(self.threads);
-        }
-
-        fn run(self: *Self, job: *Job) void {
-            if (self.threads.len == 0) return Job.run(job);
-            self.mutex.lockUncancelable(self.io);
-            self.job = job;
-            self.finished = 0;
-            self.epoch += 1;
-            self.ready.broadcast(self.io);
-            while (self.finished < self.threads.len) self.done.waitUncancelable(self.io, &self.mutex);
-            self.mutex.unlock(self.io);
-        }
-
-        fn stop(self: *Self) void {
-            self.mutex.lockUncancelable(self.io);
-            self.stopping = true;
-            self.ready.broadcast(self.io);
-            self.mutex.unlock(self.io);
-        }
-
-        fn worker(self: *Self) void {
-            var seen: usize = 0;
-            while (true) {
-                self.mutex.lockUncancelable(self.io);
-                while (!self.stopping and self.epoch == seen)
-                    self.ready.waitUncancelable(self.io, &self.mutex);
-                if (self.stopping) {
-                    self.mutex.unlock(self.io);
-                    return;
-                }
-                seen = self.epoch;
-                const job = self.job.?;
-                self.mutex.unlock(self.io);
-
-                Job.run(job);
-
-                self.mutex.lockUncancelable(self.io);
-                self.finished += 1;
-                if (self.finished == self.threads.len) self.done.signal(self.io);
-                self.mutex.unlock(self.io);
-            }
-        }
-    };
-}
-
-fn synthesizePlans(
-    alloc: Allocator,
-    tensors: []const safetensors.Tensor,
-    pr: *const prior.Prior,
-    n_threads: usize,
-    mode: PlanMode,
-    search_options: search.Options,
-) ![]?search.Plan {
-    const plans = try alloc.alloc(?search.Plan, tensors.len);
-    errdefer freePlans(alloc, plans);
-    for (plans) |*plan| plan.* = null;
-
-    var tensor_indices: std.ArrayList(usize) = .empty;
-    defer tensor_indices.deinit(alloc);
-    for (tensors, 0..) |tensor, i| {
-        if (tensor.view.numel() > 0) try tensor_indices.append(alloc, i);
-    }
-
-    var plan_job: PlanJob = .{
-        .next = .init(0),
-        .fails = .init(0),
-        .tensors = tensors,
-        .tensor_indices = tensor_indices.items,
-        .plans = plans,
-        .pr = pr,
-        .mode = mode,
-        .search_options = search_options,
-        .alloc = alloc,
-    };
-    if (tensor_indices.items.len > 0) {
-        const n = @max(@as(usize, 1), @min(n_threads, tensor_indices.items.len));
-        try runWorkers(alloc, n, &plan_job, PlanJob.run);
-    }
-    if (plan_job.fails.load(.acquire) > 0) return error.SynthesisFailed;
-    return plans;
-}
-
-const EncodePool = BatchPool(EncodeJob);
-
-fn encodeBlocks(
-    alloc: Allocator,
-    tensors: []const safetensors.Tensor,
-    blocks: []const Block,
-    plans: []const ?search.Plan,
-    n_threads: usize,
-    pool: ?*EncodePool,
-) ![]?search.Result {
-    const results = try alloc.alloc(?search.Result, blocks.len);
-    errdefer freeResults(alloc, results);
-    for (results) |*result| result.* = null;
-    var encode_job: EncodeJob = .{
-        .next = .init(0),
-        .fails = .init(0),
-        .tensors = tensors,
-        .blocks = blocks,
-        .results = results,
-        .plans = plans,
-        .alloc = alloc,
-    };
-    if (blocks.len > 0) {
-        const n = @max(@as(usize, 1), @min(n_threads, blocks.len));
-        if (pool) |p| p.run(&encode_job) else try runWorkers(alloc, n, &encode_job, EncodeJob.run);
-    }
-
-    if (encode_job.fails.load(.acquire) > 0) return error.SynthesisFailed;
-    return results;
-}
-
-fn synthesizeBlocks(
-    alloc: Allocator,
-    tensors: []const safetensors.Tensor,
-    blocks: []const Block,
-    pr: *const prior.Prior,
-    n_threads: usize,
-    mode: PlanMode,
-    search_options: search.Options,
-) ![]?search.Result {
-    const plans = try synthesizePlans(alloc, tensors, pr, n_threads, mode, search_options);
-    defer freePlans(alloc, plans);
-    return encodeBlocks(alloc, tensors, blocks, plans, n_threads, null);
-}
-
-fn freeResults(alloc: Allocator, results: []?search.Result) void {
-    for (results) |*r| if (r.*) |*v| v.deinit(alloc);
-    alloc.free(results);
-}
-
-fn freePlans(alloc: Allocator, plans: []?search.Plan) void {
-    for (plans) |*plan| if (plan.*) |*value| value.deinit(alloc);
-    alloc.free(plans);
-}
-
-fn tensorMetas(
-    alloc: Allocator,
-    tensors: []const safetensors.Tensor,
-    blocks: []const Block,
-) ![]archive.TensorMeta {
-    const metas = try alloc.alloc(archive.TensorMeta, tensors.len);
-    var bi: usize = 0;
-    for (tensors, 0..) |t, ti| {
-        var n: u32 = 0;
-        while (bi + n < blocks.len and blocks[bi + n].tensor_idx == ti) n += 1;
-        metas[ti] = .{
-            .name = t.name,
-            .dtype = t.view.dtype,
-            .shape = t.view.shape,
-            .n_blocks = n,
-        };
-        bi += n;
-    }
-    std.debug.assert(bi == blocks.len);
-    return metas;
-}
-
-fn ratio(orig: u64, comp: u64) f64 {
-    if (comp == 0) return 0;
-    return @as(f64, @floatFromInt(orig)) / @as(f64, @floatFromInt(comp));
-}
-
-fn rawBytes(tensors: []const safetensors.Tensor) u64 {
-    var n: u64 = 0;
-    for (tensors) |t| n += t.view.data.len;
-    return n;
-}
-
-fn threadCount(opt: ?usize) usize {
-    return @max(@as(usize, 1), opt orelse (std.Thread.getCpuCount() catch 8));
-}
-
-fn cmdCalibrate(
-    io: std.Io,
-    out: *std.Io.Writer,
-    in_path: []const u8,
-    prior_path: []const u8,
-    n_sample: usize,
-    jobs: ?usize,
-    search_options: search.Options,
-    format: ReportFormat,
-) !void {
-    const alloc = std.heap.smp_allocator;
-
-    var loaded = try safetensors.loadFromPath(alloc, io, in_path);
-    defer loaded.deinitMmap(alloc, io);
-    try checkTensors(loaded.tensors);
-
-    const n_threads = threadCount(jobs);
-    if (format == .text) {
-        try out.print("calibrate: {d} tensors, sampling up to {d} on at most {d} threads\n", .{
-            loaded.tensors.len, n_sample, n_threads,
-        });
-        try out.flush();
-    }
-
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    var trained = try calibrate.train(alloc, loaded.tensors, .{
-        .max_tensors = n_sample,
-        .threads = n_threads,
-        .search_options = search_options,
-    });
-    defer trained.prior.deinit(alloc);
-    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
-    try trained.prior.save(alloc, prior_path);
-    const context_counts: [3]usize = .{
-        trained.prior.levels[0].count(),
-        trained.prior.levels[1].count(),
-        trained.prior.levels[2].count(),
-    };
-    switch (format) {
-        .text => try out.print("calibrated {d} tensors on {d} threads in {d}ms; contexts L0={d} L1={d} L2={d} -> {s}\n", .{
-            trained.sampled,   trained.threads_used, ms,
-            context_counts[0], context_counts[1],    context_counts[2],
-            prior_path,
-        }),
-        .json => {
-            const input_digest = try sha256File(io, in_path);
-            const prior_digest = try sha256File(io, prior_path);
-            var json: std.json.Stringify = .{
-                .writer = out,
-                .options = .{ .whitespace = .indent_2 },
-            };
-            try json.beginObject();
-            try json.objectField("schema");
-            try json.write(1);
-            try json.objectField("kind");
-            try json.write("brevis.calibration-report");
-            try json.objectField("input");
-            try json.beginObject();
-            try json.objectField("path");
-            try json.write(in_path);
-            try json.objectField("size_bytes");
-            try json.write(loaded.bytes.len);
-            try json.objectField("sha256");
-            try json.write(input_digest[0..]);
-            try json.endObject();
-            try json.objectField("output_prior");
-            try json.beginObject();
-            try json.objectField("path");
-            try json.write(prior_path);
-            try json.objectField("sha256");
-            try json.write(prior_digest[0..]);
-            try json.objectField("nonempty");
-            try json.write(!trained.prior.isEmpty());
-            try json.objectField("context_counts_by_backoff_level");
-            try json.write(context_counts);
-            try json.endObject();
-            try json.objectField("configuration");
-            try json.beginObject();
-            try json.objectField("max_tensors");
-            try json.write(n_sample);
-            try json.objectField("seed");
-            try json.write(calibrate.DEFAULT_SEED);
-            try json.objectField("requested_threads");
-            try json.write(n_threads);
-            try json.objectField("threads_used");
-            try json.write(trained.threads_used);
-            try json.objectField("search");
-            try json.beginObject();
-            try writeSearchConfigFields(&json, search_options);
-            try json.endObject();
-            try json.endObject();
-            try json.objectField("observed");
-            try json.beginObject();
-            try json.objectField("available_tensors");
-            try json.write(loaded.tensors.len);
-            try json.objectField("sampled_tensors");
-            try json.write(trained.sampled);
-            try json.objectField("training_wall_ms");
-            try json.write(ms);
-            try json.endObject();
-            try json.endObject();
-            try out.writeByte('\n');
-        },
-    }
-}
-
-// ==================== compress ====================
-
-fn cmdCompress(
-    io: std.Io,
-    out: *std.Io.Writer,
-    in_path: []const u8,
-    out_path: []const u8,
-    prior_path: ?[]const u8,
-    jobs: ?usize,
-    mode: PlanMode,
-    search_options: search.Options,
-) !void {
-    const alloc = std.heap.smp_allocator;
-
-    var loaded = try safetensors.loadFromPath(alloc, io, in_path);
-    defer loaded.deinitMmap(alloc, io);
-    try checkTensors(loaded.tensors);
-
-    var pr = try loadPrior(alloc, if (mode == .search) prior_path else null);
-    defer pr.deinit(alloc);
-
-    const blocks = try planAll(alloc, loaded.tensors);
-    defer alloc.free(blocks);
-
-    const n_threads = threadCount(jobs);
-    try out.print("compress: {d} tensors, {d} blocks, {d} threads, plan={s}, prior={s}\n", .{
-        loaded.tensors.len,
-        blocks.len,
-        n_threads,
-        @tagName(mode),
-        if (mode == .search) prior_path orelse "uniform" else "none",
-    });
-    try out.flush();
-
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads, mode, search_options);
-    defer freePlans(alloc, plans);
-    const metas = try tensorMetas(alloc, loaded.tensors, blocks);
-    defer alloc.free(metas);
-
-    var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
-    defer atomic.deinit(io);
-    const file_buf = try alloc.alloc(u8, 4 << 20);
-    defer alloc.free(file_buf);
-    var writer = atomic.file.writer(io, file_buf);
-    try writer.interface.writeAll(&archive.HEADER);
-
-    var encode_pool: EncodePool = undefined;
-    try encode_pool.init(alloc, io, n_threads);
-    defer encode_pool.deinit();
-
-    var file_off: u64 = archive.HEADER.len;
-    const batch_size = @max(@as(usize, 1), n_threads) * 16;
-    var first: usize = 0;
-    while (first < blocks.len) {
-        const last = @min(first + batch_size, blocks.len);
-        const batch = blocks[first..last];
-        const results = try encodeBlocks(alloc, loaded.tensors, batch, plans, n_threads, &encode_pool);
-        defer freeResults(alloc, results);
-        for (results) |maybe_result| {
-            const result = maybe_result.?;
-            const frame_header = try archive.frameHeader(alloc, result.node, result.payload.len);
-            defer alloc.free(frame_header);
-            try writer.interface.writeAll(frame_header);
-            try writer.interface.writeAll(result.payload);
-            file_off += frame_header.len + result.payload.len;
-        }
-        first = last;
-    }
-
-    const header_len: usize = @intCast(std.mem.readInt(u64, loaded.bytes[0..8], .little));
-    const tail = try archive.makeFooter(alloc, metas, file_off, loaded.bytes[0 .. 8 + header_len]);
-    defer alloc.free(tail);
-    try writer.interface.writeAll(tail);
-    try writer.interface.flush();
-    const written = file_off + tail.len;
-    try atomic.replace(io);
-    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
-
-    const raw = rawBytes(loaded.tensors);
-    try out.print("synthesized and wrote in {d}ms\n", .{ms});
-    try out.print("wrote {s}: {d} -> {d} bytes ({d:.3}x)\n", .{ out_path, raw, written, ratio(raw, written) });
-}
-
-// ==================== decompress / verify ====================
-
-const DecodeJob = struct {
-    next: std.atomic.Value(usize),
-    fails: std.atomic.Value(usize),
-    blocks: []const archive.ParsedBlock,
-    streams: []?Stream,
-    alloc: Allocator,
-
-    fn run(self: *DecodeJob) void {
-        while (true) {
-            const i = self.next.fetchAdd(1, .acq_rel);
-            if (i >= self.blocks.len) return;
-            self.streams[i] = archive.decodeBlock(self.alloc, self.blocks[i]) catch |err| {
-                std.debug.print("decode block {d}: {t}\n", .{ i, err });
-                _ = self.fails.fetchAdd(1, .acq_rel);
-                continue;
-            };
-        }
-    }
-};
-
-const DecodePool = BatchPool(DecodeJob);
-
-fn decodeBlocks(
-    alloc: Allocator,
-    blocks: []const archive.ParsedBlock,
-    n_threads: usize,
-    pool: ?*DecodePool,
-) ![]?Stream {
-    const streams = try alloc.alloc(?Stream, blocks.len);
-    errdefer freeStreams(alloc, streams);
-    for (streams) |*stream| stream.* = null;
-
-    var job: DecodeJob = .{
-        .next = .init(0),
-        .fails = .init(0),
-        .blocks = blocks,
-        .streams = streams,
-        .alloc = alloc,
-    };
-    if (blocks.len > 0) {
-        const n = @min(n_threads, blocks.len);
-        if (pool) |p| p.run(&job) else if (n == 1) job.run() else try runWorkers(alloc, n, &job, DecodeJob.run);
-    }
-    if (job.fails.load(.acquire) > 0) return error.DecompressionFailed;
-    return streams;
-}
-
-fn freeStreams(alloc: Allocator, streams: []?Stream) void {
-    for (streams) |*stream| if (stream.*) |*value| value.deinit(alloc);
-    alloc.free(streams);
-}
-
-/// Drains decoded batches on a background thread so the next batch decodes
-/// while the current one is still going to disk. One writer at a time keeps
-/// the output ordered.
-const WritePipe = struct {
-    alloc: Allocator,
-    writer: *std.Io.Writer,
-    thread: ?std.Thread = null,
-    batch: []?Stream = &.{},
-    written: u64 = 0,
-    err: ?anyerror = null,
-
-    fn write(self: *WritePipe, batch: []?Stream) !void {
-        for (batch) |maybe| {
-            const stream = maybe.?;
-            const data = stream.data[0 .. stream.count * stream.elemBytes()];
-            try self.writer.writeAll(data);
-            self.written += data.len;
-        }
-    }
-
-    fn drain(self: *WritePipe) void {
-        self.write(self.batch) catch |e| {
-            self.err = e;
-        };
-    }
-
-    fn join(self: *WritePipe) void {
-        const thread = self.thread orelse return;
-        thread.join();
-        self.thread = null;
-        freeStreams(self.alloc, self.batch);
-        self.batch = &.{};
-    }
-
-    fn submit(self: *WritePipe, batch: []?Stream) !void {
-        self.join();
-        if (self.err) |e| {
-            freeStreams(self.alloc, batch);
-            return e;
-        }
-        self.batch = batch;
-        self.thread = std.Thread.spawn(.{}, drain, .{self}) catch |e| {
-            freeStreams(self.alloc, self.batch);
-            self.batch = &.{};
-            return e;
-        };
-    }
-
-    fn finish(self: *WritePipe) !void {
-        self.join();
-        if (self.err) |e| return e;
-    }
-};
-
-fn cmdDecompress(io: std.Io, out: *std.Io.Writer, in_path: []const u8, out_path: []const u8, jobs: ?usize) !void {
-    const alloc = std.heap.smp_allocator;
-    var loaded = try archive.loadFromPath(alloc, io, in_path);
-    defer loaded.deinit(alloc, io);
-
-    const n_threads = @max(@as(usize, 1), threadCount(jobs));
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    var decode_pool: DecodePool = undefined;
-    try decode_pool.init(alloc, io, n_threads);
-    defer decode_pool.deinit();
-
-    const metas = try alloc.alloc(safetensors.TensorMeta, loaded.parsed.tensors.len);
-    defer alloc.free(metas);
-    for (loaded.parsed.tensors, metas) |tensor, *meta| {
-        var count: usize = 1;
-        for (tensor.shape) |dim| count *= @intCast(dim);
-        meta.* = .{
-            .name = tensor.name,
-            .dtype = tensor.dtype,
-            .shape = tensor.shape,
-            .byte_len = count * tensor.dtype.elemSize(),
-        };
-    }
-    var atomic = try std.Io.Dir.cwd().createFileAtomic(io, out_path, .{ .replace = true });
-    defer atomic.deinit(io);
-    const file_buf = try alloc.alloc(u8, 4 << 20);
-    defer alloc.free(file_buf);
-    var writer = atomic.file.writer(io, file_buf);
-    if (loaded.parsed.safetensors_prefix.len > 0) {
-        try writer.interface.writeAll(loaded.parsed.safetensors_prefix);
-    } else {
-        const header = try safetensors.buildHeader(alloc, metas);
-        defer alloc.free(header);
-        var len_buf: [8]u8 = undefined;
-        std.mem.writeInt(u64, &len_buf, header.len, .little);
-        try writer.interface.writeAll(&len_buf);
-        try writer.interface.writeAll(header);
-    }
-
-    var expected: u64 = 0;
-    var remaining: usize = 0;
-    for (loaded.parsed.tensors, metas) |tensor, meta| {
-        remaining += tensor.n_blocks;
-        expected += meta.byte_len;
-    }
-
-    var pipe: WritePipe = .{ .alloc = alloc, .writer = &writer.interface };
-    defer pipe.join();
-
-    const batch_size = n_threads * 16;
-    var frame_pos: usize = 0;
-    var lengths: archive.TensorLengths = .{};
-    while (remaining > 0) {
-        const n = @min(batch_size, remaining);
-        const blocks = try alloc.alloc(archive.ParsedBlock, n);
-        defer alloc.free(blocks);
-        for (blocks) |*block| block.* = try archive.nextBlock(loaded.parsed.frames, &frame_pos);
-        const streams = try decodeBlocks(alloc, blocks, n_threads, &decode_pool);
-        lengths.accept(loaded.parsed.tensors, streams) catch |err| {
-            freeStreams(alloc, streams);
+    var iterator = init.minimal.args.iterate();
+    defer iterator.deinit();
+    while (iterator.next()) |arg| {
+        const owned_arg = try alloc.dupe(u8, arg);
+        argv.append(alloc, owned_arg) catch |err| {
+            alloc.free(owned_arg);
             return err;
         };
-        if (n_threads == 1) {
-            defer freeStreams(alloc, streams);
-            try pipe.write(streams);
-        } else {
-            try pipe.submit(streams);
-        }
-        remaining -= n;
-    }
-    try pipe.finish();
-    try lengths.finish(loaded.parsed.tensors);
-    if (pipe.written != expected) return error.ShapeDataMismatch;
-    try writer.interface.flush();
-    try atomic.replace(io);
-    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
-    try out.print("decompressed {d} tensors on {d} threads in {d}ms -> {s}\n", .{
-        loaded.parsed.tensors.len, n_threads, ms, out_path,
-    });
-}
-
-fn cmdVerify(alloc: Allocator, io: std.Io, out: *std.Io.Writer, brv_path: []const u8, orig_path: []const u8) !void {
-    var loaded = try archive.loadFromPath(alloc, io, brv_path);
-    defer loaded.deinit(alloc, io);
-
-    var orig = try safetensors.loadFromPath(alloc, io, orig_path);
-    defer orig.deinitMmap(alloc, io);
-
-    const header_len: usize = @intCast(std.mem.readInt(u64, orig.bytes[0..8], .little));
-    const header_matches = loaded.parsed.safetensors_prefix.len == 0 or
-        std.mem.eql(u8, loaded.parsed.safetensors_prefix, orig.bytes[0 .. 8 + header_len]);
-    if (!header_matches) try out.writeAll("  SAFETENSORS HEADER MISMATCH\n");
-
-    var ok: usize = 0;
-    var bad: usize = 0;
-    if (loaded.parsed.tensors.len != orig.tensors.len) {
-        try out.print("  TENSOR COUNT: archive {d}, original {d}\n", .{ loaded.parsed.tensors.len, orig.tensors.len });
-        bad += if (loaded.parsed.tensors.len > orig.tensors.len)
-            loaded.parsed.tensors.len - orig.tensors.len
-        else
-            orig.tensors.len - loaded.parsed.tensors.len;
-    }
-    for (loaded.parsed.tensors) |*t| {
-        const found: ?types.TensorView = blk: {
-            for (orig.tensors) |ot| {
-                if (std.mem.eql(u8, ot.name, t.name)) break :blk ot.view;
-            }
-            break :blk null;
-        };
-        if (found == null) {
-            try out.print("  MISSING in original: {s}\n", .{t.name});
-            bad += 1;
-            continue;
-        }
-        if (t.dtype != found.?.dtype or !std.mem.eql(u64, t.shape, found.?.shape)) {
-            try out.print("  METADATA MISMATCH: {s}\n", .{t.name});
-            bad += 1;
-            continue;
-        }
-        var off: usize = 0;
-        var matches = true;
-        var frame_pos: usize = t.frame_start;
-        for (0..t.n_blocks) |_| {
-            const block = try archive.nextBlock(loaded.parsed.frames, &frame_pos);
-            var stream = try archive.decodeBlock(alloc, block);
-            defer stream.deinit(alloc);
-            const data = stream.data[0 .. stream.count * stream.elemBytes()];
-            if (data.len > found.?.data.len - off or !std.mem.eql(u8, data, found.?.data[off..][0..data.len])) {
-                matches = false;
-                break;
-            }
-            off += data.len;
-        }
-        if (matches and off == found.?.data.len) {
-            ok += 1;
-        } else {
-            try out.print("  MISMATCH: {s}\n", .{t.name});
-            bad += 1;
-        }
-    }
-    try out.print("verified {d}/{d} tensors bit-exact\n", .{ ok, ok + bad });
-    try out.flush();
-    if (bad > 0 or !header_matches) std.process.exit(1);
-}
-
-// ==================== bench ====================
-
-fn renderProgram(alloc: Allocator, out: *std.ArrayList(u8), node: program.Node) Allocator.Error!void {
-    try out.appendSlice(alloc, @tagName(node.op));
-    if (node.children.len == 0) return;
-    try out.append(alloc, '(');
-    for (node.children, 0..) |c, i| {
-        if (i > 0) try out.append(alloc, ',');
-        try renderProgram(alloc, out, c);
-    }
-    try out.append(alloc, ')');
-}
-
-fn writeProgramTree(json: *std.json.Stringify, node: program.Node) !void {
-    try json.beginObject();
-    try json.objectField("op");
-    try json.write(@tagName(node.op));
-    try json.objectField("params_u32");
-    try json.write(node.params);
-    try json.objectField("terminal");
-    try json.write(node.op.isTerminal());
-    try json.objectField("children");
-    try json.beginArray();
-    for (node.children) |child| try writeProgramTree(json, child);
-    try json.endArray();
-    try json.endObject();
-}
-
-const DtypeStat = struct {
-    blocks: usize = 0,
-    raw: u64 = 0,
-    comp: u64 = 0,
-    shapes: std.StringHashMapUnmanaged(usize) = .empty,
-};
-
-const ShapeCount = struct { name: []const u8, n: usize };
-
-fn moreCount(_: void, a: ShapeCount, b: ShapeCount) bool {
-    return a.n > b.n;
-}
-
-fn report(alloc: Allocator, out: *std.Io.Writer, blocks: []const Block, results: []const ?search.Result) !void {
-    var arena: std.heap.ArenaAllocator = .init(alloc);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    var stats: [N_DTYPE]DtypeStat = @splat(.{});
-    var buf: std.ArrayList(u8) = .empty;
-
-    for (blocks, results) |b, maybe| {
-        const r = maybe orelse continue;
-        const s = &stats[@intFromEnum(b.dtype)];
-        s.blocks += 1;
-        s.raw += b.byteLen();
-        s.comp += r.bytes;
-
-        buf.clearRetainingCapacity();
-        try renderProgram(a, &buf, r.node);
-        const gop = try s.shapes.getOrPut(a, buf.items);
-        if (!gop.found_existing) {
-            gop.key_ptr.* = try a.dupe(u8, buf.items);
-            gop.value_ptr.* = 0;
-        }
-        gop.value_ptr.* += 1;
     }
 
-    var total_raw: u64 = 0;
-    var total_comp: u64 = 0;
-    for (0..N_DTYPE) |di| {
-        const s = stats[di];
-        if (s.blocks == 0) continue;
-        total_raw += s.raw;
-        total_comp += s.comp;
-
-        const dt: Dtype = @enumFromInt(di);
-        try out.print("\n{s}: {d} blocks, {d} -> {d} bytes ({d:.3}x)\n", .{
-            dt.name(), s.blocks, s.raw, s.comp, ratio(s.raw, s.comp),
-        });
-
-        var top: std.ArrayList(ShapeCount) = .empty;
-        defer top.deinit(a);
-        var it = s.shapes.iterator();
-        while (it.next()) |e| try top.append(a, .{ .name = e.key_ptr.*, .n = e.value_ptr.* });
-        std.mem.sort(ShapeCount, top.items, {}, moreCount);
-
-        for (top.items[0..@min(10, top.items.len)]) |sc| {
-            try out.print("  {d:>6}  {s}\n", .{ sc.n, sc.name });
+    run(alloc, io, stdout, argv.items) catch |err| {
+        if (err == error.InvalidArguments) {
+            try usage(stderr);
+            try stderr.flush();
+            std.process.exit(2);
         }
-        try out.flush();
-    }
-
-    try out.print("\noverall: {d} -> {d} bytes ({d:.3}x)\n", .{ total_raw, total_comp, ratio(total_raw, total_comp) });
-}
-
-fn programNodes(node: program.Node) usize {
-    var n: usize = 1;
-    for (node.children) |child| n += programNodes(child);
-    return n;
-}
-
-fn programDepth(node: program.Node) usize {
-    var depth: usize = 1;
-    for (node.children) |child| depth = @max(depth, 1 + programDepth(child));
-    return depth;
-}
-
-fn programTransformDepth(node: program.Node) usize {
-    if (node.op.isTerminal()) return 0;
-    var depth: usize = 1;
-    for (node.children) |child| depth = @max(depth, 1 + programTransformDepth(child));
-    return depth;
-}
-
-fn programTerminals(node: program.Node) usize {
-    if (node.op.isTerminal()) return 1;
-    var n: usize = 0;
-    for (node.children) |child| n += programTerminals(child);
-    return n;
-}
-
-fn modeName(mode: PlanMode, learned_prior: bool) []const u8 {
-    return if (mode == .fixed) "fixed" else if (learned_prior) "phog" else "uniform";
-}
-
-const PROGRAM_SEQUENCE_SPEC_ID = "brevis.program-bytecode-sequence.v1";
-
-const ProgramBytecodeEvidence = struct {
-    lengths: []u32,
-    sha256_by_block: [][64]u8,
-    sequence_sha256: [64]u8,
-};
-
-fn collectProgramBytecodeEvidence(
-    alloc: Allocator,
-    results: []const ?search.Result,
-) !ProgramBytecodeEvidence {
-    const lengths = try alloc.alloc(u32, results.len);
-    const digests = try alloc.alloc([64]u8, results.len);
-    var sequence = std.crypto.hash.sha2.Sha256.init(.{});
-    sequence.update(PROGRAM_SEQUENCE_SPEC_ID);
-    sequence.update(&.{0});
-    var count_bytes: [8]u8 = undefined;
-    std.mem.writeInt(u64, &count_bytes, @intCast(results.len), .little);
-    sequence.update(&count_bytes);
-
-    for (results, 0..) |maybe, index| {
-        const result = maybe orelse return error.SynthesisFailed;
-        const bytecode = try program.serialize(alloc, result.node);
-        defer alloc.free(bytecode);
-        if (bytecode.len != result.bytes - result.payload.len) return error.InvalidProgram;
-        lengths[index] = std.math.cast(u32, bytecode.len) orelse return error.Overflow;
-        var raw_digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-        var block_hash = std.crypto.hash.sha2.Sha256.init(.{});
-        block_hash.update(bytecode);
-        block_hash.final(&raw_digest);
-        digests[index] = std.fmt.bytesToHex(raw_digest, .lower);
-
-        var length_bytes: [4]u8 = undefined;
-        std.mem.writeInt(u32, &length_bytes, lengths[index], .little);
-        sequence.update(&length_bytes);
-        sequence.update(&raw_digest);
-    }
-    var sequence_digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-    sequence.final(&sequence_digest);
-    return .{
-        .lengths = lengths,
-        .sha256_by_block = digests,
-        .sequence_sha256 = std.fmt.bytesToHex(sequence_digest, .lower),
+        try stderr.print("brevis: {s}\n", .{@errorName(err)});
+        try stderr.flush();
+        std.process.exit(1);
     };
+    try stdout.flush();
 }
 
-fn reportJson(
+fn run(
     alloc: Allocator,
-    out: *std.Io.Writer,
-    in_path: []const u8,
-    input_bytes: []const u8,
-    input_size_bytes: usize,
-    input_sha256: []const u8,
-    tensors: []const safetensors.Tensor,
-    blocks: []const Block,
-    plans: []const ?search.Plan,
-    results: []const ?search.Result,
-    mode: PlanMode,
-    prior_path: ?[]const u8,
-    prior_sha256: ?[]const u8,
-    learned_prior: bool,
-    prior_counts: [3]usize,
-    n_threads: usize,
-    search_options: search.Options,
-    planning_ms: i64,
-    encoding_ms: i64,
-) !void {
-    var arena: std.heap.ArenaAllocator = .init(alloc);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var buf: std.ArrayList(u8) = .empty;
-    const program_evidence = try collectProgramBytecodeEvidence(a, results);
-
-    var json: std.json.Stringify = .{
-        .writer = out,
-        .options = .{ .whitespace = .indent_2 },
-    };
-    try json.beginObject();
-    try json.objectField("schema");
-    try json.write(4);
-    try json.objectField("kind");
-    try json.write("brevis.bench-report");
-    try json.objectField("input");
-    try json.write(in_path);
-    try json.objectField("input_size_bytes");
-    try json.write(input_size_bytes);
-    try json.objectField("input_sha256");
-    try json.write(input_sha256);
-    try json.objectField("timing_scope");
-    try json.write("planning_and_block_encoding_only; input/prior hashing and JSON/program-evidence serialization excluded");
-    try json.objectField("cache_preconditioning");
-    try json.write("full input SHA-256 scan completed before planning");
-    try json.objectField("mode");
-    try json.write(modeName(mode, learned_prior));
-    try json.objectField("prior");
-    try json.beginObject();
-    try json.objectField("supplied");
-    try json.write(prior_path != null);
-    try json.objectField("loaded");
-    try json.write(mode == .search and prior_path != null);
-    try json.objectField("applied");
-    try json.write(learned_prior);
-    try json.objectField("guidance_active");
-    try json.write(learned_prior);
-    try json.objectField("path");
-    if (prior_path) |path| try json.write(path) else try json.write(null);
-    try json.objectField("sha256");
-    if (prior_sha256) |digest| try json.write(digest) else try json.write(null);
-    try json.objectField("nonempty");
-    try json.write(learned_prior);
-    try json.objectField("context_counts_by_backoff_level");
-    try json.write(prior_counts);
-    try json.endObject();
-    try json.objectField("threads");
-    try json.write(n_threads);
-    try json.objectField("requested_threads");
-    try json.write(n_threads);
-    var nonempty_tensors: usize = 0;
-    for (tensors) |tensor| nonempty_tensors += @intFromBool(tensor.view.numel() > 0);
-    try json.objectField("planning_workers_used");
-    try json.write(if (nonempty_tensors == 0) 0 else @min(n_threads, nonempty_tensors));
-    try json.objectField("encoding_workers_used");
-    try json.write(if (blocks.len == 0) 0 else @min(n_threads, blocks.len));
-    try json.objectField("target_block_bytes");
-    try json.write(types.TARGET_BLOCK_BYTES);
-    try json.objectField("search_options_applied");
-    try json.write(mode == .search);
-    try json.objectField("search");
-    try json.beginObject();
-    try writeSearchConfigFields(&json, search_options);
-    try json.endObject();
-    try json.objectField("planning_wall_ms");
-    try json.write(planning_ms);
-    try json.objectField("encoding_wall_ms");
-    try json.write(encoding_ms);
-
-    var total_raw: u64 = 0;
-    var total_encoded: u64 = 0;
-    for (blocks, results) |block, maybe| {
-        total_raw += block.byteLen();
-        if (maybe) |result| total_encoded += result.bytes;
-    }
-    const block_frame_bytes = total_encoded + @as(u64, @intCast(blocks.len)) * 12;
-    const index_offset = @as(u64, archive.HEADER.len) + block_frame_bytes;
-    const metas = try tensorMetas(a, tensors, blocks);
-    const safetensors_header_len: usize = @intCast(std.mem.readInt(u64, input_bytes[0..8], .little));
-    const safetensors_prefix_bytes = 8 + safetensors_header_len;
-    const footer = try archive.makeFooter(a, metas, index_offset, input_bytes[0..safetensors_prefix_bytes]);
-    try json.objectField("raw_bytes");
-    try json.write(total_raw);
-    try json.objectField("tensor_data_bytes");
-    try json.write(total_raw);
-    try json.objectField("safetensors_prefix_bytes");
-    try json.write(safetensors_prefix_bytes);
-    try json.objectField("encoded_bytes_without_frame_headers");
-    try json.write(total_encoded);
-    try json.objectField("block_frame_bytes_excluding_container_header_footer");
-    try json.write(block_frame_bytes);
-    try json.objectField("container_header_bytes");
-    try json.write(archive.HEADER.len);
-    try json.objectField("container_footer_bytes");
-    try json.write(footer.len);
-    try json.objectField("projected_archive_bytes");
-    try json.write(index_offset + footer.len);
-    try json.objectField("size_accounting");
-    try json.write("raw_bytes and tensor_data_bytes exclude the safetensors prefix, while input_size_bytes includes it; packed terminal payloads include an 8-byte length per terminal; each block frame adds a 4-byte bytecode length and 8-byte packed-payload length; projected_archive_bytes adds the exact .brv container header and footer for this diagnostic replay, but an actual .brv file remains the effectiveness measurement");
-    try json.objectField("raw_block_classification");
-    try json.write("planned_raw means the selected tensor plan has a raw root; fallback_raw means a non-raw tensor plan produced a raw-root block because it did not beat raw or could not be applied; raw terminals below a transform root are not classified as raw-root blocks");
-    try json.objectField("program_tree_semantics");
-    try json.write("tensor program_tree is the selected planning template and its parameters come from planning; block program_tree is the realized archive program after per-block parameter refitting");
-    try json.objectField("program_bytecode_evidence");
-    try json.beginObject();
-    try json.objectField("version");
-    try json.write(1);
-    try json.objectField("hash");
-    try json.write("sha256");
-    try json.objectField("sequence_spec_id");
-    try json.write(PROGRAM_SEQUENCE_SPEC_ID);
-    try json.objectField("block_count");
-    try json.write(blocks.len);
-    try json.objectField("sequence_sha256");
-    try json.write(program_evidence.sequence_sha256[0..]);
-    try json.endObject();
-
-    try json.objectField("tensors");
-    try json.beginArray();
-    var block_index: usize = 0;
-    for (tensors, 0..) |tensor, tensor_index| {
-        const first_block = block_index;
-        var encoded: u64 = 0;
-        var framed: u64 = 0;
-        var raw_root_blocks: usize = 0;
-        var planned_raw_root_blocks: usize = 0;
-        var fallback_raw_root_blocks: usize = 0;
-        const plan_is_raw = if (plans[tensor_index]) |plan| plan.root.op == .raw else false;
-        while (block_index < blocks.len and blocks[block_index].tensor_idx == tensor_index) : (block_index += 1) {
-            if (results[block_index]) |result| {
-                encoded += result.bytes;
-                framed += result.bytes + 12;
-                if (result.node.op == .raw) {
-                    raw_root_blocks += 1;
-                    if (plan_is_raw) planned_raw_root_blocks += 1 else fallback_raw_root_blocks += 1;
-                }
-            }
-        }
-
-        try json.beginObject();
-        try json.objectField("index");
-        try json.write(tensor_index);
-        try json.objectField("name");
-        try json.write(tensor.name);
-        try json.objectField("dtype");
-        try json.write(tensor.view.dtype.name());
-        try json.objectField("shape");
-        try json.write(tensor.view.shape);
-        try json.objectField("numel");
-        try json.write(tensor.view.numel());
-        try json.objectField("raw_bytes");
-        try json.write(tensor.view.data.len);
-        const input_start = @intFromPtr(input_bytes.ptr);
-        const input_end = input_start + input_bytes.len;
-        const tensor_start = @intFromPtr(tensor.view.data.ptr);
-        if (tensor_start < input_start or tensor_start > input_end or
-            tensor.view.data.len > input_end - tensor_start) return error.TensorOutsideInput;
-        const file_data_start = tensor_start - input_start;
-        try json.objectField("file_data_start_byte");
-        try json.write(file_data_start);
-        try json.objectField("file_data_end_byte_exclusive");
-        try json.write(file_data_start + tensor.view.data.len);
-        try json.objectField("encoded_bytes_without_frame_headers");
-        try json.write(encoded);
-        try json.objectField("block_frame_bytes_excluding_container_header_footer");
-        try json.write(framed);
-        try json.objectField("block_start");
-        try json.write(first_block);
-        try json.objectField("block_count");
-        try json.write(block_index - first_block);
-        try json.objectField("raw_root_blocks");
-        try json.write(raw_root_blocks);
-        try json.objectField("planned_raw_root_blocks");
-        try json.write(planned_raw_root_blocks);
-        try json.objectField("fallback_raw_root_blocks");
-        try json.write(fallback_raw_root_blocks);
-        if (plans[tensor_index]) |plan| {
-            buf.clearRetainingCapacity();
-            try renderProgram(a, &buf, plan.root);
-            try json.objectField("search_expansions");
-            try json.write(plan.expanded);
-            try json.objectField("candidates_realized");
-            if (mode == .search) try json.write(plan.candidates_realized) else try json.write(null);
-            try json.objectField("candidates_reranked");
-            if (mode == .search) try json.write(plan.candidates_reranked) else try json.write(null);
-            try json.objectField("probe_blocks_used");
-            if (mode == .search) try json.write(plan.probe_blocks_used) else try json.write(null);
-            try json.objectField("selected_sample_rank_zero_based");
-            if (mode == .search) try json.write(plan.selected_sample_rank) else try json.write(null);
-            try json.objectField("program");
-            try json.write(buf.items);
-            try json.objectField("root_operator");
-            try json.write(@tagName(plan.root.op));
-            try json.objectField("program_tree");
-            try writeProgramTree(&json, plan.root);
-            try json.objectField("program_nodes");
-            try json.write(programNodes(plan.root));
-            try json.objectField("program_depth");
-            try json.write(programDepth(plan.root));
-            try json.objectField("program_node_depth");
-            try json.write(programDepth(plan.root));
-            try json.objectField("program_transform_depth");
-            try json.write(programTransformDepth(plan.root));
-            try json.objectField("terminal_count");
-            try json.write(programTerminals(plan.root));
-        } else {
-            try json.objectField("search_expansions");
-            try json.write(null);
-            try json.objectField("candidates_realized");
-            try json.write(null);
-            try json.objectField("candidates_reranked");
-            try json.write(null);
-            try json.objectField("probe_blocks_used");
-            try json.write(null);
-            try json.objectField("selected_sample_rank_zero_based");
-            try json.write(null);
-            try json.objectField("program");
-            try json.write(null);
-            try json.objectField("root_operator");
-            try json.write(null);
-            try json.objectField("program_tree");
-            try json.write(null);
-            try json.objectField("program_nodes");
-            try json.write(null);
-            try json.objectField("program_depth");
-            try json.write(null);
-            try json.objectField("program_node_depth");
-            try json.write(null);
-            try json.objectField("program_transform_depth");
-            try json.write(null);
-            try json.objectField("terminal_count");
-            try json.write(null);
-        }
-        try json.endObject();
-    }
-    try json.endArray();
-
-    try json.objectField("blocks");
-    try json.beginArray();
-    for (blocks, results, 0..) |block, maybe, index| {
-        const result = maybe orelse continue;
-        buf.clearRetainingCapacity();
-        try renderProgram(a, &buf, result.node);
-        try json.beginObject();
-        try json.objectField("index");
-        try json.write(index);
-        try json.objectField("tensor_index");
-        try json.write(block.tensor_idx);
-        try json.objectField("element_offset");
-        try json.write(block.elem_offset);
-        try json.objectField("element_count");
-        try json.write(block.elem_count);
-        try json.objectField("raw_bytes");
-        try json.write(block.byteLen());
-        try json.objectField("encoded_bytes_without_frame_headers");
-        try json.write(result.bytes);
-        try json.objectField("program_bytecode_bytes");
-        try json.write(result.bytes - result.payload.len);
-        try json.objectField("program_bytecode_sha256");
-        try json.write(program_evidence.sha256_by_block[index][0..]);
-        try json.objectField("packed_terminal_payload_bytes");
-        try json.write(result.payload.len);
-        try json.objectField("frame_header_bytes");
-        try json.write(result.bytes - result.payload.len + 12);
-        try json.objectField("framed_bytes");
-        try json.write(result.bytes + 12);
-        const block_plan_is_raw = if (plans[block.tensor_idx]) |plan| plan.root.op == .raw else false;
-        try json.objectField("raw_classification");
-        if (result.node.op != .raw)
-            try json.write(null)
-        else if (block_plan_is_raw)
-            try json.write("planned_raw")
-        else
-            try json.write("fallback_raw");
-        try json.objectField("program");
-        try json.write(buf.items);
-        try json.objectField("root_operator");
-        try json.write(@tagName(result.node.op));
-        try json.objectField("program_tree");
-        try writeProgramTree(&json, result.node);
-        try json.objectField("program_nodes");
-        try json.write(programNodes(result.node));
-        try json.objectField("program_depth");
-        try json.write(programDepth(result.node));
-        try json.objectField("program_node_depth");
-        try json.write(programDepth(result.node));
-        try json.objectField("program_transform_depth");
-        try json.write(programTransformDepth(result.node));
-        try json.objectField("terminal_count");
-        try json.write(programTerminals(result.node));
-        try json.endObject();
-    }
-    try json.endArray();
-    try json.endObject();
-    try out.writeByte('\n');
-}
-
-fn cmdBench(
     io: std.Io,
     out: *std.Io.Writer,
-    in_path: []const u8,
-    prior_path: ?[]const u8,
-    jobs: ?usize,
-    mode: PlanMode,
-    format: ReportFormat,
-    search_options: search.Options,
+    argv: []const []const u8,
 ) !void {
-    const alloc = std.heap.smp_allocator;
-
-    var loaded = try safetensors.loadFromPath(alloc, io, in_path);
-    defer loaded.deinitMmap(alloc, io);
-    try checkTensors(loaded.tensors);
-    var input_digest: ?[64]u8 = null;
-    if (format == .json) input_digest = try sha256File(io, in_path);
-
-    var pr = try loadPrior(alloc, if (mode == .search) prior_path else null);
-    defer pr.deinit(alloc);
-    const learned_prior = mode == .search and !pr.isEmpty();
-    var prior_digest: ?[64]u8 = null;
-    if (mode == .search) {
-        if (prior_path) |path| prior_digest = try sha256File(io, path);
-    }
-    const prior_counts: [3]usize = .{
-        pr.levels[0].count(),
-        pr.levels[1].count(),
-        pr.levels[2].count(),
-    };
-    const prior_digest_slice: ?[]const u8 = if (prior_digest) |*digest| digest[0..] else null;
-
-    const blocks = try planAll(alloc, loaded.tensors);
-    defer alloc.free(blocks);
-
-    const n_threads = threadCount(jobs);
-    if (format == .text) {
-        var nonempty_tensors: usize = 0;
-        for (loaded.tensors) |tensor| nonempty_tensors += @intFromBool(tensor.view.numel() > 0);
-        try out.print("=== brevis bench: {s} ({d} tensors, {d} blocks, {d} requested threads, {d}/{d} planning/encoding workers, {s}) ===\n", .{
-            in_path,
-            loaded.tensors.len,
-            blocks.len,
-            n_threads,
-            if (nonempty_tensors == 0) 0 else @min(n_threads, nonempty_tensors),
-            if (blocks.len == 0) 0 else @min(n_threads, blocks.len),
-            modeName(mode, learned_prior),
-        });
-        try out.flush();
+    if (argv.len < 2) return error.InvalidArguments;
+    if (std.mem.eql(u8, argv[1], "--help") or
+        std.mem.eql(u8, argv[1], "-h"))
+    {
+        try usage(out);
+        return;
     }
 
-    const planning_start = std.Io.Timestamp.now(io, .awake);
-    const plans = try synthesizePlans(alloc, loaded.tensors, &pr, n_threads, mode, search_options);
-    defer freePlans(alloc, plans);
-    const planning_ms = planning_start.durationTo(.now(io, .awake)).toMilliseconds();
+    var args = try parseArguments(alloc, argv[1..]);
+    defer args.deinit(alloc);
+    if (!args.saw_workers)
+        args.workers = std.Thread.getCpuCount() catch checkpoint.DEFAULT_WORKERS;
+    try validateArguments(args);
 
-    const encoding_start = std.Io.Timestamp.now(io, .awake);
-    const results = try encodeBlocks(alloc, loaded.tensors, blocks, plans, n_threads, null);
-    defer freeResults(alloc, results);
-    const encoding_ms = encoding_start.durationTo(.now(io, .awake)).toMilliseconds();
-
-    switch (format) {
-        .text => {
-            try report(alloc, out, blocks, results);
-            try out.print("planning wall time: {d}ms\nencoding wall time: {d}ms\n", .{ planning_ms, encoding_ms });
-        },
-        .json => try reportJson(
+    switch (args.command) {
+        .compress => try commandCompress(
             alloc,
+            io,
             out,
-            in_path,
-            loaded.bytes,
-            loaded.bytes.len,
-            if (input_digest) |*digest| digest[0..] else unreachable,
-            loaded.tensors,
-            blocks,
-            plans,
-            results,
-            mode,
-            prior_path,
-            prior_digest_slice,
-            learned_prior,
-            prior_counts,
-            n_threads,
-            search_options,
-            planning_ms,
-            encoding_ms,
+            args.positional.items[0],
+            args.positional.items[1],
+            args.prior_path,
+            args.max_tensors,
+            args.synthesis,
+            args.resources,
+            args.workers,
+        ),
+        .decompress => try commandDecompress(
+            alloc,
+            io,
+            out,
+            args.positional.items[0],
+            args.positional.items[1],
+            args.resources,
+            args.workers,
+        ),
+        .verify => try commandVerify(
+            alloc,
+            io,
+            out,
+            args.positional.items[0],
+            args.positional.items[1],
+            args.resources,
+            args.workers,
+        ),
+        .calibrate => try commandCalibrate(
+            alloc,
+            io,
+            out,
+            args.positional.items[0],
+            args.positional.items[1],
+            args.max_tensors,
+            args.synthesis,
+            args.resources,
+            args.workers,
+        ),
+        .config => try commandConfig(
+            out,
+            args.synthesis,
+            args.resources,
+            args.workers,
         ),
     }
 }
 
-// ==================== synthetic data ====================
+fn parseArguments(
+    alloc: Allocator,
+    words: []const []const u8,
+) !Arguments {
+    if (words.len == 0) return error.InvalidArguments;
+    var args = Arguments{
+        .command = std.meta.stringToEnum(Command, words[0]) orelse
+            return error.InvalidArguments,
+    };
+    errdefer args.deinit(alloc);
 
-fn synthTensor(alloc: Allocator, dtype: Dtype, dims: []const u64, seed: u64, near_one: bool) !types.TensorView {
-    var n: usize = 1;
-    for (dims) |d| n *= @intCast(d);
+    var index: usize = 1;
+    while (index < words.len) {
+        const word = words[index];
+        if (!std.mem.startsWith(u8, word, "--")) {
+            try args.positional.append(alloc, word);
+            index += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, word, "--help"))
+            return error.InvalidArguments;
+        if (index + 1 >= words.len) return error.InvalidArguments;
+        const value = words[index + 1];
+        index += 2;
 
-    const buf = try alloc.alloc(u8, n * dtype.elemSize());
-    errdefer alloc.free(buf);
-    var prng: std.Random.DefaultPrng = .init(seed);
-    const r = prng.random();
-
-    var counter: u32 = 0;
-    for (0..n) |i| {
-        const f: f32 = if (near_one) 1.0 + r.floatNorm(f32) * 0.02 else r.floatNorm(f32) * 0.02;
-        switch (dtype) {
-            .f16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @bitCast(@as(f16, @floatCast(f))), .little),
-            .bf16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @truncate(@as(u32, @bitCast(f)) >> 16), .little),
-            .f32 => std.mem.writeInt(u32, buf[i * 4 ..][0..4], @bitCast(f), .little),
-            .u8, .f8_e4m3, .f8_e5m2 => buf[i] = r.intRangeAtMost(u8, 0, 31),
-            .i8 => buf[i] = @bitCast(r.intRangeAtMost(i8, -16, 15)),
-            .u16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], r.intRangeAtMost(u16, 0, 1023), .little),
-            .i16 => std.mem.writeInt(u16, buf[i * 2 ..][0..2], @bitCast(r.intRangeAtMost(i16, -512, 511)), .little),
-            .u32 => {
-                counter +%= r.intRangeAtMost(u32, 0, 7);
-                std.mem.writeInt(u32, buf[i * 4 ..][0..4], counter, .little);
-            },
-            .i32 => std.mem.writeInt(u32, buf[i * 4 ..][0..4], @bitCast(r.intRangeAtMost(i32, -512, 511)), .little),
+        if (std.mem.eql(u8, word, "--prior")) {
+            args.saw_prior = true;
+            args.prior_path = value;
+        } else if (std.mem.eql(u8, word, "--tensors")) {
+            args.saw_tensors = true;
+            args.max_tensors = try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--max-expansions")) {
+            args.saw_search_option = true;
+            args.synthesis.max_expansions = try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--max-nodes")) {
+            args.saw_search_option = true;
+            args.synthesis.max_nodes = try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--seed-float-fields")) {
+            args.saw_search_option = true;
+            args.synthesis.seed_float_fields =
+                try parseUnsigned(u1, value) == 1;
+        } else if (std.mem.eql(u8, word, "--max-depth")) {
+            args.saw_search_option = true;
+            args.synthesis.grammar_options.max_depth =
+                try parseUnsigned(u8, value);
+        } else if (std.mem.eql(u8, word, "--max-repeat-period")) {
+            args.saw_search_option = true;
+            args.synthesis.grammar_options.max_repeat_period =
+                try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--max-concat-splits")) {
+            args.saw_search_option = true;
+            args.synthesis.grammar_options.max_concat_splits =
+                try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--max-map-constants")) {
+            args.saw_search_option = true;
+            args.synthesis.grammar_options.max_map_constants =
+                try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--max-rotations")) {
+            args.saw_search_option = true;
+            args.synthesis.grammar_options.max_rotations =
+                try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--max-field-splits")) {
+            args.saw_search_option = true;
+            args.synthesis.grammar_options.max_field_splits =
+                try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--max-total-bytes")) {
+            args.resources.max_total_bytes =
+                try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--max-tensor-bytes")) {
+            args.resources.max_tensor_bytes =
+                try parseUnsigned(usize, value);
+            args.synthesis.max_decomposition_bytes =
+                args.resources.max_tensor_bytes;
+        } else if (std.mem.eql(u8, word, "--max-prefix-bytes")) {
+            args.resources.max_prefix_bytes =
+                try parseUnsigned(usize, value);
+        } else if (std.mem.eql(u8, word, "--workers")) {
+            args.saw_workers = true;
+            args.workers = try parseUnsigned(usize, value);
+        } else {
+            return error.InvalidArguments;
         }
     }
-
-    const shape = try alloc.dupe(u64, dims);
-    return .{ .data = buf, .shape = shape, .dtype = dtype, .owns_data = true, .owns_shape = true };
+    return args;
 }
 
-const FixtureSpec = struct { name: []const u8, dtype: Dtype, dims: []const u64, near_one: bool = false };
-
-const fixtures = [_]FixtureSpec{
-    .{ .name = "attn.q_proj.weight", .dtype = .f16, .dims = &.{ 512, 512 } },
-    .{ .name = "norm.gamma", .dtype = .f16, .dims = &.{4096}, .near_one = true },
-    .{ .name = "embed.weight", .dtype = .bf16, .dims = &.{ 1024, 256 } },
-    .{ .name = "ffn.up.weight", .dtype = .f32, .dims = &.{ 256, 256 } },
-    .{ .name = "quant.scales", .dtype = .i8, .dims = &.{8192} },
-    .{ .name = "router.ids", .dtype = .u32, .dims = &.{4096} },
-};
-
-fn makeFixtureTensors(alloc: Allocator, views: *std.ArrayList(types.TensorView), tensors: *std.ArrayList(safetensors.Tensor)) !void {
-    for (fixtures, 0..) |spec, i| {
-        try views.append(alloc, try synthTensor(alloc, spec.dtype, spec.dims, i, spec.near_one));
+fn validateArguments(args: Arguments) !void {
+    const expected_positionals: usize = switch (args.command) {
+        .compress, .decompress, .verify, .calibrate => 2,
+        .config => 0,
+    };
+    if (args.positional.items.len != expected_positionals)
+        return error.InvalidArguments;
+    if (args.synthesis.max_nodes == 0)
+        return error.InvalidArguments;
+    if (args.workers == 0)
+        return error.InvalidArguments;
+    const archive_path: ?[]const u8 = switch (args.command) {
+        .compress => args.positional.items[1],
+        .decompress, .verify => args.positional.items[0],
+        .calibrate, .config => null,
+    };
+    if (archive_path) |path|
+        if (!std.mem.endsWith(u8, path, ".brv"))
+            return error.InvalidArguments;
+    const grammar_options = args.synthesis.grammar_options;
+    if (grammar_options.max_repeat_period > grammar.HARD_MAX_REPEAT_PERIOD or
+        grammar_options.max_concat_splits > grammar.HARD_MAX_CONCAT_SPLITS or
+        grammar_options.max_map_constants > grammar.HARD_MAX_MAP_CONSTANTS or
+        grammar_options.max_rotations > grammar.HARD_MAX_ROTATIONS or
+        grammar_options.max_field_splits > grammar.HARD_MAX_FIELD_SPLITS)
+    {
+        return error.InvalidArguments;
     }
-    for (fixtures, views.items) |spec, v| {
-        try tensors.append(alloc, .{ .name = spec.name, .view = v });
+    if (args.saw_prior and args.command != .compress)
+        return error.InvalidArguments;
+    if (args.saw_tensors and
+        args.command != .compress and
+        args.command != .calibrate)
+    {
+        return error.InvalidArguments;
+    }
+    if (args.saw_search_option and
+        args.command != .compress and
+        args.command != .calibrate and
+        args.command != .config)
+    {
+        return error.InvalidArguments;
     }
 }
 
-fn cmdMakeFixture(alloc: Allocator, io: std.Io, out: *std.Io.Writer, path: []const u8) !void {
-    var views: std.ArrayList(types.TensorView) = .empty;
-    defer {
-        for (views.items) |*v| v.deinit(alloc);
-        views.deinit(alloc);
-    }
-    var tensors: std.ArrayList(safetensors.Tensor) = .empty;
-    defer tensors.deinit(alloc);
-    try makeFixtureTensors(alloc, &views, &tensors);
-
-    var outs: std.ArrayList(safetensors.TensorOut) = .empty;
-    defer outs.deinit(alloc);
-    for (tensors.items) |t| try outs.append(alloc, .{ .name = t.name, .view = t.view });
-
-    try safetensors.saveToPath(alloc, io, path, outs.items);
-    try out.print("wrote fixture {s} ({d} tensors)\n", .{ path, outs.items.len });
+fn parseUnsigned(comptime T: type, text: []const u8) !T {
+    return std.fmt.parseInt(T, text, 10) catch error.InvalidArguments;
 }
 
-fn cmdDemo(io: std.Io, out: *std.Io.Writer) !void {
-    const alloc = std.heap.smp_allocator;
+fn parseForAllocationFailureCheck(alloc: Allocator) !void {
+    var args = try parseArguments(alloc, &.{
+        "compress",
+        "in.safetensors",
+        "out.brv",
+        "--max-expansions",
+        "64",
+        "--max-tensor-bytes",
+        "1048576",
+    });
+    defer args.deinit(alloc);
+    try validateArguments(args);
+}
 
-    var views: std.ArrayList(types.TensorView) = .empty;
-    defer {
-        for (views.items) |*v| v.deinit(alloc);
-        views.deinit(alloc);
+fn commandCompress(
+    alloc: Allocator,
+    io: std.Io,
+    out: *std.Io.Writer,
+    source_path: []const u8,
+    archive_path: []const u8,
+    prior_path: ?[]const u8,
+    max_calibration_tensors: usize,
+    base_options: synthesizer.Options,
+    resources: ResourceLimits,
+    workers: usize,
+) !void {
+    var prior: ?phog.Prior = if (prior_path) |path|
+        try loadPrior(alloc, io, path)
+    else
+        null;
+    defer if (prior) |*model| model.deinit(alloc);
+
+    var synthesis = base_options;
+    if (prior) |*model| synthesis.phog_prior = model;
+    var summary = try checkpoint.compressFile(
+        alloc,
+        io,
+        source_path,
+        archive_path,
+        .{
+            .synthesis = synthesis,
+            .max_calibration_tensors = max_calibration_tensors,
+            .workers = workers,
+            .max_source_bytes = resources.max_total_bytes,
+            .max_prefix_bytes = resources.max_prefix_bytes,
+            .max_tensor_bytes = resources.max_tensor_bytes,
+            .max_archive_bytes = resources.max_total_bytes,
+        },
+    );
+    defer summary.deinit(alloc);
+
+    var expanded: usize = 0;
+    var completed: usize = 0;
+    var fallback: usize = 0;
+    var budget_exhausted: usize = 0;
+    for (summary.tensors) |tensor| {
+        expanded = std.math.add(usize, expanded, tensor.expanded) catch
+            return error.IntegerOverflow;
+        completed = std.math.add(
+            usize,
+            completed,
+            tensor.completed_candidates,
+        ) catch return error.IntegerOverflow;
+        fallback += @intFromBool(tensor.used_literal_fallback);
+        budget_exhausted += @intFromBool(
+            tensor.status == .budget_exhausted,
+        );
     }
-    var tensors: std.ArrayList(safetensors.Tensor) = .empty;
-    defer tensors.deinit(alloc);
-    try makeFixtureTensors(alloc, &views, &tensors);
 
-    var pr: prior.Prior = .empty;
-    defer pr.deinit(alloc);
+    try out.print(
+        "compressed {d} tensors: {d} -> {d} bytes ({d:.3}x)\n",
+        .{
+            summary.tensors.len,
+            summary.source_bytes,
+            summary.archive_bytes,
+            compressionRatio(summary.source_bytes, summary.archive_bytes),
+        },
+    );
+    try out.print(
+        "search: expanded={d}, completed={d}, budget_exhausted={d}, literal_fallback={d}, prior={s}\n",
+        .{
+            expanded,
+            completed,
+            budget_exhausted,
+            fallback,
+            prior_path orelse if (base_options.max_expansions != 0 and
+                max_calibration_tensors != 0)
+                "checkpoint-local"
+            else
+                "uniform",
+        },
+    );
+}
 
-    const blocks = try planAll(alloc, tensors.items);
-    defer alloc.free(blocks);
+fn commandDecompress(
+    alloc: Allocator,
+    io: std.Io,
+    out: *std.Io.Writer,
+    archive_path: []const u8,
+    output_path: []const u8,
+    resources: ResourceLimits,
+    workers: usize,
+) !void {
+    const summary = try checkpoint.decompressFile(
+        alloc,
+        io,
+        archive_path,
+        output_path,
+        decompressLimits(resources, workers),
+    );
+    try out.print(
+        "decompressed {d} tensors: {d} -> {d} bytes\n",
+        .{ summary.tensor_count, summary.archive_bytes, summary.output_bytes },
+    );
+}
 
-    try out.print("=== brevis demo: {d} synthetic tensors, {d} blocks ===\n", .{ tensors.items.len, blocks.len });
-    try out.flush();
+fn commandVerify(
+    alloc: Allocator,
+    io: std.Io,
+    out: *std.Io.Writer,
+    archive_path: []const u8,
+    source_path: []const u8,
+    resources: ResourceLimits,
+    workers: usize,
+) !void {
+    const summary = try checkpoint.verifyFile(
+        alloc,
+        io,
+        archive_path,
+        source_path,
+        decompressLimits(resources, workers),
+    );
+    try out.print(
+        "verified {d} tensors and {d} reconstructed bytes exactly\n",
+        .{ summary.tensor_count, summary.output_bytes },
+    );
+}
 
-    const t0 = std.Io.Timestamp.now(io, .awake);
-    const results = try synthesizeBlocks(alloc, tensors.items, blocks, &pr, threadCount(null), .search, .{});
-    defer freeResults(alloc, results);
-    const ms = t0.durationTo(.now(io, .awake)).toMilliseconds();
+fn commandCalibrate(
+    alloc: Allocator,
+    io: std.Io,
+    out: *std.Io.Writer,
+    source_path: []const u8,
+    prior_path: []const u8,
+    max_tensors: usize,
+    synthesis: synthesizer.Options,
+    resources: ResourceLimits,
+    workers: usize,
+) !void {
+    var loaded = try safetensors.loadFromPathWithLimits(
+        alloc,
+        io,
+        source_path,
+        .{
+            .max_file_bytes = resources.max_total_bytes,
+            .max_header_bytes = resources.max_prefix_bytes,
+            .max_tensor_bytes = resources.max_tensor_bytes,
+        },
+    );
+    defer loaded.deinit(alloc);
 
-    try report(alloc, out, blocks, results);
-    try out.print("synthesis wall time: {d}ms\n", .{ms});
+    var result = try calibration.trainParallel(
+        alloc,
+        io,
+        loaded.tensors,
+        .{
+            .max_tensors = max_tensors,
+            .synthesis = synthesis,
+        },
+        workers,
+    );
+    defer result.deinit(alloc);
+    const encoded = try result.serialize(alloc);
+    defer alloc.free(encoded);
+    try writeFileAtomic(io, prior_path, encoded);
+
+    try out.print(
+        "calibrated {d}/{d} complete tensors -> {s} ({d} bytes)\n",
+        .{
+            result.observed_tensors,
+            loaded.tensors.len,
+            prior_path,
+            encoded.len,
+        },
+    );
+    try out.print(
+        "search: expanded={d}, completed={d}, budget_exhausted={d}, literal_fallback={d}\n",
+        .{
+            result.expanded,
+            result.completed_candidates,
+            result.budget_exhausted_tensors,
+            result.literal_fallback_tensors,
+        },
+    );
+}
+
+fn commandConfig(
+    out: *std.Io.Writer,
+    options: synthesizer.Options,
+    resources: ResourceLimits,
+    workers: usize,
+) !void {
+    var json: std.json.Stringify = .{
+        .writer = out,
+        .options = .{ .whitespace = .indent_2 },
+    };
+    try json.beginObject();
+    try json.objectField("synthesis_unit");
+    try json.write("complete_tensor");
+    try json.objectField("objective");
+    try json.write("canonical_program_bytes");
+    try json.objectField("literal_fallback");
+    try json.write(true);
+    try json.objectField("phog_role");
+    try json.write("queue_order_and_terminal_frontier");
+    try json.objectField("archive");
+    try json.write("BRTA-v3");
+    try json.objectField("workers");
+    try json.write(workers);
+    try json.objectField("max_expansions");
+    try json.write(options.max_expansions);
+    try json.objectField("max_nodes");
+    try json.write(options.max_nodes);
+    try json.objectField("seed_float_fields");
+    try json.write(options.seed_float_fields);
+    try json.objectField("max_decomposition_bytes");
+    try json.write(options.max_decomposition_bytes);
+    try json.objectField("max_depth");
+    try json.write(options.grammar_options.max_depth);
+    try json.objectField("max_repeat_period");
+    try json.write(options.grammar_options.max_repeat_period);
+    try json.objectField("max_concat_splits");
+    try json.write(options.grammar_options.max_concat_splits);
+    try json.objectField("max_map_constants");
+    try json.write(options.grammar_options.max_map_constants);
+    try json.objectField("max_rotations");
+    try json.write(options.grammar_options.max_rotations);
+    try json.objectField("max_field_splits");
+    try json.write(options.grammar_options.max_field_splits);
+    try json.objectField("max_total_bytes");
+    try json.write(resources.max_total_bytes);
+    try json.objectField("max_tensor_bytes");
+    try json.write(resources.max_tensor_bytes);
+    try json.objectField("max_prefix_bytes");
+    try json.write(resources.max_prefix_bytes);
+    try json.endObject();
+    try out.writeByte('\n');
+}
+
+fn decompressLimits(
+    resources: ResourceLimits,
+    workers: usize,
+) checkpoint.DecompressLimits {
+    const program_slack: usize = 16 * 1024 * 1024;
+    const program_bytes = @min(
+        resources.max_total_bytes,
+        std.math.add(
+            usize,
+            resources.max_tensor_bytes,
+            program_slack,
+        ) catch std.math.maxInt(usize),
+    );
+    return .{
+        .workers = workers,
+        .max_archive_bytes = resources.max_total_bytes,
+        .max_output_bytes = resources.max_total_bytes,
+        .archive = .{
+            .max_prefix_bytes = resources.max_prefix_bytes,
+            .max_record_bytes = resources.max_total_bytes,
+            .max_program_bytes = program_bytes,
+            .max_tensor_output_bytes = resources.max_tensor_bytes,
+            .program = .{
+                .max_nodes = 1_000_000,
+                .max_depth = 256,
+                .max_output_bytes = resources.max_tensor_bytes,
+                .max_literal_bytes = resources.max_tensor_bytes,
+            },
+        },
+    };
+}
+
+fn loadPrior(
+    alloc: Allocator,
+    io: std.Io,
+    path: []const u8,
+) !phog.Prior {
+    const encoded = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        path,
+        alloc,
+        .limited(MAX_PRIOR_BYTES),
+    );
+    defer alloc.free(encoded);
+    return phog.Prior.deserialize(alloc, encoded);
+}
+
+fn writeFileAtomic(
+    io: std.Io,
+    path: []const u8,
+    bytes: []const u8,
+) !void {
+    var atomic = try std.Io.Dir.cwd().createFileAtomic(
+        io,
+        path,
+        .{ .replace = true },
+    );
+    defer atomic.deinit(io);
+    var buffer: [64 * 1024]u8 = undefined;
+    var writer = atomic.file.writer(io, &buffer);
+    try writer.interface.writeAll(bytes);
+    try writer.interface.flush();
+    try atomic.file.sync(io);
+    try atomic.replace(io);
+}
+
+fn compressionRatio(source_bytes: usize, archive_bytes: usize) f64 {
+    if (archive_bytes == 0) return 0;
+    return @as(f64, @floatFromInt(source_bytes)) /
+        @as(f64, @floatFromInt(archive_bytes));
+}
+
+fn usage(writer: *std.Io.Writer) !void {
+    try writer.writeAll(
+        \\Brevis — exact whole-tensor program synthesis
+        \\
+        \\  brevis compress   <model.safetensors> <model.brv> [--prior model.brvp] [--tensors N] [search options]
+        \\  brevis decompress <model.brv> <restored.safetensors>
+        \\  brevis verify     <model.brv> <model.safetensors>
+        \\  brevis calibrate  <model.safetensors> <model.brvp> [--tensors N] [search options]
+        \\  brevis config [search options]
+        \\
+        \\Search options:
+        \\  --max-expansions N
+        \\  --max-nodes N
+        \\  --seed-float-fields 0|1
+        \\  --max-depth N
+        \\  --max-repeat-period N
+        \\  --max-concat-splits N
+        \\  --max-map-constants N
+        \\  --max-rotations N
+        \\  --max-field-splits N
+        \\
+        \\Parallel file execution and calibration:
+        \\  --workers N
+        \\
+        \\Resource limits (bytes):
+        \\  --max-total-bytes N
+        \\  --max-tensor-bytes N
+        \\  --max-prefix-bytes N
+        \\
+    );
+}
+
+test "CLI accepts only paper-aligned whole-tensor controls" {
+    const alloc = std.testing.allocator;
+    var args = try parseArguments(alloc, &.{
+        "compress",
+        "model.safetensors",
+        "model.brv",
+        "--prior",
+        "model.brvp",
+        "--tensors",
+        "7",
+        "--max-expansions",
+        "0",
+        "--max-depth",
+        "2",
+        "--seed-float-fields",
+        "0",
+        "--max-concat-splits",
+        "0",
+        "--max-tensor-bytes",
+        "1048576",
+        "--workers",
+        "4",
+    });
+    defer args.deinit(alloc);
+    try validateArguments(args);
+    try std.testing.expectEqual(Command.compress, args.command);
+    try std.testing.expectEqual(@as(usize, 0), args.synthesis.max_expansions);
+    try std.testing.expect(!args.synthesis.seed_float_fields);
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        args.synthesis.grammar_options.max_depth,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        args.synthesis.grammar_options.max_concat_splits,
+    );
+    try std.testing.expectEqualStrings("model.brvp", args.prior_path.?);
+    try std.testing.expectEqual(@as(usize, 7), args.max_tensors);
+    try std.testing.expectEqual(
+        @as(usize, 1048576),
+        args.resources.max_tensor_bytes,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1048576),
+        args.synthesis.max_decomposition_bytes,
+    );
+    try std.testing.expectEqual(@as(usize, 4), args.workers);
+
+    try std.testing.expectError(
+        error.InvalidArguments,
+        parseArguments(alloc, &.{
+            "compress",
+            "in",
+            "out",
+            "--plan",
+            "fixed",
+        }),
+    );
+}
+
+test "CLI defaults leave one-expansion search to PHOG" {
+    const alloc = std.testing.allocator;
+    var args = try parseArguments(alloc, &.{"config"});
+    defer args.deinit(alloc);
+    try validateArguments(args);
+    try std.testing.expectEqual(@as(usize, 1), args.synthesis.max_expansions);
+    try std.testing.expect(!args.synthesis.seed_float_fields);
+
+    var legacy_suffix = try parseArguments(alloc, &.{
+        "compress",
+        "model.safetensors",
+        "model.brta",
+    });
+    defer legacy_suffix.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidArguments,
+        validateArguments(legacy_suffix),
+    );
+}
+
+test "CLI rejects command-specific flags and an impossible node cap" {
+    const alloc = std.testing.allocator;
+    var decode_args = try parseArguments(alloc, &.{
+        "decompress",
+        "model.brv",
+        "out.safetensors",
+        "--max-depth",
+        "1",
+    });
+    defer decode_args.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidArguments,
+        validateArguments(decode_args),
+    );
+
+    var zero_nodes = try parseArguments(alloc, &.{
+        "config",
+        "--max-nodes",
+        "0",
+    });
+    defer zero_nodes.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidArguments,
+        validateArguments(zero_nodes),
+    );
+
+    var excessive_fanout = try parseArguments(alloc, &.{
+        "config",
+        "--max-concat-splits",
+        "17",
+    });
+    defer excessive_fanout.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidArguments,
+        validateArguments(excessive_fanout),
+    );
+
+    var zero_workers = try parseArguments(alloc, &.{
+        "decompress",
+        "model.brv",
+        "out.safetensors",
+        "--workers",
+        "0",
+    });
+    defer zero_workers.deinit(alloc);
+    try std.testing.expectError(
+        error.InvalidArguments,
+        validateArguments(zero_workers),
+    );
+
+    var calibration_workers = try parseArguments(alloc, &.{
+        "calibrate",
+        "model.safetensors",
+        "model.brvp",
+        "--workers",
+        "4",
+    });
+    defer calibration_workers.deinit(alloc);
+    try validateArguments(calibration_workers);
+    try std.testing.expectEqual(@as(usize, 4), calibration_workers.workers);
+}
+
+test "CLI decoder defaults cap one materialized tensor and can be tightened" {
+    const alloc = std.testing.allocator;
+    var defaults = try parseArguments(alloc, &.{
+        "decompress",
+        "model.brv",
+        "out.safetensors",
+    });
+    defer defaults.deinit(alloc);
+    const default_limits = decompressLimits(
+        defaults.resources,
+        defaults.workers,
+    );
+    try std.testing.expectEqual(
+        DEFAULT_MAX_TENSOR_BYTES,
+        default_limits.archive.max_tensor_output_bytes,
+    );
+    try std.testing.expectEqual(
+        DEFAULT_MAX_TENSOR_BYTES,
+        default_limits.archive.program.max_output_bytes,
+    );
+
+    var tightened = try parseArguments(alloc, &.{
+        "decompress",
+        "model.brv",
+        "out.safetensors",
+        "--max-total-bytes",
+        "4096",
+        "--max-tensor-bytes",
+        "1024",
+        "--max-prefix-bytes",
+        "512",
+    });
+    defer tightened.deinit(alloc);
+    try validateArguments(tightened);
+    const tight_limits = decompressLimits(
+        tightened.resources,
+        tightened.workers,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 4096),
+        tight_limits.max_output_bytes,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1024),
+        tight_limits.archive.max_tensor_output_bytes,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 512),
+        tight_limits.archive.max_prefix_bytes,
+    );
+}
+
+test "CLI parser releases every allocation on injected OOM" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        parseForAllocationFailureCheck,
+        .{},
+    );
 }
