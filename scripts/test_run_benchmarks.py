@@ -220,12 +220,26 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertIn("PROGRESS_INTERVAL=5", result.stdout)
         self.assertIn("PAPER_TIMING=0", result.stdout)
         script = launcher.read_text()
-        self.assertIn(
-            f"paper_methods=({' '.join(bench.GENERIC_METHODS)})",
-            script,
-        )
+        self.assertIn("from run_benchmarks import GENERIC_METHODS", script)
         self.assertIn("import ensurepip, venv", script)
-        self.assertIn("environment-specific", script)
+
+    def test_specialized_config_requires_explicit_python_environment(self):
+        config = self.root / "specialized.json"
+        config.write_text(json.dumps({
+            "dfloat11": {
+                "compress_command": ["python3", "convert.py"],
+            },
+        }))
+
+        with self.assertRaisesRegex(bench.BenchmarkError, "environment-specific"):
+            bench.load_specialized_config(config)
+
+        config.write_text(json.dumps({
+            "dfloat11": {
+                "compress_command": [sys.executable, "convert.py"],
+            },
+        }))
+        self.assertIn("dfloat11", bench.load_specialized_config(config))
 
     def test_run_identity_is_bound_to_method_provenance(self):
         source = self.root / "model.safetensors"

@@ -1270,6 +1270,19 @@ def load_specialized_config(path: Path | None) -> dict[str, Any]:
     unknown = set(config) - set(SPECIALIZED_METHODS)
     if unknown:
         raise BenchmarkError(f"unknown specialized method(s): {sorted(unknown)}")
+    for method, settings in config.items():
+        for name in ("version_command", "compress_command", "validate_command"):
+            command = settings.get(name)
+            executable = Path(command[0]) if command else None
+            if (
+                executable
+                and executable.name in {"python", "python3"}
+                and not executable.is_absolute()
+            ):
+                raise BenchmarkError(
+                    f"{method}.{name} must use an absolute environment-specific "
+                    "Python path or an explicit environment runner"
+                )
     return config
 
 

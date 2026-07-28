@@ -164,37 +164,23 @@ python -m pip install \
 
 cd "$ROOT"
 
-validate_specialized_config() {
-  python - "$1" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-config = json.loads(Path(sys.argv[1]).read_text())
-for method, settings in config.items():
-    for name in ("version_command", "compress_command", "validate_command"):
-        command = settings.get(name)
-        executable = Path(command[0]) if command else None
-        if (
-            executable
-            and executable.name in {"python", "python3"}
-            and not executable.is_absolute()
-        ):
-            sys.exit(
-                f"{method}.{name} must use an absolute environment-specific "
-                "Python path or an explicit environment runner"
-            )
-PY
-}
-
-paper_methods=(brevis zstd-9 zipnn lz4-hc-9 libdeflate-1 snappy)
+method_list=$(
+  PYTHONPATH="$ROOT/scripts" python -c \
+    'from run_benchmarks import GENERIC_METHODS; print(" ".join(GENERIC_METHODS))'
+)
+read -r -a paper_methods <<< "$method_list"
 benchmark_args=()
 if [[ -n "$SPECIALIZED_CONFIG" ]]; then
   [[ -f "$SPECIALIZED_CONFIG" ]] || {
     echo "SPECIALIZED_CONFIG does not exist: $SPECIALIZED_CONFIG" >&2
     exit 1
   }
-  validate_specialized_config "$SPECIALIZED_CONFIG"
+  PYTHONPATH="$ROOT/scripts" python -c \
+    'import sys
+from pathlib import Path
+from run_benchmarks import load_specialized_config
+load_specialized_config(Path(sys.argv[1]))' \
+    "$SPECIALIZED_CONFIG"
   paper_methods+=(dfloat11 ecf8)
   benchmark_args+=(--specialized-config "$SPECIALIZED_CONFIG")
 fi
