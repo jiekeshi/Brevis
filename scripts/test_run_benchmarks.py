@@ -261,7 +261,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
         (self.root / "tokenizer.json").write_text("{}")
         specialized_baselines.require_tokenizer_assets(self.root)
 
-    def test_environment_does_not_merge_results_from_another_host(self):
+    def test_environment_discards_other_hosts_and_retired_methods(self):
         results = self.root / "results"
         results.mkdir()
         (results / "environment.json").write_text(
@@ -304,6 +304,18 @@ class BenchmarkHarnessTests(unittest.TestCase):
         environment = json.loads((results / "environment.json").read_text())
         self.assertEqual({"brevis"}, set(environment["run_provenance"]))
         self.assertEqual({"brevis"}, set(environment["method_versions"]))
+
+        environment["run_provenance"]["libdeflate-6"] = {
+            "host": current_host
+        }
+        environment["method_versions"]["libdeflate-6"] = "retired"
+        (results / "environment.json").write_text(json.dumps(environment))
+
+        bench.write_environment(args, {"brevis": "revision"}, [])
+
+        migrated = json.loads((results / "environment.json").read_text())
+        self.assertEqual({"brevis"}, set(migrated["run_provenance"]))
+        self.assertEqual({"brevis"}, set(migrated["method_versions"]))
 
     def test_summary_reuses_core_full_for_all_three_sweeps(self):
         results = self.root / "results"

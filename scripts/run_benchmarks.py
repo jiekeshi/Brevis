@@ -1619,11 +1619,16 @@ def write_environment(
 ) -> None:
     path = args.results / "environment.json"
     existing = json.loads(path.read_text()) if path.exists() else {}
-    existing_provenance = (
+    persisted_provenance = (
         existing.get("run_provenance", {})
         if existing.get("host") == args.host_context
         else {}
     )
+    existing_provenance = {
+        method: provenance
+        for method, provenance in persisted_provenance.items()
+        if method in ALL_METHODS
+    }
     method_versions = {
         **{
             method: version
