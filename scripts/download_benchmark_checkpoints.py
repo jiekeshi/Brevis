@@ -34,7 +34,6 @@ class Checkpoint:
     name: str
     repo_id: str
     revision: str
-    canonical_repo_id: str | None = None
     single_file: str | None = None
     index_file: str | None = "model.safetensors.index.json"
 
@@ -64,9 +63,8 @@ CHECKPOINTS = (
     ),
     Checkpoint(
         "llama-3.1-8b-bf16",
-        "NousResearch/Meta-Llama-3.1-8B",
-        "1f47e50cdbe801ad8a5174156ec3a0655108fb9f",
-        canonical_repo_id="meta-llama/Llama-3.1-8B",
+        "meta-llama/Llama-3.1-8B",
+        "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
     ),
     Checkpoint(
         "ministral-3-8b-base-2512-bf16",
@@ -85,9 +83,8 @@ CHECKPOINTS = (
     ),
     Checkpoint(
         "llama-3.1-70b-bf16",
-        "NousResearch/Meta-Llama-3.1-70B",
-        "beb678ba5bd7eb1aafeffa01e2a2b3b5e93d1dd3",
-        canonical_repo_id="meta-llama/Llama-3.1-70B",
+        "meta-llama/Llama-3.1-70B",
+        "349b2ddb53ce8f2849a6c168a81980ab25258dac",
     ),
     Checkpoint(
         "mixtral-8x22b-v0.1-bf16",
@@ -309,9 +306,6 @@ def write_manifest(plan: DownloadPlan, sha256_verified: bool) -> dict[str, objec
     manifest = {
         "schema_version": 1,
         "name": plan.checkpoint.name,
-        "canonical_repo_id": (
-            plan.checkpoint.canonical_repo_id or plan.checkpoint.repo_id
-        ),
         "repo_id": plan.checkpoint.repo_id,
         "revision": plan.revision,
         "index_file": plan.index_file,
