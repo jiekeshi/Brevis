@@ -18,8 +18,6 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 pub const DEFAULT_WORKERS: usize = 32;
-/// Streaming a multi-gigabyte tensor file through a small buffer costs one
-/// syscall per buffer; at 64 KiB that is tens of thousands of them.
 const FILE_BUFFER_BYTES: usize = 4 << 20;
 const ONE_EXPANSION_TEACHER_TENSORS: usize = 4;
 const ONE_EXPANSION_TEACHER_BUDGET: usize = 6;
@@ -347,7 +345,7 @@ fn compressLoaded(
     var learned_prior: ?calibration.Result = null;
     defer if (learned_prior) |*result| result.deinit(alloc);
     var compression_options = options;
-    if (compression_options.synthesis.rule_model == null and
+    if (compression_options.synthesis.phog_prior == null and
         compression_options.synthesis.max_expansions != 0 and
         options.max_calibration_tensors != 0)
     {
@@ -383,7 +381,7 @@ fn compressLoaded(
                 loaded.tensors,
                 calibration_options,
             );
-        compression_options.synthesis.rule_model = &learned_prior.?.prior;
+        compression_options.synthesis.phog_prior = &learned_prior.?.prior;
     }
 
     const stats = try alloc.alloc(TensorStat, loaded.tensors.len);

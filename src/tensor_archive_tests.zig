@@ -167,7 +167,7 @@ test "source-backed record checksum remains bound to program output" {
     );
 }
 
-test "archive pins version and little-endian XXH3 checksum" {
+test "BRTA v3 pins version and little-endian XXH3 checksum" {
     const alloc = std.testing.allocator;
     try std.testing.expectEqual(@as(u8, 3), archive.VERSION);
 
@@ -188,41 +188,11 @@ test "archive pins version and little-endian XXH3 checksum" {
 
     const header = try archive.encodeHeader(alloc, &safetensors_prefix, 0);
     defer alloc.free(header);
-    header[archive.MAGIC.len + 1] = 1;
+    header[archive.MAGIC.len] = 1;
     try std.testing.expectError(
         error.UnsupportedVersion,
         archive.parseHeader(header, .{}),
     );
-}
-
-test "prepared canonical program bytes produce the same record" {
-    const alloc = std.testing.allocator;
-    var tensor = try literalTensor(alloc, .u16, &.{2}, &.{ 0x1234, 0xabcd });
-    defer tensor.deinit(alloc);
-    const source = [_]u8{ 0x34, 0x12, 0xcd, 0xab };
-
-    const canonical = try archive.encodeTensorRecordForSource(
-        alloc,
-        "x",
-        tensor,
-        &source,
-    );
-    defer alloc.free(canonical);
-    const bytecode = try @import("program_format.zig").serialize(
-        alloc,
-        tensor.root,
-    );
-    defer alloc.free(bytecode);
-    const prepared = try archive.encodePreparedTensorRecordForSource(
-        alloc,
-        "x",
-        tensor,
-        bytecode,
-        &source,
-    );
-    defer alloc.free(prepared);
-
-    try std.testing.expectEqualSlices(u8, canonical, prepared);
 }
 
 test "prepared record segments concatenate to the canonical frame" {
@@ -236,11 +206,10 @@ test "prepared record segments concatenate to the canonical frame" {
     );
     defer alloc.free(bytecode);
 
-    const canonical = try archive.encodePreparedTensorRecordForSource(
+    const canonical = try archive.encodeTensorRecordForSource(
         alloc,
         "x",
         tensor,
-        bytecode,
         &source,
     );
     defer alloc.free(canonical);
@@ -343,13 +312,11 @@ test "record rejects checksum corruption, program corruption, truncation, and tr
 
     const bad_program = try alloc.dupe(u8, clean);
     defer alloc.free(bad_program);
-    const program_bytes = try @import("program_format.zig").serialize(alloc, tensor.root);
-    defer alloc.free(program_bytes);
-    const program_at = std.mem.indexOf(u8, bad_program, program_bytes) orelse
-        return error.TestExpectedProgramBytes;
-    bad_program[program_at] = 0xff;
+    const magic_at = std.mem.indexOf(u8, bad_program, "BRPG") orelse
+        return error.TestExpectedProgramMagic;
+    bad_program[magic_at] = 'X';
     try std.testing.expectError(
-        error.UnknownNode,
+        error.BadMagic,
         archive.decodeTensorRecord(alloc, bad_program, .{}),
     );
 
@@ -428,8 +395,7 @@ test "archive limits and canonical ULEB checks reject adversarial framing" {
     );
 
     const overlong_count = [_]u8{
-        'B',  'R',  'E',  'V',
-        @intFromEnum(archive.KIND), archive.VERSION,
+        'B',  'R',  'T', 'A', archive.VERSION,
         0x80, 0x00,
     };
     try std.testing.expectError(
@@ -438,8 +404,7 @@ test "archive limits and canonical ULEB checks reject adversarial framing" {
     );
 
     const overflowing_count = [_]u8{
-        'B',  'R',  'E',  'V',
-        @intFromEnum(archive.KIND), archive.VERSION,
+        'B',  'R',  'T',  'A',  archive.VERSION,
         0x80, 0x80, 0x80, 0x80, 0x80,
         0x80, 0x80, 0x80, 0x80, 0x80,
     };
@@ -452,6 +417,7 @@ test "archive limits and canonical ULEB checks reject adversarial framing" {
 test "record shape clamps program allocations before tensor binding" {
     const alloc = std.testing.allocator;
     const million_zero_program = [_]u8{
+        'B', 'R', 'P', 'G', 0x02,
         0x01, 0x08, // Lit<u8>
         0xc0, 0x84, 0x3d, // count = 1,000,000
         0x19, // literal body length = 25

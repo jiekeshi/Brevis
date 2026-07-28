@@ -1,6 +1,6 @@
 const std = @import("std");
 const dsl = @import("dsl.zig");
-const grammar_prior = @import("grammar_prior.zig");
+const phog = @import("phog.zig");
 const calibration = @import("calibration.zig");
 const checkpoint = @import("checkpoint.zig");
 const safetensors = @import("safetensors.zig");
@@ -164,7 +164,7 @@ test "compression learns a checkpoint-local prior unless one is supplied" {
     defer automatic.deinit(alloc);
 
     var guided_synthesis = synthesis;
-    guided_synthesis.rule_model = &trained.prior;
+    guided_synthesis.phog_prior = &trained.prior;
     var explicit = try checkpoint.compressBytes(alloc, source, .{
         .synthesis = guided_synthesis,
         .max_calibration_tensors = 0,
@@ -183,12 +183,12 @@ test "compression learns a checkpoint-local prior unless one is supplied" {
         );
     }
 
-    var invalid_prior: grammar_prior.Prior = .{
+    var invalid_prior: phog.Prior = .{
         .config = .{ .learned_denominator = 0 },
     };
     defer invalid_prior.deinit(alloc);
     var invalid_synthesis = synthesis;
-    invalid_synthesis.rule_model = &invalid_prior;
+    invalid_synthesis.phog_prior = &invalid_prior;
     try std.testing.expectError(
         error.InvalidConfig,
         checkpoint.compressBytes(alloc, source, .{
@@ -243,7 +243,7 @@ test "one expansion uses a learned PHOG completion instead of the float seed" {
 
     var guided_options = requested;
     guided_options.seed_float_fields = false;
-    guided_options.rule_model = &trained.prior;
+    guided_options.phog_prior = &trained.prior;
     var explicit = try checkpoint.compressBytes(alloc, source, .{
         .synthesis = guided_options,
         .max_calibration_tensors = 0,
@@ -267,7 +267,7 @@ test "one expansion uses a learned PHOG completion instead of the float seed" {
     });
 }
 
-test "one-expansion PHOG learns float fields from a seeded teacher" {
+test "one-expansion calibrated PHOG selects a structured program" {
     const alloc = std.testing.allocator;
     const header =
         \\{"weights":{"dtype":"F32","shape":[256],"data_offsets":[0,1024]}}
@@ -309,10 +309,6 @@ test "one-expansion PHOG learns float fields from a seeded teacher" {
         .{},
     );
     defer parsed.deinit(alloc);
-    // The teacher still seeds float fields, but the requested one-expansion
-    // search now measures several frontier completions by exact bytes and keeps
-    // whichever is smallest. On this fixture the mantissa advances linearly, so
-    // a modular-difference scan beats the field split.
     try std.testing.expect(switch (parsed.records[0].tensor_program.root.kind) {
         .literal => false,
         else => true,

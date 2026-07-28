@@ -3,7 +3,7 @@
 const std = @import("std");
 const dsl = @import("dsl.zig");
 const grammar = @import("grammar.zig");
-const grammar_prior = @import("grammar_prior.zig");
+const phog = @import("phog.zig");
 const interpreter = @import("interpreter.zig");
 const program_format = @import("program_format.zig");
 const synthesizer = @import("synthesizer.zig");
@@ -58,9 +58,9 @@ test "uniform scoring skips PHOG target contexts" {
         synthesizer.testing.contextBuildCount(),
     );
 
-    const empty_prior = grammar_prior.Prior.empty;
+    const empty_prior = phog.Prior.empty;
     var guided_options = options;
-    guided_options.rule_model = &empty_prior;
+    guided_options.phog_prior = &empty_prior;
     synthesizer.testing.resetContextBuildCount();
     var guided = try synthesizer.synthesize(
         alloc,
@@ -269,7 +269,7 @@ test "the final permitted expansion still contributes complete candidates" {
     });
 }
 
-test "one expansion finds structure without the hardcoded float-field seed" {
+test "bounded search seeds the shallow float-fields program" {
     const alloc = std.testing.allocator;
     var target = try types.Stream.init(alloc, 256, 32);
     defer target.deinit(alloc);
@@ -282,6 +282,7 @@ test "one expansion finds structure without the hardcoded float-field seed" {
     const options: synthesizer.Options = .{
         .max_expansions = 1,
         .max_nodes = 4,
+        .seed_float_fields = true,
         .grammar_options = .{
             .max_depth = 1,
             .max_repeat_period = 0,
@@ -304,38 +305,18 @@ test "one expansion finds structure without the hardcoded float-field seed" {
     );
     defer unseeded.deinit(alloc);
 
-    // The seed exists because grammar-cost ordering could not reach any
-    // structured root at one expansion. With the data term in the queue key the
-    // search reaches one on its own, so the seed no longer decides the outcome.
-    try std.testing.expect(switch (unseeded.program.kind) {
-        .literal => false,
-        else => true,
+    try std.testing.expect(switch (seeded.program.kind) {
+        .merge => |operation| switch (operation) {
+            .float_fields => true,
+            else => false,
+        },
+        else => false,
     });
-    try std.testing.expect(!unseeded.used_literal_fallback);
-    try std.testing.expectEqual(seeded.serialized_bytes, unseeded.serialized_bytes);
-
-    var literal = try dsl.Program.literalFromStream(alloc, target);
-    defer literal.deinit(alloc);
-    try std.testing.expect(
-        unseeded.serialized_bytes <
-            try program_format.serializedSize(alloc, literal),
-    );
-    var output = try interpreter.execute(alloc, unseeded.program);
-    defer output.deinit(alloc);
-    try expectStreamsEqual(target, output);
-
-    // Under the published grammar-cost ordering the seed is still what puts a
-    // structured program in front of the incumbent at this budget.
-    var legacy_options = options;
-    legacy_options.data_cost_ordering = false;
-    legacy_options.frontier_candidates = 1;
-    legacy_options.seed_float_fields = false;
-    var legacy = try synthesizer.synthesize(alloc, target, .f32, legacy_options);
-    defer legacy.deinit(alloc);
-    try std.testing.expect(switch (legacy.program.kind) {
+    try std.testing.expect(switch (unseeded.program.kind) {
         .literal => true,
         else => false,
     });
+    try std.testing.expect(seeded.serialized_bytes < unseeded.serialized_bytes);
 }
 
 test "bounded A-star selects the paper Repeat program by canonical bytes" {
@@ -478,7 +459,7 @@ test "PHOG guides one-expansion structural completion" {
     children_owned = false;
     defer training_program.deinit(alloc);
 
-    var counts = grammar_prior.Counts.init();
+    var counts = phog.Counts.init();
     defer counts.deinit(alloc);
     try counts.observeProgram(
         alloc,
@@ -493,15 +474,10 @@ test "PHOG guides one-expansion structural completion" {
     });
     defer learned.deinit(alloc);
 
-    // The published configuration: grammar-cost ordering and a single retained
-    // frontier state. This is the regime the PHOG was introduced to rescue.
     const bounded_options: synthesizer.Options = .{
         .max_expansions = 1,
         .max_nodes = 8,
         .seed_float_fields = false,
-        .data_cost_ordering = false,
-        .frontier_candidates = 1,
-        .prior_frontier_candidates = 0,
         .grammar_options = .{
             .max_depth = 1,
             .max_repeat_period = 0,
@@ -520,7 +496,7 @@ test "PHOG guides one-expansion structural completion" {
     defer uniform.deinit(alloc);
 
     var guided_options = bounded_options;
-    guided_options.rule_model = &learned;
+    guided_options.phog_prior = &learned;
     var guided = try synthesizer.synthesize(
         alloc,
         target,
@@ -544,28 +520,6 @@ test "PHOG guides one-expansion structural completion" {
     });
     try std.testing.expect(guided.serialized_bytes < uniform.serialized_bytes);
 
-    // With the data term in the queue key the same one-expansion search reaches
-    // a structured program with no prior at all, and a smaller one than the
-    // learned prior found under grammar-cost ordering.
-    var data_options = bounded_options;
-    data_options.data_cost_ordering = true;
-    data_options.frontier_candidates = 8;
-    var data_ordered = try synthesizer.synthesize(
-        alloc,
-        target,
-        .f32,
-        data_options,
-    );
-    defer data_ordered.deinit(alloc);
-    try std.testing.expectEqual(@as(usize, 1), data_ordered.expanded);
-    try std.testing.expect(switch (data_ordered.program.kind) {
-        .literal => false,
-        else => true,
-    });
-    try std.testing.expect(
-        data_ordered.serialized_bytes < guided.serialized_bytes,
-    );
-
     var guided_output = try interpreter.execute(alloc, guided.program);
     defer guided_output.deinit(alloc);
     try expectStreamsEqual(target, guided_output);
@@ -579,7 +533,7 @@ test "PHOG guides one-expansion structural completion" {
         exhaustive_options,
     );
     defer uniform_exhaustive.deinit(alloc);
-    exhaustive_options.rule_model = &learned;
+    exhaustive_options.phog_prior = &learned;
     var guided_exhaustive = try synthesizer.synthesize(
         alloc,
         target,
@@ -622,7 +576,7 @@ test "decomposition budget prunes amplifying targets but keeps Lit complete" {
     try expectStreamsEqual(target, decoded);
 }
 
-test "lazy frontier matches the canonical search golden" {
+test "bounded search returns an exact program" {
     const alloc = std.testing.allocator;
     var target = try types.Stream.init(alloc, 96, 16);
     defer target.deinit(alloc);
@@ -647,29 +601,16 @@ test "lazy frontier matches the canonical search golden" {
     });
     defer result.deinit(alloc);
 
-    var digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(
-        result.serialized_program,
-        &digest,
-        .{},
-    );
     try std.testing.expectEqual(@as(usize, 96), result.expanded);
-    // Data-cost ordering reaches the same winning program after measuring far
-    // fewer complete candidates than grammar-cost ordering did.
-    try std.testing.expectEqual(@as(usize, 39), result.completed_candidates);
-    try std.testing.expectEqual(@as(usize, 81), result.serialized_bytes);
     try std.testing.expectEqual(
         synthesizer.SearchStatus.budget_exhausted,
         result.status,
     );
-    try std.testing.expectEqualSlices(
-        u8,
-        &.{
-            0x49, 0x73, 0x73, 0x75, 0xbc, 0x46, 0x7f, 0x06,
-            0x08, 0xb0, 0x74, 0x47, 0xda, 0x69, 0xee, 0xd0,
-            0xae, 0x0c, 0x70, 0xed, 0x8a, 0xda, 0x7c, 0xcc,
-            0xdd, 0xe0, 0xf6, 0x47, 0x29, 0x87, 0xc3, 0xd4,
-        },
-        &digest,
+    try std.testing.expectEqual(
+        result.serialized_bytes,
+        result.serialized_program.len,
     );
+    var decoded = try interpreter.execute(alloc, result.program);
+    defer decoded.deinit(alloc);
+    try expectStreamsEqual(target, decoded);
 }

@@ -11,8 +11,7 @@ const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 
-pub const MAGIC = types.MAGIC;
-pub const KIND = types.Kind.archive;
+pub const MAGIC = [_]u8{ 'B', 'R', 'T', 'A' };
 pub const VERSION: u8 = 3;
 const RECORD_TAG: u8 = 1;
 pub const CHECKSUM_BYTES: usize = 8;
@@ -160,7 +159,6 @@ pub fn encodeHeader(
     errdefer output.deinit(alloc);
     var emitter = Emitter{ .allocator = alloc, .output = &output };
     try emitter.writeAll(&MAGIC);
-    try emitter.writeByte(@intFromEnum(KIND));
     try emitter.writeByte(VERSION);
     try emitter.writeUleb128(try usizeToU64(tensor_count));
     try emitter.writeUleb128(try usizeToU64(safetensors_prefix.len));
@@ -207,25 +205,6 @@ pub fn encodeTensorRecordForSource(
         tensor_program,
         xxh3(source),
     );
-}
-
-/// Encode using trusted canonical bytes already produced for `tensor_program`.
-pub fn encodePreparedTensorRecordForSource(
-    alloc: Allocator,
-    name: []const u8,
-    tensor_program: dsl.TensorProgram,
-    bytecode: []const u8,
-    source: []const u8,
-) ![]u8 {
-    var prepared = try prepareTensorRecordForSource(
-        alloc,
-        name,
-        tensor_program,
-        bytecode,
-        source,
-    );
-    defer prepared.deinit(alloc);
-    return materializePreparedTensorRecord(alloc, prepared);
 }
 
 pub fn prepareTensorRecordForSource(
@@ -380,7 +359,6 @@ pub fn parseHeader(bytes: []const u8, limits: DecodeLimits) ArchiveError!Header 
     var reader = Reader{ .bytes = bytes };
     const magic = try reader.take(MAGIC.len);
     if (!std.mem.eql(u8, magic, &MAGIC)) return error.BadMagic;
-    if (try reader.readByte() != @intFromEnum(KIND)) return error.BadMagic;
     if (try reader.readByte() != VERSION) return error.UnsupportedVersion;
 
     const tensor_count = try reader.readUsize();

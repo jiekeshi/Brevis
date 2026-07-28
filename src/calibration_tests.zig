@@ -3,12 +3,12 @@
 const std = @import("std");
 const calibration = @import("calibration.zig");
 const dsl = @import("dsl.zig");
-const grammar_prior = @import("grammar_prior.zig");
+const phog = @import("phog.zig");
 const safetensors = @import("safetensors.zig");
 const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
-const ProductionId = @TypeOf(grammar_prior.PRODUCTIONS[0]);
+const ProductionId = @TypeOf(phog.PRODUCTIONS[0]);
 
 fn tensor(
     name: []const u8,
@@ -38,12 +38,12 @@ fn stream(view: types.TensorView) !types.Stream {
 }
 
 fn expectRootPreferred(
-    prior: *const grammar_prior.Prior,
+    prior: *const phog.Prior,
     target: types.Stream,
     dtype: types.Dtype,
     preferred: ProductionId,
 ) !void {
-    const context = grammar_prior.Context.fromTarget(
+    const context = phog.Context.fromTarget(
         target,
         dtype,
         null,
@@ -51,7 +51,7 @@ fn expectRootPreferred(
         0,
     );
     const admitted = [_]ProductionId{ .literal, preferred };
-    var costs: [admitted.len]grammar_prior.Cost = undefined;
+    var costs: [admitted.len]phog.Cost = undefined;
     try prior.scoreSet(context, &admitted, &costs);
     try std.testing.expect(costs[1] < costs[0]);
 }
@@ -104,7 +104,7 @@ test "training Repeat and Const tensors lowers their contextual root costs" {
     );
 }
 
-test "training is canonical and ignores any caller supplied rule model" {
+test "training is canonical and ignores any caller supplied PHOG prior" {
     const alloc = std.testing.allocator;
     var data = [_]u8{
         0x00, 0x00, 0x80, 0x3f,
@@ -127,7 +127,7 @@ test "training is canonical and ignores any caller supplied rule model" {
     );
     var repeat_program = try dsl.Program.repeat(alloc, 3, period);
     defer repeat_program.deinit(alloc);
-    var hostile_counts = grammar_prior.Counts.init();
+    var hostile_counts = phog.Counts.init();
     defer hostile_counts.deinit(alloc);
     try hostile_counts.observeProgram(
         alloc,
@@ -160,7 +160,7 @@ test "training is canonical and ignores any caller supplied rule model" {
     defer uniform.deinit(alloc);
 
     var caller_guided = base_synthesis;
-    caller_guided.rule_model = &supplied_prior;
+    caller_guided.phog_prior = &supplied_prior;
     var ignored = try calibration.train(alloc, &tensors, .{
         .synthesis = caller_guided,
     });
@@ -176,7 +176,7 @@ test "training is canonical and ignores any caller supplied rule model" {
         uniform.completed_candidates,
         ignored.completed_candidates,
     );
-    try std.testing.expectEqualStrings("BREV", uniform_bytes[0..4]);
+    try std.testing.expectEqualStrings("BRGP", uniform_bytes[0..4]);
     try std.testing.expect(std.mem.indexOf(u8, uniform_bytes, &data) == null);
 }
 

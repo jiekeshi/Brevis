@@ -70,37 +70,18 @@ directly.
 
 The winner is the smallest correct complete program encountered, measured by exact canonical serialized bytes. A budget limit bounds work; it is not a claim of finding the globally shortest possible program.
 
-The queue key is an estimate of the completed program's serialized size: the
-exact bits of every instruction field already selected, plus the data cost each
-open hole's target still owes. A target the estimator's sample covers completely
-is measured with the real literal codec; a longer one is modelled from a bounded
-deterministic sample over the same three regimes the codec chooses between - raw
-storage, minimum-width bit packing, and a table-driven entropy body.
-
-This data term is what makes structure reachable. Contextual rule cost alone is
-nonnegative and paid per node, so a score built only from it is monotone in
-derivation length: the trivial `Lit` is always cheapest, every additional hole
-is pure loss, and a wide `Merge` ranks last precisely when splitting is what
-collapses its children's entropy. Ordering by estimated size instead lets the
-encoder see the payoff at the moment a production is proposed.
-
-Grammar description length remains the secondary key, ordering states whose
-size estimates agree. For Equations 18--20 the encoder derives conservative
+The A* key is `g + h`: `g` is paid contextual rule cost. For Equations 18--20,
+the encoder derives conservative
 per-production costs across every PHOG context, then solves a recursive
 shortest-derivation problem in a relaxed typed grammar. The relaxation retains
 width, depth, and the length classes `b[0]`, `b[1]`, and `b[2+]`, while dropping
-target guards, exact positive lengths, and concrete parameters. Exact
-serialized-size lower bounds break remaining ties and prune states that cannot
-improve the incumbent.
+target guards, exact positive lengths, and concrete parameters. The heuristic
+sums the resulting `c(A)` for all open holes. Exact serialized-size lower bounds
+break equal-score ties and prune states that cannot improve the incumbent.
 
-At budget exhaustion the encoder retains several best-ranked open states rather
-than one, completes each with `Lit`, and measures them by exact canonical bytes.
-Retaining a single state makes the whole program depend on one guess that was
-never measured, and it lets a larger budget return a worse program than a
-smaller one.
-
-`--data-cost-ordering 0 --frontier-candidates 1` restores the published
-grammar-cost search exactly.
+At budget exhaustion the encoder completes the PHOG/A*-preferred open state
+with `Lit`, measures it by exact canonical bytes, and compares it with the
+incumbent.
 
 The explicit empty-stream extension is isolated as `b[0]`: only `Lit(empty)`
 is admitted and its completion cost is zero. Universal `Lit`, deterministic
@@ -112,35 +93,6 @@ An independent decomposition-storage budget is checked before child targets
 are allocated. It bounds the total storage of simultaneously open target
 streams, so amplifying transforms such as 32-bit bit planes can be skipped
 without changing DSL legality or the universal `Lit` fallback.
-
-### What the rule prior contributes
-
-The prior does not compete with the size estimate; it covers where the estimate
-is weakest. The estimate is a bounded zeroth-order sample of each target, and on
-homogeneous BF16 weights the decomposition that actually wins can sit 20-30%
-behind in estimated size, outside any affordable estimate-ranked frontier. The
-prior has measured which decomposition won on sibling tensors of the same
-checkpoint, so its nominations reach states the estimate ranks too low to try.
-
-Exact-measurement slots are therefore split between the two. Spending them all
-on the estimate is not the best use:
-
-```text
-CodeLlama-7B shard 2 (BF16)          archive bytes      time
-  4 estimate slots, 0 prior       2,301,221,029      21.5 s
-  1 estimate slot,  2 prior       2,301,221,029      15.4 s
-  1 estimate slot,  3 prior       2,298,153,444      23.5 s
-```
-
-Three prior slots reach an archive no estimate-ranked frontier reaches at any
-width, and two prior slots reach the estimate's best result in 1.4x less time.
-The default is one estimate slot and two prior slots, which is never worse in
-bytes than four estimate slots and is faster on most checkpoints. Raising
-`--prior-frontier-candidates` to 3 buys a further 0.13% on some BF16
-checkpoints for roughly 1.5x the encode time.
-
-Where the estimate already ranks well the prior is simply neutral: GPT-2 (F32)
-and TinyLlama-15M (F16) produce identical archives with and without it.
 
 ### PHOG ordering
 
@@ -174,9 +126,12 @@ Equal-size literal encodings use a stable wire-tag order. The decoder validates 
 
 ## Formats and exact decoding
 
-Semantic programs use canonical `BRPG` version 1 bytecode. Node, operation, and dtype IDs are explicit stable wire values rather than in-memory enum ordinals.
+Semantic programs use canonical `BRPG` version 2 bytecode. Node, operation, and dtype IDs are explicit stable wire values rather than in-memory enum ordinals.
 
-Whole-tensor archives use `BRTA` version 2. The archive header stores the original safetensors prefix, followed by one length-delimited record for each tensor.
+Whole-tensor archives use `BRTA` version 3. The archive header stores the original safetensors prefix, followed by one length-delimited record for each tensor.
+
+Encoder-only PHOG priors use `BRGP` version 1 and are never required to decode
+an archive.
 
 Each record contains the tensor name, dtype, shape, canonical program bytecode,
 and an XXH3-64 checksum of the decoded physical bytes. The checksum detects
@@ -186,9 +141,9 @@ independently executable and contain no cross-record references.
 Decoding follows this path:
 
 ```text
-BRTA v2
+BRTA v3
   -> validate limits and safetensors metadata
-  -> decode and type-check one BRPG v1 program per tensor
+  -> decode and type-check one BRPG v2 program per tensor
   -> execute the program
   -> verify the tensor XXH3-64 checksum
   -> restore the original prefix and tensor bytes
@@ -263,8 +218,8 @@ persisted prior overrides that checkpoint-local model:
 ```bash
 ./zig-out/bin/brevis compress model.safetensors model.brv \
   --max-expansions 512 --tensors 256 --workers 32
-./zig-out/bin/brevis calibrate model.safetensors model.brgp --tensors 256
-./zig-out/bin/brevis compress model.safetensors model.brv --prior model.brgp
+./zig-out/bin/brevis calibrate model.safetensors model.brvp --tensors 256
+./zig-out/bin/brevis compress model.safetensors model.brv --prior model.brvp
 ```
 
 The main compute controls are:
@@ -340,13 +295,13 @@ src/dsl.zig                      typed seven-node semantic program tree
 src/semantics.zig                fixed-width reversible operations
 src/decomposition.zig            exact inverse decompositions
 src/grammar.zig                  finite target-directed proposals
-src/grammar_prior.zig            PHOG contexts, scoring, and prior format
+src/phog.zig                     PHOG contexts, scoring, and prior format
 src/synthesizer.zig              budgeted A* and exact incumbent selection
 src/literal_encoding.zig         raw, bitpack, Huffman, and rANS lowering
 src/codec.zig                    physical entropy-codec primitives
-src/program_format.zig           canonical BRPG v1 serialization
+src/program_format.zig           canonical BRPG v2 serialization
 src/interpreter.zig              validated program execution
-src/tensor_archive.zig           whole-tensor BRTA v2 framing and checksums
+src/tensor_archive.zig           whole-tensor BRTA v3 framing and checksums
 src/safetensors.zig              strict safetensors parsing and writing
 src/checkpoint.zig               end-to-end compression and decompression
 src/calibration.zig              deterministic input-local prior training
@@ -359,10 +314,10 @@ The central public seams are `synthesize`, `writeProgram`, `readProgram`, and `e
 
 ## Compatibility
 
-`BRTA` version 2 is intentionally incompatible with version 1 and legacy
-schema 5 and 6 archives. Decode an older archive with its matching Brevis
-revision before recompressing it. The paper-aligned reader does not retain the
-old mutable bytecode, block framing, or back-reference model.
+`BRTA` version 3 is intentionally incompatible with older archives. Decode an
+older archive with its matching Brevis revision before recompressing it. The
+paper-aligned reader does not retain the old mutable bytecode, block framing,
+or back-reference model.
 
 To migrate an old archive, decode it with the matching legacy Brevis revision, recover the safetensors file, then compress that file with this version.
 

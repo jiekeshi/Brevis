@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const grammar = @import("grammar.zig");
-const grammar_prior = @import("grammar_prior.zig");
+const phog = @import("phog.zig");
 const calibration = @import("calibration.zig");
 const checkpoint = @import("checkpoint.zig");
 const safetensors = @import("safetensors.zig");
@@ -224,25 +224,6 @@ fn parseArguments(
             args.saw_search_option = true;
             args.synthesis.grammar_options.max_field_splits =
                 try parseUnsigned(usize, value);
-        } else if (std.mem.eql(u8, word, "--data-cost-ordering")) {
-            args.saw_search_option = true;
-            args.synthesis.data_cost_ordering =
-                try parseUnsigned(u1, value) == 1;
-        } else if (std.mem.eql(u8, word, "--frontier-candidates")) {
-            args.saw_search_option = true;
-            args.synthesis.frontier_candidates =
-                try parseUnsigned(usize, value);
-        } else if (std.mem.eql(u8, word, "--frontier-margin")) {
-            args.saw_search_option = true;
-            args.synthesis.frontier_margin_percent =
-                try parseUnsigned(u32, value);
-        } else if (std.mem.eql(u8, word, "--prior-gate")) {
-            args.saw_search_option = true;
-            args.synthesis.prior_gate = try parseUnsigned(usize, value);
-        } else if (std.mem.eql(u8, word, "--prior-frontier-candidates")) {
-            args.saw_search_option = true;
-            args.synthesis.prior_frontier_candidates =
-                try parseUnsigned(usize, value);
         } else if (std.mem.eql(u8, word, "--max-total-bytes")) {
             args.resources.max_total_bytes =
                 try parseUnsigned(usize, value);
@@ -272,13 +253,6 @@ fn validateArguments(args: Arguments) !void {
     if (args.positional.items.len != expected_positionals)
         return error.InvalidArguments;
     if (args.synthesis.max_nodes == 0)
-        return error.InvalidArguments;
-    if (args.synthesis.frontier_candidates == 0 or
-        args.synthesis.frontier_candidates >
-            synthesizer.MAX_FRONTIER_CANDIDATES or
-        args.synthesis.prior_frontier_candidates >
-            synthesizer.MAX_FRONTIER_CANDIDATES or
-        args.synthesis.prior_gate > grammar_prior.PRODUCTION_COUNT)
         return error.InvalidArguments;
     if (args.workers == 0)
         return error.InvalidArguments;
@@ -346,14 +320,14 @@ fn commandCompress(
     resources: ResourceLimits,
     workers: usize,
 ) !void {
-    var prior: ?grammar_prior.Prior = if (prior_path) |path|
+    var prior: ?phog.Prior = if (prior_path) |path|
         try loadPrior(alloc, io, path)
     else
         null;
     defer if (prior) |*model| model.deinit(alloc);
 
     var synthesis = base_options;
-    if (prior) |*model| synthesis.rule_model = model;
+    if (prior) |*model| synthesis.phog_prior = model;
     var summary = try checkpoint.compressFile(
         alloc,
         io,
@@ -536,19 +510,13 @@ fn commandConfig(
     try json.objectField("phog_role");
     try json.write("queue_order_and_terminal_frontier");
     try json.objectField("archive");
-    try json.write("BRTA-v2");
+    try json.write("BRTA-v3");
     try json.objectField("workers");
     try json.write(workers);
     try json.objectField("max_expansions");
     try json.write(options.max_expansions);
     try json.objectField("max_nodes");
     try json.write(options.max_nodes);
-    try json.objectField("data_cost_ordering");
-    try json.write(options.data_cost_ordering);
-    try json.objectField("frontier_candidates");
-    try json.write(options.frontier_candidates);
-    try json.objectField("prior_frontier_candidates");
-    try json.write(options.prior_frontier_candidates);
     try json.objectField("seed_float_fields");
     try json.write(options.seed_float_fields);
     try json.objectField("max_decomposition_bytes");
@@ -611,7 +579,7 @@ fn loadPrior(
     alloc: Allocator,
     io: std.Io,
     path: []const u8,
-) !grammar_prior.Prior {
+) !phog.Prior {
     const encoded = try std.Io.Dir.cwd().readFileAlloc(
         io,
         path,
@@ -619,7 +587,7 @@ fn loadPrior(
         .limited(MAX_PRIOR_BYTES),
     );
     defer alloc.free(encoded);
-    return grammar_prior.Prior.deserialize(alloc, encoded);
+    return phog.Prior.deserialize(alloc, encoded);
 }
 
 fn writeFileAtomic(
@@ -667,11 +635,6 @@ fn usage(writer: *std.Io.Writer) !void {
         \\  --max-map-constants N
         \\  --max-rotations N
         \\  --max-field-splits N
-        \\  --data-cost-ordering 0|1   order the queue by estimated archive size
-        \\  --frontier-candidates N    budget-cut states measured by exact bytes
-        \\
-        \\  --data-cost-ordering 0 --frontier-candidates 1 restores the
-        \\  published grammar-cost search.
         \\
         \\Parallel file execution and calibration:
         \\  --workers N

@@ -11,6 +11,9 @@ const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 
+pub const MAGIC = [_]u8{ 'B', 'R', 'P', 'G' };
+pub const VERSION: u8 = 2;
+
 /// These values are part of the persistent format. Never derive them from the
 /// in-memory union tag order.
 pub const NodeWireId = enum(u8) {
@@ -93,8 +96,8 @@ pub const DecodeError = Allocator.Error || error{
     ExecutionWorkLimitExceeded,
 };
 
-/// Serialize one validated semantic program into its canonical version-1
-/// representation. The returned bytes are allocator-owned.
+/// Serialize one validated semantic program into its canonical representation.
+/// The returned bytes are allocator-owned.
 pub fn serialize(alloc: Allocator, program: dsl.Program) ![]u8 {
     _ = try program.typeOf();
 
@@ -109,14 +112,13 @@ pub fn serialize(alloc: Allocator, program: dsl.Program) ![]u8 {
     return output.toOwnedSlice(alloc);
 }
 
-/// A program's exact size together with the literal codec analyses that
-/// produced it, so `emitPrepared` can write the bytes without repeating the
-/// selection work.
-pub const Prepared = struct {
+/// Exact serialized size and literal codec analyses, retained so
+/// `emitPrepared` does not repeat codec selection.
+pub const PreparedSerialization = struct {
     encodings: std.ArrayList(literal_encoding.PreparedEncoding),
     size: usize,
 
-    pub fn deinit(self: *Prepared, alloc: Allocator) void {
+    pub fn deinit(self: *PreparedSerialization, alloc: Allocator) void {
         for (self.encodings.items) |*encoding| encoding.deinit(alloc);
         self.encodings.deinit(alloc);
         self.* = undefined;
@@ -124,12 +126,12 @@ pub const Prepared = struct {
 };
 
 /// Size `program` while retaining its literal analyses. A null result means the
-/// program provably reaches `limit`, exactly as `serializedSizeAtMost` reports.
+/// program provably reaches `limit`.
 pub fn prepareAtMost(
     alloc: Allocator,
     program: dsl.Program,
     limit: usize,
-) !?Prepared {
+) !?PreparedSerialization {
     _ = try program.typeOf();
 
     var encodings: std.ArrayList(literal_encoding.PreparedEncoding) = .empty;
@@ -157,7 +159,7 @@ pub fn prepareAtMost(
 pub fn emitPrepared(
     alloc: Allocator,
     program: dsl.Program,
-    prepared: Prepared,
+    prepared: PreparedSerialization,
 ) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(alloc);
@@ -184,29 +186,7 @@ pub fn serializedSize(alloc: Allocator, program: dsl.Program) !usize {
     return emitter.count;
 }
 
-/// Exact canonical byte length when it is below `limit`, otherwise null.
-/// Emission stops as soon as the running length or an admissible literal
-/// lower bound reaches `limit`, so candidates that cannot beat the incumbent
-/// never pay for a full entropy-coded measurement.
-pub fn serializedSizeAtMost(
-    alloc: Allocator,
-    program: dsl.Program,
-    limit: usize,
-) !?usize {
-    _ = try program.typeOf();
-
-    var emitter = Emitter{
-        .allocator = alloc,
-        .limit = limit,
-    };
-    emitFile(&emitter, program) catch |err| switch (err) {
-        error.SizeLimitReached => return null,
-        else => return err,
-    };
-    return emitter.count;
-}
-
-/// Decode exactly one version-1 program. The whole tree is parsed first, then
+/// Decode exactly one program. The whole tree is parsed first, then
 /// its semantic type is checked through `Program.typeOf`.
 pub fn deserialize(
     alloc: Allocator,
@@ -214,6 +194,9 @@ pub fn deserialize(
     limits: DecodeLimits,
 ) DecodeError!dsl.Program {
     var reader = Reader{ .bytes = bytes };
+    const magic = try reader.take(MAGIC.len);
+    if (!std.mem.eql(u8, magic, &MAGIC)) return error.BadMagic;
+    if (try reader.readByte() != VERSION) return error.UnsupportedVersion;
 
     var state = DecodeState{ .limits = limits };
     var program = try readNode(alloc, &reader, &state, 1);
@@ -309,6 +292,8 @@ const Emitter = struct {
 };
 
 fn emitFile(emitter: *Emitter, program: dsl.Program) !void {
+    try emitter.writeAll(&MAGIC);
+    try emitter.writeByte(VERSION);
     try emitNode(emitter, program);
 }
 

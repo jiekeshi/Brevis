@@ -9,7 +9,7 @@ const std = @import("std");
 pub const types = @import("types.zig");
 pub const dsl = @import("dsl.zig");
 pub const grammar = @import("grammar.zig");
-pub const grammar_prior = @import("grammar_prior.zig");
+pub const phog = @import("phog.zig");
 pub const calibration = @import("calibration.zig");
 pub const checkpoint = @import("checkpoint.zig");
 pub const safetensors = @import("safetensors.zig");
@@ -29,7 +29,7 @@ pub const SynthesisResult = synthesizer.Result;
 pub const ProgramDecodeLimits = program_format.DecodeLimits;
 
 /// Find the smallest exact program encountered within the configured finite
-/// search budget. The optional PHOG in `options.rule_model` orders the queue
+/// search budget. The optional PHOG in `options.phog_prior` orders the queue
 /// and selects the bounded terminal-completion frontier; exact size still
 /// decides between completed candidates.
 pub fn synthesize(

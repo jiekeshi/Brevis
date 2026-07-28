@@ -337,14 +337,6 @@ pub fn parsePrefix(alloc: Allocator, prefix: []const u8) !HeaderMetadata {
     return parsePrefixWithLimits(alloc, prefix, .{});
 }
 
-/// Descriptive alias for callers that treat the prefix as header metadata.
-pub const parseHeaderMetadata = parsePrefix;
-
-pub fn validatePrefix(alloc: Allocator, prefix: []const u8) !void {
-    var metadata = try parsePrefix(alloc, prefix);
-    metadata.deinit(alloc);
-}
-
 /// Parse `bytes` and transfer ownership of the complete buffer to the
 /// returned `Loaded` on success. On error, ownership remains with the caller.
 pub fn loadFromBytesWithLimits(

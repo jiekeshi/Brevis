@@ -2,11 +2,11 @@
 //!
 //! Calibration is an encoder policy step, not part of the archive or decoder.
 //! Every observation comes from an exact winning program produced by uniform
-//! synthesis over one complete physical tensor stream. A caller-supplied rule
-//! model is deliberately ignored so a model can never train itself.
+//! synthesis over one complete physical tensor stream. A caller-supplied PHOG
+//! prior is deliberately ignored so a prior can never train itself.
 
 const std = @import("std");
-const grammar_prior = @import("grammar_prior.zig");
+const phog = @import("phog.zig");
 const safetensors = @import("safetensors.zig");
 const synthesizer = @import("synthesizer.zig");
 const types = @import("types.zig");
@@ -23,7 +23,7 @@ pub const Options = struct {
     /// deterministic strata cover dtype and physical-size ranges first.
     max_tensors: usize = DEFAULT_TENSORS,
     /// Search limits and grammar bounds used to obtain each exact program.
-    /// `rule_model` is always forced to null during calibration.
+    /// `phog_prior` is always forced to null during calibration.
     synthesis: synthesizer.Options = .{},
     /// Upper bound on the words each observed tensor contributes. The prior is
     /// a search-ordering policy over production contexts, so a bounded prefix
@@ -31,11 +31,11 @@ pub const Options = struct {
     /// tensors.
     max_sample_elements: usize = 0,
     /// Configuration embedded in the returned learned prior.
-    prior_config: grammar_prior.Config = .{},
+    prior_config: phog.Config = .{},
 };
 
 pub const Result = struct {
-    prior: grammar_prior.Prior,
+    prior: phog.Prior,
     observed_tensors: usize,
     expanded: usize,
     completed_candidates: usize,
@@ -69,11 +69,11 @@ pub fn train(
 ) !Result {
     try options.prior_config.validate();
 
-    var counts = grammar_prior.Counts.init();
+    var counts = phog.Counts.init();
     defer counts.deinit(alloc);
 
     var uniform_options = options.synthesis;
-    uniform_options.rule_model = null;
+    uniform_options.phog_prior = null;
 
     const selected = try selectTensorIndices(
         alloc,
@@ -130,8 +130,8 @@ pub fn trainParallel(
     defer alloc.free(selected);
 
     var uniform_options = options.synthesis;
-    uniform_options.rule_model = null;
-    var counts = grammar_prior.Counts.init();
+    uniform_options.phog_prior = null;
+    var counts = phog.Counts.init();
     defer counts.deinit(alloc);
     var totals: Totals = .{};
 
@@ -261,8 +261,8 @@ fn synthesizeTask(
 
 fn finish(
     alloc: Allocator,
-    counts: *const grammar_prior.Counts,
-    config: grammar_prior.Config,
+    counts: *const phog.Counts,
+    config: phog.Config,
     observed_tensors: usize,
     totals: Totals,
 ) !Result {

@@ -1,9 +1,9 @@
-//! Contract tests for the PHOG-inspired prior over the paper DSL grammar.
+//! Contract tests for the contextual PHOG.
 
 const std = @import("std");
 const dsl = @import("dsl.zig");
 const grammar = @import("grammar.zig");
-const prior_mod = @import("grammar_prior.zig");
+const phog = @import("phog.zig");
 const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
@@ -19,7 +19,7 @@ fn streamFromWords(
 }
 
 test "the default prior uses the fully learned smoothed distribution" {
-    const config: prior_mod.Config = .{};
+    const config: phog.Config = .{};
     try std.testing.expectEqual(@as(u32, 1), config.learned_numerator);
     try std.testing.expectEqual(@as(u32, 1), config.learned_denominator);
     try std.testing.expectEqual(@as(u64, 1), config.smoothing);
@@ -30,7 +30,7 @@ test "an untrained prior is strictly uniform over the admitted productions" {
     var target = try streamFromWords(alloc, 8, &.{ 1, 2, 1, 2 });
     defer target.deinit(alloc);
 
-    const context = prior_mod.Context.fromTarget(
+    const context = phog.Context.fromTarget(
         target,
         .u8,
         null,
@@ -43,11 +43,11 @@ test "an untrained prior is strictly uniform over the admitted productions" {
         .concat,
         .map_xor,
     };
-    var costs: [admitted.len]prior_mod.Cost = undefined;
-    try prior_mod.Prior.empty.scoreSet(context, &admitted, &costs);
+    var costs: [admitted.len]phog.Cost = undefined;
+    try phog.Prior.empty.scoreSet(context, &admitted, &costs);
 
-    const expected = prior_mod.uniformCost(admitted.len);
-    try std.testing.expectEqual(@as(prior_mod.Cost, 2048), expected);
+    const expected = phog.uniformCost(admitted.len);
+    try std.testing.expectEqual(@as(phog.Cost, 2048), expected);
     for (costs) |cost| try std.testing.expectEqual(expected, cost);
 }
 
@@ -55,7 +55,7 @@ test "observations alter costs and cannot make an unadmitted production legal" {
     const alloc = std.testing.allocator;
     var target = try streamFromWords(alloc, 8, &.{ 3, 7, 3, 7 });
     defer target.deinit(alloc);
-    const context = prior_mod.Context.fromTarget(
+    const context = phog.Context.fromTarget(
         target,
         .u8,
         null,
@@ -63,7 +63,7 @@ test "observations alter costs and cannot make an unadmitted production legal" {
         0,
     );
 
-    var counts = prior_mod.Counts.init();
+    var counts = phog.Counts.init();
     defer counts.deinit(alloc);
     try counts.observe(alloc, context, .repeat, 100);
     try counts.observe(alloc, context, .literal, 1);
@@ -71,13 +71,13 @@ test "observations alter costs and cannot make an unadmitted production legal" {
     defer learned.deinit(alloc);
 
     const admitted = [_]grammar.ProductionId{ .literal, .repeat, .concat };
-    var costs: [admitted.len]prior_mod.Cost = undefined;
+    var costs: [admitted.len]phog.Cost = undefined;
     try learned.scoreSet(context, &admitted, &costs);
     try std.testing.expect(costs[1] < costs[0]);
     try std.testing.expect(costs[1] < costs[2]);
 
     try std.testing.expectEqual(
-        @as(?prior_mod.Cost, null),
+        @as(?phog.Cost, null),
         try learned.expansionCost(context, .constant, &admitted),
     );
 }
@@ -86,7 +86,7 @@ test "relaxed contextual bounds stay below concrete PHOG costs" {
     const alloc = std.testing.allocator;
     var target = try streamFromWords(alloc, 8, &.{ 3, 7, 3, 7 });
     defer target.deinit(alloc);
-    const context = prior_mod.Context.fromTarget(
+    const context = phog.Context.fromTarget(
         target,
         .u8,
         null,
@@ -94,7 +94,7 @@ test "relaxed contextual bounds stay below concrete PHOG costs" {
         0,
     );
 
-    var counts = prior_mod.Counts.init();
+    var counts = phog.Counts.init();
     defer counts.deinit(alloc);
     try counts.observe(alloc, context, .repeat, 100);
     try counts.observe(alloc, context, .literal, 2);
@@ -112,22 +112,22 @@ test "relaxed contextual bounds stay below concrete PHOG costs" {
         .map_gray,
         .scan_xor,
     };
-    var concrete: [admitted.len]prior_mod.Cost = undefined;
+    var concrete: [admitted.len]phog.Cost = undefined;
     try learned.scoreSet(context, &admitted, &concrete);
 
-    var relaxed: [prior_mod.PRODUCTION_COUNT]prior_mod.Cost = undefined;
+    var relaxed: [phog.PRODUCTION_COUNT]phog.Cost = undefined;
     try learned.contextualCostLowerBounds(admitted.len, &relaxed);
     for (admitted, concrete) |production, actual| {
-        const index = for (prior_mod.PRODUCTIONS, 0..) |known, candidate| {
+        const index = for (phog.PRODUCTIONS, 0..) |known, candidate| {
             if (known == production) break candidate;
         } else unreachable;
         try std.testing.expect(relaxed[index] <= actual);
     }
 
-    const repeat_index = for (prior_mod.PRODUCTIONS, 0..) |known, index| {
+    const repeat_index = for (phog.PRODUCTIONS, 0..) |known, index| {
         if (known == .repeat) break index;
     } else unreachable;
-    const concat_index = for (prior_mod.PRODUCTIONS, 0..) |known, index| {
+    const concat_index = for (phog.PRODUCTIONS, 0..) |known, index| {
         if (known == .concat) break index;
     } else unreachable;
     try std.testing.expect(relaxed[repeat_index] < relaxed[concat_index]);
@@ -137,7 +137,7 @@ test "the prior backs off from data features and then to tree position" {
     const alloc = std.testing.allocator;
     var target = try streamFromWords(alloc, 16, &.{ 0, 1, 0, 1 });
     defer target.deinit(alloc);
-    const trained = prior_mod.Context.fromTarget(
+    const trained = phog.Context.fromTarget(
         target,
         .u16,
         .concat,
@@ -145,7 +145,7 @@ test "the prior backs off from data features and then to tree position" {
         2,
     );
 
-    var counts = prior_mod.Counts.init();
+    var counts = phog.Counts.init();
     defer counts.deinit(alloc);
     try counts.observe(alloc, trained, .repeat, 200);
     var learned = try counts.toPrior(alloc, .{
@@ -158,13 +158,13 @@ test "the prior backs off from data features and then to tree position" {
 
     var feature_backoff = trained;
     feature_backoff.zero_bucket = (trained.zero_bucket + 1) % 4;
-    var costs: [2]prior_mod.Cost = undefined;
+    var costs: [2]phog.Cost = undefined;
     try learned.scoreSet(feature_backoff, &admitted, &costs);
     try std.testing.expect(costs[1] < costs[0]);
 
     var structural_backoff = feature_backoff;
     structural_backoff.depth_bucket =
-        (trained.depth_bucket + 1) % (prior_mod.MAX_DEPTH_BUCKET + 1);
+        (trained.depth_bucket + 1) % (phog.MAX_DEPTH_BUCKET + 1);
     structural_backoff.dtype = .f32;
     structural_backoff.target_bits = 32;
     try learned.scoreSet(structural_backoff, &admitted, &costs);
@@ -191,14 +191,14 @@ test "context includes deterministic normalized difference entropy" {
     );
     defer varied.deinit(alloc);
 
-    const linear_context = prior_mod.Context.fromTarget(
+    const linear_context = phog.Context.fromTarget(
         linear,
         .u8,
         null,
         0,
         0,
     );
-    const varied_context = prior_mod.Context.fromTarget(
+    const varied_context = phog.Context.fromTarget(
         varied,
         .u8,
         null,
@@ -225,7 +225,7 @@ test "context features sample the full target" {
         .owns_data = false,
     };
 
-    const context = prior_mod.Context.fromTarget(target, .u8, null, 0, 0);
+    const context = phog.Context.fromTarget(target, .u8, null, 0, 0);
     try std.testing.expectEqual(@as(u8, 2), context.zero_bucket);
 }
 
@@ -233,16 +233,16 @@ test "canonical prior bytes are insertion-order independent and round trip" {
     const alloc = std.testing.allocator;
     var target = try streamFromWords(alloc, 8, &.{ 9, 8, 9, 8 });
     defer target.deinit(alloc);
-    const first = prior_mod.Context.fromTarget(target, .u8, null, 0, 0);
+    const first = phog.Context.fromTarget(target, .u8, null, 0, 0);
     var second = first;
     second.zero_bucket = (second.zero_bucket + 1) % 4;
 
-    var counts_a = prior_mod.Counts.init();
+    var counts_a = phog.Counts.init();
     defer counts_a.deinit(alloc);
     try counts_a.observe(alloc, first, .repeat, 7);
     try counts_a.observe(alloc, second, .map_xor, 3);
 
-    var counts_b = prior_mod.Counts.init();
+    var counts_b = phog.Counts.init();
     defer counts_b.deinit(alloc);
     try counts_b.observe(alloc, second, .map_xor, 3);
     try counts_b.observe(alloc, first, .repeat, 7);
@@ -257,15 +257,15 @@ test "canonical prior bytes are insertion-order independent and round trip" {
     defer alloc.free(bytes_b);
     try std.testing.expectEqualSlices(u8, bytes_a, bytes_b);
 
-    var restored = try prior_mod.Prior.deserialize(alloc, bytes_a);
+    var restored = try phog.Prior.deserialize(alloc, bytes_a);
     defer restored.deinit(alloc);
     const round_trip = try restored.serialize(alloc);
     defer alloc.free(round_trip);
     try std.testing.expectEqualSlices(u8, bytes_a, round_trip);
 
-    var original_bounds: [prior_mod.PRODUCTION_COUNT]prior_mod.Cost =
+    var original_bounds: [phog.PRODUCTION_COUNT]phog.Cost =
         undefined;
-    var restored_bounds: [prior_mod.PRODUCTION_COUNT]prior_mod.Cost =
+    var restored_bounds: [phog.PRODUCTION_COUNT]phog.Cost =
         undefined;
     try prior_a.contextualCostLowerBounds(5, &original_bounds);
     try restored.contextualCostLowerBounds(5, &restored_bounds);
@@ -276,9 +276,9 @@ test "prior decoder rejects trailing data duplicate and invalid stable ids" {
     const alloc = std.testing.allocator;
     var target = try streamFromWords(alloc, 8, &.{ 1, 2, 1, 2 });
     defer target.deinit(alloc);
-    const context = prior_mod.Context.fromTarget(target, .u8, null, 0, 0);
+    const context = phog.Context.fromTarget(target, .u8, null, 0, 0);
 
-    var counts = prior_mod.Counts.init();
+    var counts = phog.Counts.init();
     defer counts.deinit(alloc);
     try counts.observe(alloc, context, .literal, 1);
     try counts.observe(alloc, context, .repeat, 1);
@@ -293,21 +293,21 @@ test "prior decoder rejects trailing data duplicate and invalid stable ids" {
     trailing[canonical.len] = 0;
     try std.testing.expectError(
         error.TrailingData,
-        prior_mod.Prior.deserialize(alloc, trailing),
+        phog.Prior.deserialize(alloc, trailing),
     );
 
-    // The first level-zero row begins at byte 30. Its fixed-width key is eleven
-    // bytes, followed by an entry count and sorted (production-id, count)
-    // records. Make the second production id duplicate the first one.
+    const first_row_offset: usize = 30;
+    const context_key_bytes: usize = 11;
+    const production_entry_bytes: usize = 10;
+    const first_id_offset = first_row_offset + context_key_bytes + 1;
     var duplicate = try alloc.dupe(u8, canonical);
     defer alloc.free(duplicate);
-    const first_id_offset: usize = 43;
-    const second_id_offset = first_id_offset + 10;
+    const second_id_offset = first_id_offset + production_entry_bytes;
     duplicate[second_id_offset] = duplicate[first_id_offset];
     duplicate[second_id_offset + 1] = duplicate[first_id_offset + 1];
     try std.testing.expectError(
         error.DuplicateProduction,
-        prior_mod.Prior.deserialize(alloc, duplicate),
+        phog.Prior.deserialize(alloc, duplicate),
     );
 
     var invalid = try alloc.dupe(u8, canonical);
@@ -315,12 +315,12 @@ test "prior decoder rejects trailing data duplicate and invalid stable ids" {
     std.mem.writeInt(u16, invalid[first_id_offset..][0..2], 0xfffe, .little);
     try std.testing.expectError(
         error.InvalidProductionId,
-        prior_mod.Prior.deserialize(alloc, invalid),
+        phog.Prior.deserialize(alloc, invalid),
     );
 
     var other_context = context;
     other_context.zero_bucket = (other_context.zero_bucket + 1) % 4;
-    var context_counts = prior_mod.Counts.init();
+    var context_counts = phog.Counts.init();
     defer context_counts.deinit(alloc);
     try context_counts.observe(alloc, context, .literal, 1);
     try context_counts.observe(alloc, other_context, .literal, 1);
@@ -329,14 +329,17 @@ test "prior decoder rejects trailing data duplicate and invalid stable ids" {
     const context_bytes = try context_model.serialize(alloc);
     defer alloc.free(context_bytes);
 
-    // Each of these two level-zero rows has an eleven-byte key, one-byte entry
-    // count, and one ten-byte entry.
     var duplicate_context = try alloc.dupe(u8, context_bytes);
     defer alloc.free(duplicate_context);
-    @memcpy(duplicate_context[52..63], duplicate_context[30..41]);
+    const second_row_offset =
+        first_row_offset + context_key_bytes + 1 + production_entry_bytes;
+    @memcpy(
+        duplicate_context[second_row_offset..][0..context_key_bytes],
+        duplicate_context[first_row_offset..][0..context_key_bytes],
+    );
     try std.testing.expectError(
         error.DuplicateContext,
-        prior_mod.Prior.deserialize(alloc, duplicate_context),
+        phog.Prior.deserialize(alloc, duplicate_context),
     );
 }
 
@@ -357,7 +360,7 @@ test "an exact program can be recursively observed through decomposition" {
     var program = try dsl.Program.repeat(alloc, 3, period);
     defer program.deinit(alloc);
 
-    var counts = prior_mod.Counts.init();
+    var counts = phog.Counts.init();
     defer counts.deinit(alloc);
     try counts.observeProgram(alloc, program, target, .f32, 1);
     var learned = try counts.toPrior(alloc, .{
@@ -366,9 +369,9 @@ test "an exact program can be recursively observed through decomposition" {
     });
     defer learned.deinit(alloc);
 
-    const root = prior_mod.Context.fromTarget(target, .f32, null, 0, 0);
+    const root = phog.Context.fromTarget(target, .f32, null, 0, 0);
     const root_legal = [_]grammar.ProductionId{ .literal, .repeat };
-    var root_costs: [2]prior_mod.Cost = undefined;
+    var root_costs: [2]phog.Cost = undefined;
     try learned.scoreSet(root, &root_legal, &root_costs);
     try std.testing.expect(root_costs[1] < root_costs[0]);
 
@@ -379,7 +382,7 @@ test "an exact program can be recursively observed through decomposition" {
         .f32,
     );
     defer child_targets.deinit(alloc);
-    const child = prior_mod.Context.fromTarget(
+    const child = phog.Context.fromTarget(
         child_targets.streams[0],
         .f32,
         .repeat,
@@ -387,7 +390,7 @@ test "an exact program can be recursively observed through decomposition" {
         1,
     );
     const child_legal = [_]grammar.ProductionId{ .literal, .map_xor };
-    var child_costs: [2]prior_mod.Cost = undefined;
+    var child_costs: [2]phog.Cost = undefined;
     try learned.scoreSet(child, &child_legal, &child_costs);
     try std.testing.expect(child_costs[0] < child_costs[1]);
 }
