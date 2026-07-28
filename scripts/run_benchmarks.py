@@ -34,6 +34,8 @@ SPECIALIZED_METHODS = ("dfloat11", "ecf8")
 DEFAULT_BUDGETS = (0, 1, 8, 32, 128, 512)
 DEFAULT_WORKERS = (1, 2, 4, 8, 16, 32)
 READ_CHUNK = 64 * 1024 * 1024
+PROGRESS_LOCK = threading.Lock()
+LAST_PROGRESS_EMIT = 0.0
 
 
 class BenchmarkError(RuntimeError):
@@ -104,6 +106,13 @@ class Measurement:
     stdout_path: str
     stderr_path: str
     stdout: str
+
+
+@dataclass(frozen=True)
+class ProgressDisplay:
+    label: str
+    source_bytes: int
+    interval_seconds: float
 
 
 class ResultLog:
@@ -437,17 +446,71 @@ def fsync_output(path: Path | None) -> None:
             os.fsync(output.fileno())
 
 
+def human_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:.2f} {unit}"
+        value /= 1024
+    raise AssertionError("unreachable")
+
+
+def current_file_size(path: Path | None) -> int | None:
+    try:
+        return path.stat().st_size if path and path.is_file() else None
+    except OSError:
+        return None
+
+
+def show_progress(
+    status: str,
+    display: ProgressDisplay,
+    elapsed: float,
+    output_bytes: int | None,
+    rss_bytes: int | None,
+) -> None:
+    global LAST_PROGRESS_EMIT
+
+    details = [f"elapsed={elapsed:.1f}s"]
+    if output_bytes is not None:
+        details.append(f"output={human_bytes(output_bytes)}")
+        if display.source_bytes:
+            details.append(
+                f"output/input={100 * output_bytes / display.source_bytes:.1f}%"
+            )
+    if rss_bytes is not None:
+        metric = "rss" if status == "progress" else "peak-rss"
+        details.append(f"{metric}={human_bytes(rss_bytes)}")
+    with PROGRESS_LOCK:
+        now = time.monotonic()
+        if (
+            status == "progress"
+            and now - LAST_PROGRESS_EMIT < display.interval_seconds
+        ):
+            return
+        if status == "progress":
+            LAST_PROGRESS_EMIT = now
+        print(f"  {status} {display.label}: {' '.join(details)}", flush=True)
+
+
 def measure(
     command: list[str],
     log_dir: Path,
     run_id: str,
     output: Path | None = None,
     cwd: Path | None = None,
+    *,
+    progress: ProgressDisplay | None = None,
 ) -> Measurement:
     log_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = log_dir / f"{run_id}.stdout"
     stderr_path = log_dir / f"{run_id}.stderr"
     started = time.perf_counter()
+    next_progress = (
+        started + progress.interval_seconds
+        if progress and progress.interval_seconds > 0
+        else None
+    )
     peak_rss: int | None = None
     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
         process = subprocess.Popen(
@@ -460,10 +523,28 @@ def measure(
             current = process_tree_rss(process.pid)
             if current is not None:
                 peak_rss = max(peak_rss or 0, current)
+            now = time.perf_counter()
+            if progress and next_progress is not None and now >= next_progress:
+                show_progress(
+                    "progress",
+                    progress,
+                    now - started,
+                    current_file_size(output),
+                    current,
+                )
+                next_progress = now + progress.interval_seconds
             time.sleep(0.05)
         return_code = process.wait()
     fsync_output(output)
     wall_seconds = time.perf_counter() - started
+    if progress:
+        show_progress(
+            "done" if return_code == 0 else "failed",
+            progress,
+            wall_seconds,
+            current_file_size(output),
+            peak_rss,
+        )
     if return_code:
         raise BenchmarkError(
             f"command failed ({return_code}): {shlex.join(command)}\n"
@@ -776,6 +857,18 @@ def execute_operation(
             args.results / "logs",
             identifier,
             output_path,
+            progress=(
+                ProgressDisplay(
+                    (
+                        f"{checkpoint.name}/{source.name}/{method}/"
+                        f"{operation}/{cache}"
+                    ),
+                    source.stat().st_size,
+                    args.progress_interval,
+                )
+                if operation == "compress" and args.progress_interval > 0
+                else None
+            ),
         )
         size = tree_size(output_path)
         source_bytes = source.stat().st_size
@@ -1309,6 +1402,15 @@ def run_specialized(
                     identifier,
                     archive,
                     cwd,
+                    progress=(
+                        ProgressDisplay(
+                            f"{checkpoint.name}/{method}/conversion",
+                            checkpoint.source_bytes,
+                            args.progress_interval,
+                        )
+                        if args.progress_interval > 0
+                        else None
+                    ),
                 )
                 validate = settings.get("validate_command")
                 if validate:
@@ -1411,6 +1513,7 @@ def execution_provenance(
             "harness_sha256": harness_sha256,
             "host": args.host_context,
             "method_version": version,
+            "progress_interval_seconds": args.progress_interval,
         }
         for method, version in versions.items()
     }
@@ -1958,6 +2061,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--search-budgets", type=parse_int_list, default=DEFAULT_BUDGETS)
     parser.add_argument("--worker-sweep", type=parse_int_list, default=DEFAULT_WORKERS)
     parser.add_argument("--deadline-hours", type=float)
+    parser.add_argument(
+        "--progress-interval",
+        type=float,
+        default=5.0,
+        help="Seconds between compression progress lines; 0 disables them.",
+    )
     parser.add_argument("--drop-caches-command")
     parser.add_argument("--specialized-config", type=Path)
     parser.add_argument("--allow-missing", action="store_true")
@@ -1967,6 +2076,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.workers < 1 or args.shard_jobs < 1:
         parser.error("workers and shard-jobs must be positive")
+    if args.progress_interval < 0:
+        parser.error("progress-interval must be non-negative")
     sweep_limit = max(
         os.cpu_count() or 1,
         2 * (physical_cores() or os.cpu_count() or 1),

@@ -10,6 +10,9 @@
 
 每个 timing cell 只运行一次。成功记录会自动续跑跳过；失败记录保留，下一次执行会重试。
 所有 archive 使用 `.brv` 后缀。恢复文件和临时 sweep archive 在精确校验后删除。
+压缩和 native conversion 默认每 5 秒输出 elapsed time、当前 archive 大小和 RSS；
+`output/input` 是当前输出体积比，不是虚构的完成百分比。可用
+`--progress-interval 10` 调整频率，或设为 `0` 关闭。
 
 ## 依赖
 

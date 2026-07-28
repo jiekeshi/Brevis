@@ -1,9 +1,11 @@
 import csv
+import io
 import json
 import struct
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -145,6 +147,36 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertEqual("0", compress[compress.index("--tensors") + 1])
         self.assertEqual("0", compress[compress.index("--astar-heuristic") + 1])
         self.assertNotIn("--max-expansions", decompress)
+
+    def test_measure_displays_live_compression_progress(self):
+        output = self.root / "archive.brv"
+        logs = self.root / "logs"
+        script = (
+            "import pathlib,sys,time;"
+            "time.sleep(0.03);"
+            "pathlib.Path(sys.argv[1]).write_bytes(b'x' * 25);"
+            "time.sleep(0.05)"
+        )
+        display = io.StringIO()
+
+        with redirect_stdout(display):
+            measurement = bench.measure(
+                [sys.executable, "-c", script, str(output)],
+                logs,
+                "progress",
+                output,
+                progress=bench.ProgressDisplay(
+                    "fixture/compress",
+                    source_bytes=100,
+                    interval_seconds=0.01,
+                ),
+            )
+
+        rendered = display.getvalue()
+        self.assertIn("progress fixture/compress:", rendered)
+        self.assertIn("output/input=25.0%", rendered)
+        self.assertIn("done fixture/compress:", rendered)
+        self.assertGreater(measurement.wall_seconds, 0)
 
     def test_run_identity_is_bound_to_method_provenance(self):
         source = self.root / "model.safetensors"
