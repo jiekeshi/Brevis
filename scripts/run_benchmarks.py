@@ -65,8 +65,8 @@ CODEC_POLICIES = {
         adapter=CODEC_HELPER,
     ),
     "lz4-hc-9": CodecPolicy(("lz4", "--version"), parallel_shards=True),
-    "libdeflate-6": CodecPolicy(
-        (sys.executable, str(CODEC_HELPER), "libdeflate-6", "version"),
+    "libdeflate-1": CodecPolicy(
+        (sys.executable, str(CODEC_HELPER), "libdeflate-1", "version"),
         parallel_shards=True,
         adapter=CODEC_HELPER,
     ),

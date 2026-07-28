@@ -39,9 +39,10 @@ def libdeflate_file(
     output: Path,
     _threads: int,
     *,
+    compression_level: int,
     decompress: bool,
 ) -> None:
-    options = ("-d",) if decompress else ("-6",)
+    options = ("-d",) if decompress else (f"-{compression_level}",)
     with output.open("wb") as writer:
         subprocess.run(
             ["libdeflate-gzip", "-q", *options, "-c", str(source)],
@@ -154,9 +155,9 @@ class CodecAdapter:
 
 
 CODECS = {
-    "libdeflate-6": CodecAdapter(
-        partial(libdeflate_file, decompress=False),
-        partial(libdeflate_file, decompress=True),
+    "libdeflate-1": CodecAdapter(
+        partial(libdeflate_file, compression_level=1, decompress=False),
+        partial(libdeflate_file, compression_level=1, decompress=True),
         libdeflate_version,
     ),
     "snappy": CodecAdapter(

@@ -34,7 +34,7 @@ cache-control 状态；这些 provenance 也会进入 run ID，换版本或换�
 
 ```bash
 python3 scripts/run_benchmarks.py preflight \
-  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-6 snappy
+  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-1 snappy
 ```
 
 ## 先检查执行计划
@@ -44,7 +44,7 @@ python3 scripts/run_benchmarks.py all \
   --models-root /data/brevis-checkpoints \
   --core-model /data/Qwen2.5-7B \
   --results /data/brevis-results \
-  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-6 snappy dfloat11 ecf8 \
+  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-1 snappy dfloat11 ecf8 \
   --specialized-config /data/specialized-baselines.json \
   --workers 32 \
   --shard-jobs 32 \
@@ -69,7 +69,7 @@ python3 scripts/run_benchmarks.py all \
   --models-root /data/brevis-checkpoints \
   --core-model /data/Qwen2.5-7B \
   --results /data/brevis-results \
-  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-6 snappy dfloat11 ecf8 \
+  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-1 snappy dfloat11 ecf8 \
   --specialized-config /data/specialized-baselines.json \
   --workers 32 \
   --shard-jobs 32 \
@@ -150,9 +150,9 @@ Qwen3-32B-FP8。其官方入口分别仍是
 `scripts/compress.py --save_model --n_processes N --validate_cuda`；wrapper 不重实现
 codec，并会从 ECF8 输出中移除重复的 converter cache 后再统计 archive size。
 
-`libdeflate-6` 使用 `libdeflate-gzip` 的官方默认 level 6 和 gzip stream。它是
-whole-buffer、单进程 codec；harness 通过 shard 并发利用多核，运行时要给每个并发
-shard 留出输入和输出 buffer 的内存。
+`libdeflate-1` 使用 `libdeflate-gzip` 的最快 level 1 和 gzip stream，优先考察吞吐。
+它是 whole-buffer、单进程 codec；harness 通过 shard 并发利用多核，运行时要给每个
+并发 shard 留出输入和输出 buffer 的内存。
 
 未配置 specialized converters 时，可加 `--allow-missing` 先完成六个通用方法；
 Table 2 对应 cell 会写 `missing dependency/config`，不会伪装成成功。

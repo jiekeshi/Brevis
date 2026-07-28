@@ -151,7 +151,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertNotIn("--max-expansions", decompress)
 
         libdeflate = bench.command_for(
-            "libdeflate-6",
+            "libdeflate-1",
             "compress",
             source,
             archive,
@@ -159,7 +159,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
             Path("/bin/brevis"),
             config,
         )
-        self.assertEqual("libdeflate-6", libdeflate[2])
+        self.assertEqual("libdeflate-1", libdeflate[2])
         self.assertEqual("compress", libdeflate[3])
 
     def test_measure_displays_live_compression_progress(self):
@@ -202,8 +202,8 @@ class BenchmarkHarnessTests(unittest.TestCase):
         restored = self.root / "restored.bin"
         source.write_bytes(bytes(range(256)) * 1024)
 
-        benchmark_codecs.CODECS["libdeflate-6"].compress(source, archive, 1)
-        benchmark_codecs.CODECS["libdeflate-6"].decompress(archive, restored, 1)
+        benchmark_codecs.CODECS["libdeflate-1"].compress(source, archive, 1)
+        benchmark_codecs.CODECS["libdeflate-1"].decompress(archive, restored, 1)
 
         self.assertEqual(source.read_bytes(), restored.read_bytes())
 
