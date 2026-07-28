@@ -2,7 +2,7 @@
 
 `scripts/run_benchmarks.py` 按以下顺序执行当前实验计划：
 
-1. 本地 Qwen2.5-7B 上五个通用方法的单 worker end-to-end；
+1. 本地 Qwen2.5-7B 上六个通用方法的单 worker end-to-end；
 2. Brevis search-budget sweep、worker sweep 和 PHOG/A* ablation；
 3. 十个正式 checkpoint 的 archive-size matrix；
 4. DFloat11/ECF8 native conversion（配置后）；
@@ -14,6 +14,8 @@
 还会显示当前 archive 大小。`output/input` 是当前输出体积比，不是虚构的完成百分比。
 DFloat11/ECF8 输出目录不会被周期性遍历，以免干扰计时。可用
 `--progress-interval 10` 调整频率，或设为 `0` 关闭；该显示选项不影响断点续跑身份。
+进度 heartbeat 在所有并发任务之间全局节流；每次只增加一次文件 `stat` 和终端输出。
+它的开销很小但不是数学上的零，投稿用的最终 timing 建议设为 `0`。
 
 ## 依赖
 
@@ -21,7 +23,7 @@ DFloat11/ECF8 输出目录不会被周期性遍历，以免干扰计时。可用
 zig build test
 zig build -Doptimize=ReleaseFast
 
-# 按发行版安装 zstd 和 lz4
+# 按发行版安装 zstd、lz4 和 libdeflate-gzip
 python3 -m pip install zipnn==0.5.4 python-snappy==0.7.3 safetensors torch
 ```
 
@@ -30,7 +32,7 @@ cache-control 状态；这些 provenance 也会进入 run ID，换版本或换�
 
 ```bash
 python3 scripts/run_benchmarks.py preflight \
-  --methods brevis zstd-9 zipnn lz4-hc-9 snappy
+  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-6 snappy
 ```
 
 ## 先检查执行计划
@@ -40,7 +42,7 @@ python3 scripts/run_benchmarks.py all \
   --models-root /data/brevis-checkpoints \
   --core-model /data/Qwen2.5-7B \
   --results /data/brevis-results \
-  --methods brevis zstd-9 zipnn lz4-hc-9 snappy dfloat11 ecf8 \
+  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-6 snappy dfloat11 ecf8 \
   --specialized-config /data/specialized-baselines.json \
   --workers 32 \
   --shard-jobs 32 \
@@ -65,7 +67,7 @@ python3 scripts/run_benchmarks.py all \
   --models-root /data/brevis-checkpoints \
   --core-model /data/Qwen2.5-7B \
   --results /data/brevis-results \
-  --methods brevis zstd-9 zipnn lz4-hc-9 snappy dfloat11 ecf8 \
+  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-6 snappy dfloat11 ecf8 \
   --specialized-config /data/specialized-baselines.json \
   --workers 32 \
   --shard-jobs 32 \
@@ -145,7 +147,11 @@ Qwen3-32B-FP8。其官方入口分别仍是
 `scripts/compress.py --save_model --n_processes N --validate_cuda`；wrapper 不重实现
 codec，并会从 ECF8 输出中移除重复的 converter cache 后再统计 archive size。
 
-未配置 specialized converters 时，可加 `--allow-missing` 先完成五个通用方法；
+`libdeflate-6` 使用 `libdeflate-gzip` 的官方默认 level 6 和 gzip stream。它是
+whole-buffer、单进程 codec；harness 通过 shard 并发利用多核，运行时要给每个并发
+shard 留出输入和输出 buffer 的内存。
+
+未配置 specialized converters 时，可加 `--allow-missing` 先完成六个通用方法；
 Table 2 对应 cell 会写 `missing dependency/config`，不会伪装成成功。
 
 ## 输出
@@ -175,7 +181,7 @@ archive size；依赖、配置、支持范围、deadline 或失败造成的空 c
 `--rerun` 仍追加 raw record，但汇总只使用同一 run ID 的最后一条记录。
 
 如果 specialized wrapper 在转换命令内部做 correctness check，其 raw wall time
-也会包含该验证，不与五个通用方法的 compression wall time直接比较；它在本计划中
+也会包含该验证，不与六个通用方法的 compression wall time直接比较；它在本计划中
 只进入 archive-size matrix。
 
 Table 5 的 information-theoretic headroom 和 operator attribution 需要读取

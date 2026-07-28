@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
+import subprocess
 from pathlib import Path
 
 CHUNK_BYTES = 8 * 1024 * 1024
@@ -22,6 +23,16 @@ def snappy_file(source: Path, output: Path, decompress: bool) -> None:
     with source.open("rb") as reader, output.open("wb") as writer:
         while chunk := reader.read(CHUNK_BYTES):
             writer.write(transform(chunk))
+
+
+def libdeflate_file(source: Path, output: Path, decompress: bool) -> None:
+    options = ("-d",) if decompress else ("-6",)
+    with output.open("wb") as writer:
+        subprocess.run(
+            ["libdeflate-gzip", "-q", *options, "-c", str(source)],
+            stdout=writer,
+            check=True,
+        )
 
 
 def zipnn_compress(source: Path, output: Path, threads: int) -> None:
@@ -113,13 +124,16 @@ def zipnn_decompress(source: Path, output: Path, threads: int) -> None:
 
 
 def version(codec: str) -> None:
-    package = "python-snappy" if codec == "snappy" else "zipnn"
-    print(importlib.metadata.version(package))
+    if codec == "libdeflate-6":
+        subprocess.run(["libdeflate-gzip", "-V"], check=True)
+    else:
+        package = "python-snappy" if codec == "snappy" else "zipnn"
+        print(importlib.metadata.version(package))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("codec", choices=("snappy", "zipnn"))
+    parser.add_argument("codec", choices=("libdeflate-6", "snappy", "zipnn"))
     parser.add_argument("operation", choices=("compress", "decompress", "version"))
     parser.add_argument("source", type=Path, nargs="?")
     parser.add_argument("output", type=Path, nargs="?")
@@ -133,7 +147,9 @@ def main() -> None:
         parser.error("compress/decompress require source, output, and positive threads")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if args.codec == "snappy":
+    if args.codec == "libdeflate-6":
+        libdeflate_file(args.source, args.output, args.operation == "decompress")
+    elif args.codec == "snappy":
         snappy_file(args.source, args.output, args.operation == "decompress")
     elif args.operation == "compress":
         zipnn_compress(args.source, args.output, args.threads)

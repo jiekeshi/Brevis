@@ -65,6 +65,11 @@ CODEC_POLICIES = {
         adapter=CODEC_HELPER,
     ),
     "lz4-hc-9": CodecPolicy(("lz4", "--version"), parallel_shards=True),
+    "libdeflate-6": CodecPolicy(
+        (sys.executable, str(CODEC_HELPER), "libdeflate-6", "version"),
+        parallel_shards=True,
+        adapter=CODEC_HELPER,
+    ),
     "snappy": CodecPolicy(
         (sys.executable, str(CODEC_HELPER), "snappy", "version"),
         parallel_shards=True,
@@ -458,21 +463,11 @@ def show_progress(
     status: str,
     display: ProgressDisplay,
     elapsed: float,
-    output_bytes: int | None,
+    output: Path | None,
     rss_bytes: int | None,
 ) -> None:
     global LAST_PROGRESS_EMIT
 
-    details = [f"elapsed={elapsed:.1f}s"]
-    if output_bytes is not None:
-        details.append(f"output={human_bytes(output_bytes)}")
-        if display.source_bytes:
-            details.append(
-                f"output/input={100 * output_bytes / display.source_bytes:.1f}%"
-            )
-    if rss_bytes is not None:
-        metric = "rss" if status == "progress" else "peak-rss"
-        details.append(f"{metric}={human_bytes(rss_bytes)}")
     with PROGRESS_LOCK:
         now = time.monotonic()
         if (
@@ -482,6 +477,17 @@ def show_progress(
             return
         if status == "progress":
             LAST_PROGRESS_EMIT = now
+        details = [f"elapsed={elapsed:.1f}s"]
+        output_bytes = current_file_size(output)
+        if output_bytes is not None:
+            details.append(f"output={human_bytes(output_bytes)}")
+            if display.source_bytes:
+                details.append(
+                    f"output/input={100 * output_bytes / display.source_bytes:.1f}%"
+                )
+        if rss_bytes is not None:
+            metric = "rss" if status == "progress" else "peak-rss"
+            details.append(f"{metric}={human_bytes(rss_bytes)}")
         print(f"  {status} {display.label}: {' '.join(details)}", flush=True)
 
 
@@ -521,7 +527,7 @@ def measure(
                     "progress",
                     progress,
                     now - started,
-                    current_file_size(output),
+                    output,
                     current,
                 )
                 next_progress = now + progress.interval_seconds
@@ -534,7 +540,7 @@ def measure(
             "done" if return_code == 0 else "failed",
             progress,
             wall_seconds,
-            current_file_size(output),
+            output,
             peak_rss,
         )
     if return_code:
@@ -630,7 +636,7 @@ def command_for(
             if operation == "compress"
             else ["lz4", "-q", "-d", "-f", str(source), str(output)]
         )
-    if method in ("zipnn", "snappy"):
+    if method in ("zipnn", "libdeflate-6", "snappy"):
         return [
             sys.executable,
             str(CODEC_HELPER),

@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import shutil
 import struct
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_benchmarks as bench
+import benchmark_codecs
 import specialized_baselines
 
 
@@ -148,6 +150,18 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertEqual("0", compress[compress.index("--astar-heuristic") + 1])
         self.assertNotIn("--max-expansions", decompress)
 
+        libdeflate = bench.command_for(
+            "libdeflate-6",
+            "compress",
+            source,
+            archive,
+            1,
+            Path("/bin/brevis"),
+            config,
+        )
+        self.assertEqual("libdeflate-6", libdeflate[2])
+        self.assertEqual("compress", libdeflate[3])
+
     def test_measure_displays_live_compression_progress(self):
         output = self.root / "archive.brv"
         logs = self.root / "logs"
@@ -177,6 +191,21 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertIn("output/input=25.0%", rendered)
         self.assertIn("done fixture/compress:", rendered)
         self.assertGreater(measurement.wall_seconds, 0)
+
+    @unittest.skipUnless(
+        shutil.which("libdeflate-gzip"),
+        "libdeflate is not installed",
+    )
+    def test_libdeflate_round_trip(self):
+        source = self.root / "source.bin"
+        archive = self.root / "archive.brv"
+        restored = self.root / "restored.bin"
+        source.write_bytes(bytes(range(256)) * 1024)
+
+        benchmark_codecs.libdeflate_file(source, archive, False)
+        benchmark_codecs.libdeflate_file(archive, restored, True)
+
+        self.assertEqual(source.read_bytes(), restored.read_bytes())
 
     def test_run_identity_is_bound_to_method_provenance(self):
         source = self.root / "model.safetensors"
