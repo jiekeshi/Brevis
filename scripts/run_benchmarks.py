@@ -30,9 +30,7 @@ from benchmark_corpus import CHECKPOINT_BY_NAME
 ROOT = Path(__file__).resolve().parent.parent
 CODEC_HELPER = ROOT / "scripts" / "benchmark_codecs.py"
 DEFAULT_BREVIS_BIN = ROOT / "zig-out" / "bin" / "brevis"
-GENERIC_METHODS = ("brevis", "zstd-9", "zipnn", "lz4-hc-9", "snappy")
 SPECIALIZED_METHODS = ("dfloat11", "ecf8")
-ALL_METHODS = GENERIC_METHODS + SPECIALIZED_METHODS
 DEFAULT_BUDGETS = (0, 1, 8, 32, 128, 512)
 DEFAULT_WORKERS = (1, 2, 4, 8, 16, 32)
 READ_CHUNK = 64 * 1024 * 1024
@@ -40,6 +38,38 @@ READ_CHUNK = 64 * 1024 * 1024
 
 class BenchmarkError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class CodecPolicy:
+    version_command: tuple[str, ...]
+    uses_workers: bool = False
+    parallel_shards: bool = False
+    tensor_exact: bool = False
+    adapter: Path | None = None
+
+
+CODEC_POLICIES = {
+    "brevis": CodecPolicy(
+        ("git", "-C", str(ROOT), "rev-parse", "HEAD"),
+        uses_workers=True,
+    ),
+    "zstd-9": CodecPolicy(("zstd", "--version"), parallel_shards=True),
+    "zipnn": CodecPolicy(
+        (sys.executable, str(CODEC_HELPER), "zipnn", "version"),
+        uses_workers=True,
+        tensor_exact=True,
+        adapter=CODEC_HELPER,
+    ),
+    "lz4-hc-9": CodecPolicy(("lz4", "--version"), parallel_shards=True),
+    "snappy": CodecPolicy(
+        (sys.executable, str(CODEC_HELPER), "snappy", "version"),
+        parallel_shards=True,
+        adapter=CODEC_HELPER,
+    ),
+}
+GENERIC_METHODS = tuple(CODEC_POLICIES)
+ALL_METHODS = GENERIC_METHODS + SPECIALIZED_METHODS
 
 
 @dataclass(frozen=True)
@@ -784,10 +814,8 @@ def validate_restored(
     source: Path,
     restored: Path,
 ) -> bool:
-    return tensor_exact(source, restored) if method == "zipnn" else byte_exact(
-        source,
-        restored,
-    )
+    checker = tensor_exact if CODEC_POLICIES[method].tensor_exact else byte_exact
+    return checker(source, restored)
 
 
 def record_exactness(
@@ -909,7 +937,7 @@ def run_pair(
 
 
 def method_workers(method: str, practical_workers: int) -> int:
-    return practical_workers if method in ("brevis", "zipnn") else 1
+    return practical_workers if CODEC_POLICIES[method].uses_workers else 1
 
 
 def run_core(args: argparse.Namespace, log: ResultLog, core: Checkpoint) -> None:
@@ -1091,7 +1119,11 @@ def run_generic_corpus(
         print(f"\n== corpus: {checkpoint.name} ({checkpoint.source_bytes} bytes)")
         for method in methods:
             args.deadline.require_time()
-            jobs = args.shard_jobs if method in ("zstd-9", "lz4-hc-9", "snappy") else 1
+            jobs = (
+                args.shard_jobs
+                if CODEC_POLICIES[method].parallel_shards
+                else 1
+            )
             first, *remaining = checkpoint.files
             size_shard(args, log, checkpoint, first, method)
             if not remaining:
@@ -1344,16 +1376,9 @@ def method_versions(
     args: argparse.Namespace,
     specialized: dict[str, Any],
 ) -> dict[str, str | None]:
-    commands = {
-        "brevis": ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-        "zstd-9": ["zstd", "--version"],
-        "lz4-hc-9": ["lz4", "--version"],
-        "zipnn": [sys.executable, str(CODEC_HELPER), "zipnn", "version"],
-        "snappy": [sys.executable, str(CODEC_HELPER), "snappy", "version"],
-    }
     versions = {
-        method: command_version(command)
-        for method, command in commands.items()
+        method: command_version(list(policy.version_command))
+        for method, policy in CODEC_POLICIES.items()
         if method in args.methods
     }
     for method in SPECIALIZED_METHODS:
@@ -1384,6 +1409,7 @@ def execution_provenance(
         method: {
             "harness_revision": revision,
             "harness_sha256": harness_sha256,
+            "host": args.host_context,
             "method_version": version,
         }
         for method, version in versions.items()
@@ -1395,9 +1421,9 @@ def execution_provenance(
             if args.brevis_bin.is_file()
             else None
         )
-    for method in ("zipnn", "snappy"):
-        if method in provenance:
-            provenance[method]["adapter_sha256"] = file_sha256(CODEC_HELPER)
+    for method, policy in CODEC_POLICIES.items():
+        if method in provenance and policy.adapter:
+            provenance[method]["adapter_sha256"] = file_sha256(policy.adapter)
     for method in SPECIALIZED_METHODS:
         if method in provenance:
             provenance[method]["adapter_sha256"] = file_sha256(
@@ -1451,11 +1477,38 @@ def physical_cores() -> int | None:
     return None
 
 
+def cpu_model() -> str | None:
+    if sys.platform == "darwin":
+        return command_version(["sysctl", "-n", "machdep.cpu.brand_string"])
+    if sys.platform.startswith("linux"):
+        try:
+            for line in Path("/proc/cpuinfo").read_text().splitlines():
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+        except OSError:
+            pass
+    return platform.processor() or None
+
+
 def total_memory() -> int | None:
     try:
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     except (ValueError, OSError, AttributeError):
         return None
+
+
+def host_context(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "hostname": platform.node(),
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+        "cpu_model": cpu_model(),
+        "logical_cpus": os.cpu_count(),
+        "physical_cores": physical_cores(),
+        "ram_bytes": total_memory(),
+        "cold_cache_available": args.cold_available,
+        "drop_caches_command": args.drop_caches_command,
+    }
 
 
 def write_environment(
@@ -1465,7 +1518,11 @@ def write_environment(
 ) -> None:
     path = args.results / "environment.json"
     existing = json.loads(path.read_text()) if path.exists() else {}
-    existing_provenance = existing.get("run_provenance", {})
+    existing_provenance = (
+        existing.get("run_provenance", {})
+        if existing.get("host") == args.host_context
+        else {}
+    )
     method_versions = {
         **{
             method: version
@@ -1496,14 +1553,15 @@ def write_environment(
     )
     environment = {
         "generated_at": utc_now(),
+        "host": args.host_context,
         "brevis_revision": run_provenance.get("brevis", {}).get(
             "brevis_revision"
         ),
-        "platform": platform.platform(),
-        "python": platform.python_version(),
-        "logical_cpus": os.cpu_count(),
-        "physical_cores": physical_cores(),
-        "ram_bytes": total_memory(),
+        "platform": args.host_context["platform"],
+        "python": args.host_context["python"],
+        "logical_cpus": args.host_context["logical_cpus"],
+        "physical_cores": args.host_context["physical_cores"],
+        "ram_bytes": args.host_context["ram_bytes"],
         "workers": args.workers,
         "shard_jobs": args.shard_jobs,
         "method_versions": method_versions,
@@ -1920,6 +1978,7 @@ def parse_args() -> argparse.Namespace:
     args.brevis_bin = args.brevis_bin.expanduser().resolve()
     args.deadline = Deadline(args.deadline_hours)
     args.cold_available = cache_control_available(args.drop_caches_command)
+    args.host_context = host_context(args)
     return args
 
 

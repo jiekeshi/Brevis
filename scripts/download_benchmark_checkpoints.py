@@ -22,6 +22,20 @@ from pathlib import Path
 
 from benchmark_corpus import CHECKPOINTS, CheckpointSpec as Checkpoint
 
+MODEL_SUPPORT_FILES = (
+    "config.json",
+    "generation_config.json",
+    "model_index.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "added_tokens.json",
+    "chat_template.jinja",
+    "vocab.json",
+    "merges.txt",
+    "tokenizer.model",
+)
+
 try:
     from huggingface_hub import HfApi, get_token, hf_hub_download
 except ImportError:
@@ -165,11 +179,17 @@ def resolve_plan(
 
     support_files = tuple(
         name
-        for name in ("config.json", "model_index.json")
+        for name in MODEL_SUPPORT_FILES
         if name in siblings
     )
-    if not checkpoint.single_file and "config.json" not in support_files:
-        raise RuntimeError(f"{checkpoint.repo_id} has no config.json")
+    required_support = set(checkpoint.required_support_files)
+    if not checkpoint.single_file:
+        required_support.add("config.json")
+    missing_support = sorted(required_support - set(support_files))
+    if missing_support:
+        raise RuntimeError(
+            f"{checkpoint.repo_id} is missing support files: {missing_support}"
+        )
     missing = [name for name in names if name not in siblings]
     if missing:
         raise RuntimeError(

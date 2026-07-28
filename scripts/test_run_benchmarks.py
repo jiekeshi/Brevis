@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_benchmarks as bench
@@ -167,14 +168,71 @@ class BenchmarkHarnessTests(unittest.TestCase):
             *arguments,
             {"method_version": "zstd 1.5.7"},
         )
+        other_host = bench.operation_identity(
+            *arguments,
+            {
+                "method_version": "zstd 1.5.6",
+                "host": {"hostname": "other"},
+            },
+        )
 
         self.assertNotEqual(bench.run_id(first), bench.run_id(second))
+        self.assertNotEqual(bench.run_id(first), bench.run_id(other_host))
 
-    def test_specialized_baselines_require_model_config(self):
+    def test_specialized_baselines_require_model_assets(self):
         with self.assertRaisesRegex(SystemExit, "missing model config"):
             specialized_baselines.require_model_config(self.root)
         (self.root / "config.json").write_text("{}")
         specialized_baselines.require_model_config(self.root)
+        with self.assertRaisesRegex(SystemExit, "missing tokenizer assets"):
+            specialized_baselines.require_tokenizer_assets(self.root)
+        (self.root / "tokenizer_config.json").write_text("{}")
+        (self.root / "tokenizer.json").write_text("{}")
+        specialized_baselines.require_tokenizer_assets(self.root)
+
+    def test_environment_does_not_merge_results_from_another_host(self):
+        results = self.root / "results"
+        results.mkdir()
+        (results / "environment.json").write_text(
+            json.dumps(
+                {
+                    "host": {"hostname": "old"},
+                    "method_versions": {"zstd-9": "old"},
+                    "run_provenance": {
+                        "zstd-9": {"host": {"hostname": "old"}}
+                    },
+                }
+            )
+        )
+        current_host = {
+            "hostname": "current",
+            "platform": "test",
+            "python": "test",
+            "logical_cpus": 1,
+            "physical_cores": 1,
+            "ram_bytes": 1,
+        }
+        args = SimpleNamespace(
+            results=results,
+            run_provenance={
+                "brevis": {
+                    "host": current_host,
+                    "brevis_revision": "revision",
+                }
+            },
+            host_context=current_host,
+            workers=1,
+            shard_jobs=1,
+            allow_custom_corpus=False,
+            cold_available=False,
+            drop_caches_command=None,
+        )
+
+        bench.write_environment(args, {"brevis": "revision"}, [])
+
+        environment = json.loads((results / "environment.json").read_text())
+        self.assertEqual({"brevis"}, set(environment["run_provenance"]))
+        self.assertEqual({"brevis"}, set(environment["method_versions"]))
 
     def test_summary_reuses_core_full_for_all_three_sweeps(self):
         results = self.root / "results"

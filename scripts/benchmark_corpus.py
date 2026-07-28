@@ -8,6 +8,7 @@ class CheckpointSpec:
     revision: str
     single_file: str | None = None
     index_file: str | None = "model.safetensors.index.json"
+    required_support_files: tuple[str, ...] = ()
 
 
 CHECKPOINTS = (
@@ -46,6 +47,7 @@ CHECKPOINTS = (
         "qwen3-32b-fp8",
         "Qwen/Qwen3-32B-FP8",
         "aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df",
+        required_support_files=("tokenizer_config.json", "tokenizer.json"),
     ),
     CheckpointSpec(
         "qwen3-32b-bf16",

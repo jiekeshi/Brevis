@@ -25,11 +25,19 @@ LLM_LINEAR_PATHS = (
 DFLOAT11_MODEL_CLASSES = {"LlamaForCausalLM", "Qwen3ForCausalLM"}
 UPSTREAM_ECF8_NAMESPACE = "DFloat11"
 UPSTREAM_ECF8_SUFFIX = "DF6.5"
+TOKENIZER_MODEL_FILES = ("tokenizer.json", "tokenizer.model", "vocab.json")
 
 
 def require_model_config(source: Path) -> None:
     if not (source / "config.json").is_file():
         raise SystemExit(f"missing model config: {source / 'config.json'}")
+
+
+def require_tokenizer_assets(source: Path) -> None:
+    if not (source / "tokenizer_config.json").is_file() or not any(
+        (source / name).is_file() for name in TOKENIZER_MODEL_FILES
+    ):
+        raise SystemExit(f"missing tokenizer assets: {source}")
 
 
 def run_dfloat11(
@@ -79,6 +87,7 @@ def run_ecf8(
     validate: bool,
 ) -> None:
     require_model_config(source)
+    require_tokenizer_assets(source)
     scripts = upstream / "scripts"
     if not (scripts / "compress.py").is_file():
         raise SystemExit(f"invalid ECF8 checkout: {upstream}")
