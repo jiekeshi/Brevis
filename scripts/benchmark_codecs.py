@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""File adapters for benchmark codecs that expose Python APIs."""
+"""File adapters for benchmark codecs."""
 
 from __future__ import annotations
 
@@ -7,12 +7,21 @@ import argparse
 import importlib.metadata
 import json
 import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 CHUNK_BYTES = 8 * 1024 * 1024
 
 
-def snappy_file(source: Path, output: Path, decompress: bool) -> None:
+def snappy_file(
+    source: Path,
+    output: Path,
+    _threads: int,
+    *,
+    decompress: bool,
+) -> None:
     try:
         import snappy
     except ImportError as exc:
@@ -25,7 +34,13 @@ def snappy_file(source: Path, output: Path, decompress: bool) -> None:
             writer.write(transform(chunk))
 
 
-def libdeflate_file(source: Path, output: Path, decompress: bool) -> None:
+def libdeflate_file(
+    source: Path,
+    output: Path,
+    _threads: int,
+    *,
+    decompress: bool,
+) -> None:
     options = ("-d",) if decompress else ("-6",)
     with output.open("wb") as writer:
         subprocess.run(
@@ -123,38 +138,59 @@ def zipnn_decompress(source: Path, output: Path, threads: int) -> None:
     save_file(tensors, output, metadata)
 
 
-def version(codec: str) -> None:
-    if codec == "libdeflate-6":
-        subprocess.run(["libdeflate-gzip", "-V"], check=True)
-    else:
-        package = "python-snappy" if codec == "snappy" else "zipnn"
-        print(importlib.metadata.version(package))
+def package_version(package: str) -> None:
+    print(importlib.metadata.version(package))
+
+
+def libdeflate_version() -> None:
+    subprocess.run(["libdeflate-gzip", "-V"], check=True)
+
+
+@dataclass(frozen=True)
+class CodecAdapter:
+    compress: Callable[[Path, Path, int], None]
+    decompress: Callable[[Path, Path, int], None]
+    version: Callable[[], None]
+
+
+CODECS = {
+    "libdeflate-6": CodecAdapter(
+        partial(libdeflate_file, decompress=False),
+        partial(libdeflate_file, decompress=True),
+        libdeflate_version,
+    ),
+    "snappy": CodecAdapter(
+        partial(snappy_file, decompress=False),
+        partial(snappy_file, decompress=True),
+        partial(package_version, "python-snappy"),
+    ),
+    "zipnn": CodecAdapter(
+        zipnn_compress,
+        zipnn_decompress,
+        partial(package_version, "zipnn"),
+    ),
+}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("codec", choices=("libdeflate-6", "snappy", "zipnn"))
+    parser.add_argument("codec", choices=CODECS)
     parser.add_argument("operation", choices=("compress", "decompress", "version"))
     parser.add_argument("source", type=Path, nargs="?")
     parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--threads", type=int, default=1)
     args = parser.parse_args()
+    codec = CODECS[args.codec]
 
     if args.operation == "version":
-        version(args.codec)
+        codec.version()
         return
     if args.source is None or args.output is None or args.threads < 1:
         parser.error("compress/decompress require source, output, and positive threads")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    if args.codec == "libdeflate-6":
-        libdeflate_file(args.source, args.output, args.operation == "decompress")
-    elif args.codec == "snappy":
-        snappy_file(args.source, args.output, args.operation == "decompress")
-    elif args.operation == "compress":
-        zipnn_compress(args.source, args.output, args.threads)
-    else:
-        zipnn_decompress(args.source, args.output, args.threads)
+    operation = codec.compress if args.operation == "compress" else codec.decompress
+    operation(args.source, args.output, args.threads)
 
 
 if __name__ == "__main__":

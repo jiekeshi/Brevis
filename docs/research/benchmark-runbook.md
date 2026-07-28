@@ -15,7 +15,9 @@
 DFloat11/ECF8 输出目录不会被周期性遍历，以免干扰计时。可用
 `--progress-interval 10` 调整频率，或设为 `0` 关闭；该显示选项不影响断点续跑身份。
 进度 heartbeat 在所有并发任务之间全局节流；每次只增加一次文件 `stat` 和终端输出。
-它的开销很小但不是数学上的零，投稿用的最终 timing 建议设为 `0`。
+它的开销很小但不是数学上的零，投稿用的最终 timing 应在首次正式采集前设为 `0`。
+若同一 results 目录已经带 heartbeat 跑过，改为 `0` 后需用新的 results 目录或显式
+`--rerun`，否则断点续跑会继续复用原 measurement。
 
 ## 依赖
 
@@ -72,6 +74,7 @@ python3 scripts/run_benchmarks.py all \
   --workers 32 \
   --shard-jobs 32 \
   --deadline-hours 12 \
+  --progress-interval 0 \
   --drop-caches-command "sudo -n sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'"
 ```
 

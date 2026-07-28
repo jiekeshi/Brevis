@@ -636,10 +636,11 @@ def command_for(
             if operation == "compress"
             else ["lz4", "-q", "-d", "-f", str(source), str(output)]
         )
-    if method in ("zipnn", "libdeflate-6", "snappy"):
+    policy = CODEC_POLICIES.get(method)
+    if policy and policy.adapter:
         return [
             sys.executable,
-            str(CODEC_HELPER),
+            str(policy.adapter),
             method,
             operation,
             str(source),

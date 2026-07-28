@@ -202,8 +202,8 @@ class BenchmarkHarnessTests(unittest.TestCase):
         restored = self.root / "restored.bin"
         source.write_bytes(bytes(range(256)) * 1024)
 
-        benchmark_codecs.libdeflate_file(source, archive, False)
-        benchmark_codecs.libdeflate_file(archive, restored, True)
+        benchmark_codecs.CODECS["libdeflate-6"].compress(source, archive, 1)
+        benchmark_codecs.CODECS["libdeflate-6"].decompress(archive, restored, 1)
 
         self.assertEqual(source.read_bytes(), restored.read_bytes())
 
