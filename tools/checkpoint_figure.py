@@ -28,10 +28,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import re
 import shutil
 import subprocess
+import tempfile
 
 # ==================== design tokens ====================
 
@@ -580,6 +582,147 @@ def render_contribution(rows: list[dict], width: float, title: str | None) -> st
             + "\n".join(parts) + "\n</svg>\n")
 
 
+# The paper's plots are standalone pgfplots documents sharing one palette and
+# newtxtext, so a figure that has to sit beside them is written the same way
+# rather than approximated in SVG. Values mirror figures/baseline-improvement.tex.
+BREVIS_PREAMBLE = r"""\documentclass[tikz,border=1pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{newtxtext}
+\usepackage{newtxmath}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+\definecolor{brevisLavender}{rgb}{0.924,0.921,0.987}
+\definecolor{brevisMid}{HTML}{B9B2E5}
+\definecolor{brevisMain}{HTML}{6758A8}
+\definecolor{brevisDark}{HTML}{4B3F7E}
+\definecolor{brevisInk}{HTML}{25324A}
+\definecolor{brevisGrid}{HTML}{D9DDE4}
+"""
+
+
+def render_contribution_tex(rows: list[dict]) -> str:
+    """The contribution figure as a pgfplots document in the paper's style."""
+    n = len(rows)
+    # `total` is a fraction; the axis is in percent, and needs room past the
+    # longest bar for the bold total that sits at its end.
+    top = 100 * max(r["total"] for r in rows)
+    xmax = 10 * math.ceil((top + 6.0) / 10)
+    ticks = ",".join(str(t) for t in range(0, int(xmax) + 1, 10))
+    labels = ",".join(f"{{{r['label']} ({r['dtype']})}}" for r in rows)
+
+    def series(key: str) -> str:
+        return " ".join(f"({max(0.0, 100 * r[key]):.2f},{i + 1})"
+                        for i, r in enumerate(rows))
+
+    marks = []
+    for i, row in enumerate(rows):
+        entropy = max(0.0, 100 * row["entropy"])
+        structure = max(0.0, 100 * row["structure"])
+        if entropy >= 5.5:
+            marks.append(
+                f"    \\node[font=\\fontsize{{6.2}}{{6.8}}\\selectfont, "
+                f"text=brevisInk] at (axis cs:{entropy / 2:.2f},{i + 1}) "
+                f"{{{entropy:.1f}}};")
+        # With a single segment the bold total at the end already labels it.
+        if structure >= 5.5 and entropy > 0:
+            marks.append(
+                f"    \\node[font=\\fontsize{{6.2}}{{6.8}}\\selectfont, "
+                f"text=white] at (axis cs:{entropy + structure / 2:.2f},"
+                f"{i + 1}) {{{structure:.1f}}};")
+        marks.append(
+            f"    \\node[anchor=west, font=\\bfseries\\fontsize{{6.6}}{{7.2}}"
+            f"\\selectfont, text=brevisDark] at "
+            f"(axis cs:{entropy + structure + 0.9:.2f},{i + 1}) "
+            f"{{{100 * row['total']:.1f}\\%}};")
+
+    return BREVIS_PREAMBLE + f"""
+\\begin{{document}}
+\\begin{{tikzpicture}}
+  \\begin{{axis}}[
+    width=78mm,
+    height={16 + 7.0 * n:.0f}mm,
+    xbar stacked,
+    bar width=3.4mm,
+    xmin=0,
+    xmax={xmax:.0f},
+    ymin=0.4,
+    ymax={n + 0.6:.1f},
+    xtick={{{ticks}}},
+    ytick={{{",".join(str(i + 1) for i in range(n))}}},
+    yticklabels={{{labels}}},
+    y dir=reverse,
+    xlabel={{Share of raw bytes removed (\\%)}},
+    axis lines=box,
+    axis on top,
+    tick align=outside,
+    ytick style={{draw=none}},
+    tick style={{draw=brevisInk, line width=0.5pt}},
+    axis line style={{draw=brevisInk, line width=0.6pt}},
+    xmajorgrids,
+    ymajorgrids=false,
+    major grid style={{draw=brevisGrid, line width=0.32pt}},
+    axis background/.style={{fill=brevisLavender!13}},
+    tick label style={{font=\\fontsize{{6.8}}{{7.4}}\\selectfont,
+      text=brevisInk}},
+    label style={{font=\\fontsize{{7.1}}{{7.8}}\\selectfont,
+      text=brevisInk}},
+    legend style={{
+      at={{(0.5,-0.30)}},
+      anchor=north,
+      legend columns=2,
+      draw=none,
+      fill=none,
+      column sep=3mm,
+      font=\\fontsize{{6.6}}{{7.2}}\\selectfont,
+      text=brevisInk,
+      /tikz/every even column/.append style={{column sep=1.4mm}},
+    }},
+    clip=false,
+  ]
+    \\addplot[fill=brevisMid, draw=brevisInk, line width=0.3pt]
+      coordinates {{{series("entropy")}}};
+    \\addlegendentry{{Entropy coding alone}}
+    \\addplot[fill=brevisMain, draw=brevisInk, line width=0.3pt]
+      coordinates {{{series("structure")}}};
+    \\addlegendentry{{Added by the synthesised program}}
+
+{chr(10).join(marks)}
+  \\end{{axis}}
+\\end{{tikzpicture}}
+\\end{{document}}
+"""
+
+
+def compile_tex(source: str, out: pathlib.Path) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tex = out.with_suffix(".tex")
+    tex.write_text(source)
+    print(f"wrote {tex}")
+    if not shutil.which("pdflatex"):
+        print("pdflatex not found; .tex only")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        # `compat=1.18` is what the manuscript's own figures declare, and on
+        # an older pgfplots it raises a recoverable error: pdflatex exits
+        # non-zero while still producing the PDF. The paper's figures build the
+        # same way, so the artifact is the test, not the exit code.
+        result = subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "-output-directory", tmp,
+             str(tex.resolve())],
+            capture_output=True, text=True, cwd=tmp)
+        produced = pathlib.Path(tmp) / (tex.stem + ".pdf")
+        if not produced.exists():
+            print(result.stdout[-3000:])
+            raise SystemExit("pdflatex produced no PDF")
+        shutil.copy(produced, out.with_suffix(".pdf"))
+        print(f"wrote {out.with_suffix('.pdf')}")
+        if shutil.which("pdftoppm"):
+            subprocess.run(["pdftoppm", "-png", "-r", "400", "-singlefile",
+                            str(out.with_suffix(".pdf")), str(out)], check=True)
+            print(f"wrote {out.with_suffix('.png')}")
+
+
 def emit(svg_text: str, out: pathlib.Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     svg = out.with_suffix(".svg")
@@ -605,6 +748,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="draw the single-column contribution figure "
                              "instead of the map; repeat once per checkpoint")
     parser.add_argument("--title", default=None)
+    parser.add_argument("--style", choices=("paper", "standalone"),
+                        default="paper",
+                        help="`paper` emits a pgfplots document matching the "
+                             "manuscript's palette and fonts; `standalone` "
+                             "emits self-contained SVG")
     parser.add_argument("--search", type=pathlib.Path, required=False,
                         help="bench --format json with the full operator set")
     parser.add_argument("--literal", type=pathlib.Path, required=False,
@@ -622,8 +770,11 @@ def main(argv: list[str] | None = None) -> int:
             label, dtype, search, literal = spec.split("|")
             models.append((label, dtype, pathlib.Path(search),
                            pathlib.Path(literal)))
-        emit(render_contribution(contribution_rows(models), args.width,
-                                 args.title), args.out)
+        rows = contribution_rows(models)
+        if args.style == "paper":
+            compile_tex(render_contribution_tex(rows), args.out)
+        else:
+            emit(render_contribution(rows, args.width, args.title), args.out)
         return 0
 
     if not (args.search and args.literal and args.title):
