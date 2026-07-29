@@ -408,80 +408,94 @@ def arm_search(
     propose_every: int,
     per_round: int = 6,
 ) -> ArmResult:
-    """Keep several libraries alive, recombine them, stop when they stop paying."""
-    population: list[Scored] = [Scored(Library(), baseline, "empty", 0)]
-    mined = mine_mod.diversify(mine_mod.mine(report, table, Library()), per_family=1)
-    best = population[0]
-    best_by_round: list[int] = []
+    """Forward selection over a pool that grows every round.
+
+    The earlier design mutated and recombined the incumbent library, and its
+    best-by-round was flat after round one: local moves around a good macro are
+    almost always worse than the macro. What does improve round on round is
+    *selection over an accumulating pool* — measured directly, a forward
+    selection handed nine already-discovered macros improved at every step and
+    ended 20x ahead of the mutating search.
+
+    So each round: ask for new macros, fold in mined and random ones, keep them
+    all in a pool that never shrinks, and spend the round's evaluations trying
+    the most promising unused member on top of the incumbent. A macro that lost
+    in round two gets another chance in round five, when the incumbent it would
+    join is a different library. That is the part greedy cannot do, and it is
+    where the multi-round behaviour comes from.
+    """
+    pool: list = []
+    pool_shapes: set[str] = set()
+
+    def offer(macro) -> None:
+        if macro is None or macro.shape() in pool_shapes:
+            return
+        pool_shapes.add(macro.shape())
+        pool.append(macro)
+
+    for candidate in mine_mod.diversify(
+            mine_mod.mine(report, table, Library()), per_family=1)[:6]:
+        offer(mine_mod.to_macro(
+            candidate, mine_mod.suggest_name(candidate.shape, pool_shapes), "mined"))
+
+    best = Scored(Library(), baseline, "empty", 0)
+    population: list[Scored] = [best]
+    tried: set[str] = set()
+    best_by_round: list = []
     rounds = 0
     idle = 0
     stopped = "budget exhausted"
 
     while evaluator.remaining > 0:
         rounds += 1
-        proposals: list[tuple[Library, str]] = []
-
-        # Leave-one-out on the incumbent. Each is a candidate in its own right
-        # — an early acceptance can become dead weight — and measuring them is
-        # what makes `marginals` able to say which member is carrying the
-        # library.
-        for macro in best.library.macros:
-            proposals.append((best.library.without(macro.name), "drop"))
-        for scored in population[:2]:
-            child = variation.mutate(scored.library, table, rng)
-            if child is not None:
-                proposals.append((child, "mutation"))
-        for first in population:
-            for second in population:
-                if first.key >= second.key:
-                    continue
-                child = variation.crossover(first.library, second.library, rng)
-                if child is not None:
-                    proposals.append((child, "crossover"))
-                    break
-            else:
-                continue
-            break
-        if mined:
-            candidate = mined.pop(0)
-            macro = mine_mod.to_macro(
-                candidate, mine_mod.suggest_name(candidate.shape, best.library.names()),
-                "mined")
-            grown = variation.add(best.library, macro)
-            if grown is not None:
-                proposals.append((grown, "mined"))
-        # Retry: a single unlucky draw must not be able to starve the round,
-        # which would end the whole search at "no new candidates".
-        for _ in range(20):
-            macro = variation.random_macro(table, rng, best.library.names())
-            if macro is None:
-                continue
-            grown = variation.add(best.library, macro)
-            if grown is not None and grown.sha256() != best.key:
-                proposals.append((grown, "random"))
-                break
         if llm is not None and (rounds - 1) % propose_every == 0:
             for proposed in _ask(llm, context, best.library, table, wanted=3,
                                  history=_history(evaluator, best),
                                  marginals=marginals(best.library,
                                                      evaluator.cache)).macros:
-                grown = variation.add(best.library, proposed)
-                if grown is not None:
-                    proposals.append((grown, "proposed"))
+                offer(proposed)
+        # Draw until the pool actually grows, not a fixed number of times: a
+        # sampler that misses is common, and six consecutive misses used to
+        # leave the pool empty and end the run at "nothing new".
+        added, attempts = 0, 0
+        while added < 3 and attempts < 40:
+            attempts += 1
+            before = len(pool)
+            offer(variation.random_macro(table, rng, pool_shapes))
+            added += len(pool) > before
+        # Mutations feed the pool rather than the incumbent, so a local move is
+        # a candidate among all the others instead of the only thing on offer.
+        child = variation.mutate(best.library, table, rng)
+        if child is not None:
+            for macro in child.macros:
+                offer(macro)
 
+        candidates: list[tuple[Library, str]] = []
+        for macro in best.library.macros:              # leave-one-out
+            candidates.append((best.library.without(macro.name), "drop"))
+        for macro in pool:                             # forward selection
+            grown = variation.add(best.library, macro)
+            if grown is not None:
+                candidates.append((grown, macro.origin))
+        for other in population[1:]:                   # union with a rival
+            merged = variation.crossover(best.library, other.library, rng)
+            if merged is not None:
+                candidates.append((merged, "crossover"))
+
+        # Mark as tried only what is actually measured: truncating after the
+        # mark would bar a candidate the round had no room for from ever being
+        # reconsidered.
         fresh = []
-        seen = {scored.key for scored in population}
-        for library, origin in proposals:
-            if library.sha256() in seen:
+        for library, origin in candidates:
+            if library.sha256() in tried:
                 continue
-            seen.add(library.sha256())
             fresh.append((library, origin))
-        # Bound the round so the budget buys rounds rather than one enormous
-        # sweep: refinement needs feedback cycles, and an unbounded round left
-        # only two or three of them inside a 30-evaluation budget.
-        fresh = fresh[:per_round]
+            if len(fresh) >= per_round:
+                break
+        for library, _ in fresh:
+            tried.add(library.sha256())
         if not fresh:
-            stopped = "no new candidates could be generated"
+            stopped = "the pool offers nothing new"
             break
 
         for library, origin in fresh:
@@ -493,13 +507,8 @@ def arm_search(
                 break
             population.append(Scored(library, fitness, origin, rounds))
 
-        # Selection: feasible first, then objective, then the smaller library —
-        # a tie broken toward fewer macros keeps branching cost down.
         population.sort(key=lambda s: (not s.fitness.feasible, s.fitness.score(),
                                        len(s.library.macros)))
-        # Diversity: two members with the same macro shapes explore the same
-        # neighbourhood, and a population of near-duplicates stops being a
-        # population at all.
         deduped: list[Scored] = []
         shapes_seen: set[frozenset] = set()
         for scored in population:
@@ -509,6 +518,7 @@ def arm_search(
             shapes_seen.add(shapes)
             deduped.append(scored)
         population = deduped[:population_size]
+
         if population[0].fitness.better_than(best.fitness):
             best, idle = population[0], 0
         else:
