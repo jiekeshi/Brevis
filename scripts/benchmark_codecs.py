@@ -86,7 +86,10 @@ def zipnn_compress(source: Path, output: Path, threads: int) -> None:
                 method="HUFFMAN",
                 threads=threads,
             )
-            encoded = codec.compress(tensor)
+            # ZipNN mutates its tensor argument while byte-shuffling. Keep the
+            # safetensors-backed source view intact in case compression is not
+            # smaller and this tensor must be stored verbatim.
+            encoded = codec.compress(tensor.clone())
             if len(encoded) >= tensor.element_size() * tensor.nelement():
                 tensors[name] = tensor
                 continue
@@ -97,9 +100,8 @@ def zipnn_compress(source: Path, output: Path, threads: int) -> None:
             compressed_info[name] = build_compressed_tensor_info(tensor)
 
         metadata = dict(checkpoint.metadata() or {})
-
-    metadata[METADATA_KEY] = json.dumps(compressed_info)
-    save_file(tensors, output, metadata)
+        metadata[METADATA_KEY] = json.dumps(compressed_info)
+        save_file(tensors, output, metadata)
 
 
 def zipnn_decompress(source: Path, output: Path, threads: int) -> None:
@@ -135,8 +137,7 @@ def zipnn_decompress(source: Path, output: Path, threads: int) -> None:
             )
         if metadata:
             metadata.pop(METADATA_KEY, None)
-
-    save_file(tensors, output, metadata)
+        save_file(tensors, output, metadata or None)
 
 
 def package_version(package: str) -> None:

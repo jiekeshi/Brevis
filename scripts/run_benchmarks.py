@@ -24,14 +24,45 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from benchmark_corpus import CHECKPOINTS as PAPER_CHECKPOINTS
-from benchmark_corpus import CHECKPOINT_BY_NAME
+from benchmark_corpus import CHECKPOINT_BY_NAME, CORPUS_PRESETS
 from benchmark_utils import human_bytes
 
 ROOT = Path(__file__).resolve().parent.parent
 CODEC_HELPER = ROOT / "scripts" / "benchmark_codecs.py"
 DEFAULT_BREVIS_BIN = ROOT / "zig-out" / "bin" / "brevis"
 SPECIALIZED_METHODS = ("dfloat11", "ecf8")
+SPECIALIZED_COMMITS = {
+    "dfloat11": "457733886ce6ebc6d8dda1621fad1ffa2661e028",
+    "ecf8": "9cbf3d5cf77d6db8cf6f29df1fe6d52bc88fa01e",
+}
+SPECIALIZED_OFFICIAL_WORKERS = {
+    "dfloat11": 1,
+    "ecf8": 16,
+}
+SPECIALIZED_CHECKPOINTS = {
+    "dfloat11": (
+        "llama-3.1-8b-bf16",
+        "qwen3-32b-bf16",
+        "llama-3.1-70b-bf16",
+    ),
+    "ecf8": ("qwen3-32b-fp8",),
+}
+SPECIALIZED_VALIDATION_EVIDENCE = {
+    "dfloat11": "official_check_correctness_elementwise_value_equality",
+    "ecf8": "official_validate_cuda_elementwise_value_equality",
+}
+SPECIALIZED_PROTOCOL_REQUIREMENTS = {
+    "schema_version": 1,
+    "kind": "native_checkpoint_conversion",
+    "source_scope": "manifest_declared_weight_tensors",
+    "output_scope": "converter_native_model_directory",
+    "exactness_scope": "tensor_value_exact",
+    "publication_exactness_target": "tensor_bit_exact",
+    "original_checkpoint_byte_exact": False,
+    "offline_decompression_available": False,
+    "independent_bitwise_validation_performed": False,
+    "independent_bitwise_validation_required_before_publication": True,
+}
 DEFAULT_BUDGETS = (0, 1, 8, 32, 128, 512)
 DEFAULT_WORKERS = (1, 2, 4, 8, 16, 32)
 READ_CHUNK = 64 * 1024 * 1024
@@ -234,6 +265,7 @@ def load_corpus(
     root: Path,
     names: list[str] | None,
     allow_custom: bool = False,
+    corpus_preset: str = "paper-v1",
 ) -> list[Checkpoint]:
     root = root.expanduser().resolve()
     if not root.is_dir():
@@ -253,7 +285,7 @@ def load_corpus(
                 f"non-paper checkpoint(s): {', '.join(sorted(unknown))}"
             )
         selected = set(names) if names else {
-            checkpoint.name for checkpoint in PAPER_CHECKPOINTS
+            checkpoint.name for checkpoint in CORPUS_PRESETS[corpus_preset]
         }
         unknown_selection = selected - CHECKPOINT_BY_NAME.keys()
         if unknown_selection:
@@ -580,7 +612,7 @@ def run_id(fields: dict[str, Any]) -> str:
 
 
 def brevis_limits(source: Path) -> list[str]:
-    size = source.stat().st_size
+    size = source.stat().st_size if source.exists() else 0
     return [
         "--max-total-bytes",
         str(max(16 * 1024**3, size * 2)),
@@ -687,7 +719,12 @@ def cache_control_available(command: str | None) -> bool:
         words = shlex.split(command)
         return bool(words and shutil.which(words[0]))
     if sys.platform.startswith("linux"):
-        return os.geteuid() == 0 and Path("/proc/sys/vm/drop_caches").exists()
+        drop_caches_path = Path("/proc/sys/vm/drop_caches")
+        return (
+            os.geteuid() == 0
+            and drop_caches_path.exists()
+            and os.access(drop_caches_path, os.W_OK)
+        )
     return sys.platform == "darwin" and os.geteuid() == 0 and bool(
         shutil.which("purge")
     )
@@ -729,6 +766,11 @@ def operation_identity(
         "provenance": provenance,
         "max_expansions": (
             brevis_config.max_expansions
+            if is_brevis and brevis_config
+            else None
+        ),
+        "calibration_tensors": (
+            brevis_config.tensors
             if is_brevis and brevis_config
             else None
         ),
@@ -1094,9 +1136,6 @@ def run_brevis_variant(
             config,
             variant,
         )
-        if not args.rerun and log.get(f"{run_id(identity)}-verify"):
-            print(f"  resume {checkpoint.name}/{source.name}/{variant}")
-            continue
         archive = (
             args.results
             / ("archives" if keep else "tmp")
@@ -1104,6 +1143,18 @@ def run_brevis_variant(
             / slug(variant)
             / f"{source.stem}.{slug(variant)}.brv"
         )
+        if not args.rerun and log.get(f"{run_id(identity)}-verify"):
+            print(f"  resume {checkpoint.name}/{source.name}/{variant}")
+            if not keep and not args.dry_run:
+                for directory in ("archives", "tmp"):
+                    (
+                        args.results
+                        / directory
+                        / slug(checkpoint.name)
+                        / slug(variant)
+                        / f"{source.stem}.{slug(variant)}.brv"
+                    ).unlink(missing_ok=True)
+            continue
         record = execute_operation(
             args=args,
             log=log,
@@ -1133,50 +1184,86 @@ def run_brevis_variant(
 
 def run_sweeps(args: argparse.Namespace, log: ResultLog, core: Checkpoint) -> None:
     for budget in args.search_budgets:
-        if budget == 512:
-            continue
         run_brevis_variant(
             args,
             log,
             core,
             "pareto",
             f"budget-{budget}",
-            BrevisConfig(1, budget, 256, True),
-            keep=True,
+            BrevisConfig(
+                args.pareto_workers,
+                budget,
+                args.pareto_tensors,
+                True,
+            ),
+            keep=not args.discard_analysis_archives,
         )
     for workers in args.worker_sweep:
-        if workers == 1:
-            continue
         run_brevis_variant(
             args,
             log,
             core,
             "workers",
             f"workers-{workers}",
-            BrevisConfig(workers),
+            BrevisConfig(
+                workers,
+                args.worker_sweep_max_expansions,
+                args.worker_sweep_tensors,
+                True,
+            ),
             keep=False,
         )
 
 
 def run_ablation(args: argparse.Namespace, log: ResultLog, core: Checkpoint) -> None:
-    run_brevis_variant(
-        args,
-        log,
-        core,
-        "ablation",
-        "no-phog",
-        BrevisConfig(1, 512, 0, True),
-        keep=True,
+    variants = (
+        (
+            "full",
+            BrevisConfig(
+                args.ablation_workers,
+                args.ablation_max_expansions,
+                args.ablation_tensors,
+                True,
+            ),
+        ),
+        (
+            "no-phog",
+            BrevisConfig(
+                args.ablation_workers,
+                args.ablation_max_expansions,
+                0,
+                True,
+            ),
+        ),
+        (
+            "no-astar",
+            BrevisConfig(
+                args.ablation_workers,
+                args.ablation_max_expansions,
+                args.ablation_tensors,
+                False,
+            ),
+        ),
+        (
+            "no-phog-no-astar",
+            BrevisConfig(
+                args.ablation_workers,
+                args.ablation_max_expansions,
+                0,
+                False,
+            ),
+        ),
     )
-    run_brevis_variant(
-        args,
-        log,
-        core,
-        "ablation",
-        "no-astar-heuristic",
-        BrevisConfig(1, 512, 256, False),
-        keep=True,
-    )
+    for variant, config in variants:
+        run_brevis_variant(
+            args,
+            log,
+            core,
+            "ablation",
+            variant,
+            config,
+            keep=not args.discard_analysis_archives,
+        )
 
 
 def size_shard(
@@ -1187,17 +1274,23 @@ def size_shard(
     method: str,
 ) -> None:
     workers = method_workers(method, args.workers)
+    brevis_config = BrevisConfig(
+        workers,
+        args.corpus_max_expansions,
+        args.corpus_tensors,
+    )
     run_pair(
         args,
         log,
         checkpoint,
         source,
         method,
-        "unconditioned",
+        args.corpus_cache,
         workers,
         "corpus",
         archive_path(args.results, checkpoint.name, method, source),
-        BrevisConfig(workers),
+        brevis_config,
+        keep_archive=not args.discard_corpus_archives,
     )
 
 
@@ -1267,12 +1360,155 @@ def load_specialized_config(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {}
     config = json.loads(path.expanduser().read_text())
+    if not isinstance(config, dict):
+        raise BenchmarkError("specialized config must be a JSON object")
     unknown = set(config) - set(SPECIALIZED_METHODS)
     if unknown:
         raise BenchmarkError(f"unknown specialized method(s): {sorted(unknown)}")
     for method, settings in config.items():
+        if not isinstance(settings, dict):
+            raise BenchmarkError(f"{method}: settings must be a JSON object")
+        expected_commit = SPECIALIZED_COMMITS[method]
+        if settings.get("expected_commit") != expected_commit:
+            raise BenchmarkError(
+                f"{method}.expected_commit must be the frozen official commit "
+                f"{expected_commit}"
+            )
+        try:
+            workers = int(settings["workers"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BenchmarkError(f"{method}.workers must be an integer") from exc
+        if workers != SPECIALIZED_OFFICIAL_WORKERS[method]:
+            raise BenchmarkError(
+                f"{method}.workers must be "
+                f"{SPECIALIZED_OFFICIAL_WORKERS[method]} for the frozen "
+                "official protocol"
+            )
+        pattern = settings.get("checkpoint_pattern")
+        if not isinstance(pattern, str):
+            raise BenchmarkError(f"{method}.checkpoint_pattern must be a string")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise BenchmarkError(
+                f"{method}.checkpoint_pattern is invalid: {exc}"
+            ) from exc
+        protocol = settings.get("protocol")
+        if not isinstance(protocol, dict):
+            raise BenchmarkError(f"{method}.protocol must be a JSON object")
+        for name, expected in SPECIALIZED_PROTOCOL_REQUIREMENTS.items():
+            if protocol.get(name) != expected:
+                raise BenchmarkError(
+                    f"{method}.protocol.{name} must be {expected!r}"
+                )
+        supported = protocol.get("supported_checkpoints")
+        if (
+            not isinstance(supported, list)
+            or not supported
+            or any(not isinstance(item, str) or not item for item in supported)
+            or len(set(supported)) != len(supported)
+        ):
+            raise BenchmarkError(
+                f"{method}.protocol.supported_checkpoints must be a "
+                "non-empty unique string list"
+            )
+        if set(supported) != set(SPECIALIZED_CHECKPOINTS[method]):
+            raise BenchmarkError(
+                f"{method}.protocol.supported_checkpoints must be exactly "
+                f"{list(SPECIALIZED_CHECKPOINTS[method])}"
+            )
+        unsupported_by_pattern = [
+            checkpoint
+            for checkpoint in supported
+            if not re.search(pattern, checkpoint)
+        ]
+        if unsupported_by_pattern:
+            raise BenchmarkError(
+                f"{method}.checkpoint_pattern does not match declared "
+                f"supported checkpoint(s): {unsupported_by_pattern}"
+            )
+        evidence = protocol.get("validation_evidence")
+        if evidence != SPECIALIZED_VALIDATION_EVIDENCE[method]:
+            raise BenchmarkError(
+                f"{method}.protocol.validation_evidence must be "
+                f"{SPECIALIZED_VALIDATION_EVIDENCE[method]!r}"
+            )
+        validates_inline = settings.get("validates_during_compression") is True
+        has_separate_validation = bool(settings.get("validate_command"))
+        if validates_inline == has_separate_validation:
+            raise BenchmarkError(
+                f"{method} must configure exactly one of "
+                "validates_during_compression=true or validate_command"
+            )
+        expected_timing_scope = (
+            "conversion_including_official_validation"
+            if validates_inline
+            else "conversion_only_validation_excluded"
+        )
+        if protocol.get("timing_scope") != expected_timing_scope:
+            raise BenchmarkError(
+                f"{method}.protocol.timing_scope must be "
+                f"{expected_timing_scope!r}"
+            )
+        for required_command in ("version_command", "compress_command"):
+            command = settings.get(required_command)
+            if (
+                not isinstance(command, list)
+                or not command
+                or any(not isinstance(part, str) or not part for part in command)
+            ):
+                raise BenchmarkError(
+                    f"{method}.{required_command} must be a non-empty string list"
+                )
+        checkout = settings.get("upstream_checkout")
+        if (
+            not isinstance(checkout, str)
+            or not checkout
+            or not Path(checkout).expanduser().is_absolute()
+        ):
+            raise BenchmarkError(
+                f"{method}.upstream_checkout must be an absolute path"
+            )
+        compress_command = settings["compress_command"]
+        for required_flag in ("--source", "--output", "--workers", "--upstream"):
+            if required_flag not in compress_command:
+                raise BenchmarkError(
+                    f"{method}.compress_command must include {required_flag}"
+                )
+        upstream_index = compress_command.index("--upstream") + 1
+        if (
+            upstream_index >= len(compress_command)
+            or compress_command[upstream_index] != checkout
+        ):
+            raise BenchmarkError(
+                f"{method}.compress_command --upstream must equal "
+                "upstream_checkout"
+            )
+        if validates_inline and "--validate-cuda" not in compress_command:
+            raise BenchmarkError(
+                f"{method}.compress_command must include --validate-cuda "
+                "when validates_during_compression=true"
+            )
+        for module_field in ("runtime_modules", "runtime_import_modules"):
+            modules = settings.get(module_field, [])
+            if (
+                not isinstance(modules, list)
+                or any(not isinstance(item, str) or not item for item in modules)
+                or len(set(modules)) != len(modules)
+            ):
+                raise BenchmarkError(
+                    f"{method}.{module_field} must be a unique string list"
+                )
         for name in ("version_command", "compress_command", "validate_command"):
             command = settings.get(name)
+            if command is not None and (
+                not isinstance(command, list)
+                or not command
+                or any(not isinstance(part, str) or not part for part in command)
+            ):
+                raise BenchmarkError(
+                    f"{method}.{name} must be a non-empty string list"
+                )
             executable = Path(command[0]) if command else None
             if (
                 executable
@@ -1308,6 +1544,7 @@ def specialized_identity(
     method: str,
     workers: int,
     provenance: dict[str, Any],
+    protocol: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "stage": "specialized",
@@ -1320,6 +1557,28 @@ def specialized_identity(
         "cache": "unconditioned",
         "workers": workers,
         "provenance": provenance,
+        "conversion_protocol": protocol["kind"],
+        "conversion_protocol_schema_version": protocol["schema_version"],
+        "source_scope": protocol["source_scope"],
+        "output_scope": protocol["output_scope"],
+        "exactness_scope": protocol["exactness_scope"],
+        "publication_exactness_target": protocol[
+            "publication_exactness_target"
+        ],
+        "original_checkpoint_byte_exact": protocol[
+            "original_checkpoint_byte_exact"
+        ],
+        "offline_decompression_available": protocol[
+            "offline_decompression_available"
+        ],
+        "validation_evidence": protocol["validation_evidence"],
+        "independent_bitwise_validation_performed": protocol[
+            "independent_bitwise_validation_performed"
+        ],
+        "independent_bitwise_validation_required_before_publication": protocol[
+            "independent_bitwise_validation_required_before_publication"
+        ],
+        "timing_scope": protocol["timing_scope"],
     }
 
 
@@ -1336,6 +1595,7 @@ def record_specialized_skip(
         method,
         workers,
         args.run_provenance[method],
+        args.run_provenance[method]["config"]["protocol"],
     )
     log.append(
         {
@@ -1391,6 +1651,7 @@ def run_specialized(
                 method,
                 workers,
                 args.run_provenance[method],
+                settings["protocol"],
             )
             identifier = run_id(identity)
             if not args.rerun and log.get(identifier) and archive.exists():
@@ -1452,6 +1713,15 @@ def run_specialized(
                         "peak_rss_bytes": measured.peak_rss_bytes,
                         "output_path": str(archive),
                         "exact": True,
+                        "validation_passed": True,
+                        "publication_ready": (
+                            settings["protocol"][
+                                "independent_bitwise_validation_performed"
+                            ]
+                            or not settings["protocol"][
+                                "independent_bitwise_validation_required_before_publication"
+                            ]
+                        ),
                         "finished_at": utc_now(),
                     }
                 )
@@ -1683,6 +1953,33 @@ def write_environment(
         "ram_bytes": args.host_context["ram_bytes"],
         "workers": args.workers,
         "shard_jobs": args.shard_jobs,
+        "pareto_workers": getattr(args, "pareto_workers", 1),
+        "pareto_tensors": getattr(args, "pareto_tensors", 256),
+        "worker_sweep_max_expansions": getattr(
+            args,
+            "worker_sweep_max_expansions",
+            512,
+        ),
+        "worker_sweep_tensors": getattr(
+            args,
+            "worker_sweep_tensors",
+            256,
+        ),
+        "ablation_max_expansions": getattr(
+            args,
+            "ablation_max_expansions",
+            512,
+        ),
+        "ablation_tensors": getattr(args, "ablation_tensors", 256),
+        "ablation_workers": getattr(args, "ablation_workers", 1),
+        "corpus_max_expansions": getattr(
+            args,
+            "corpus_max_expansions",
+            512,
+        ),
+        "corpus_tensors": getattr(args, "corpus_tensors", 256),
+        "corpus_cache": getattr(args, "corpus_cache", "unconditioned"),
+        "corpus_preset": getattr(args, "corpus_preset", "paper-v1"),
         "method_versions": method_versions,
         "run_provenance": run_provenance,
         "corpus": list(corpus_by_name.values()),
@@ -1692,6 +1989,16 @@ def write_environment(
         ),
         "cold_cache_available": args.cold_available,
         "drop_caches_command": args.drop_caches_command,
+        "discard_corpus_archives": getattr(
+            args,
+            "discard_corpus_archives",
+            False,
+        ),
+        "discard_analysis_archives": getattr(
+            args,
+            "discard_analysis_archives",
+            False,
+        ),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(environment, indent=2, sort_keys=True) + "\n")
@@ -1707,6 +2014,20 @@ def preflight(
     missing = [method for method, version in versions.items() if version is None]
     for method, version in versions.items():
         print(f"{method:12} {version or 'MISSING'}")
+    mismatched_specialized = [
+        (method, versions[method], specialized[method]["expected_commit"])
+        for method in SPECIALIZED_METHODS
+        if method in args.methods
+        and method in specialized
+        and versions.get(method) is not None
+        and versions[method] != specialized[method]["expected_commit"]
+    ]
+    if mismatched_specialized:
+        details = ", ".join(
+            f"{method}: expected {expected}, got {actual}"
+            for method, actual, expected in mismatched_specialized
+        )
+        raise BenchmarkError(f"specialized commit mismatch: {details}")
     if missing and not args.allow_missing:
         raise BenchmarkError(
             "missing method(s): "
@@ -1968,53 +2289,42 @@ def summarize(results: Path) -> None:
         verified_records,
     )
     table3 = end_to_end_table(verified_records)
-    core_full = [
-        row
-        for row in verified_records
-        if row.get("stage") == "core"
-        and row.get("method") == "brevis"
-        and row.get("operation") == "compress"
-        and row.get("cache") == "hot"
-        and row.get("workers") == 1
-        and row.get("max_expansions") == 512
-    ]
     figure1_rows = [
         row
         for row in verified_records
         if row.get("stage") == "pareto"
         and row.get("operation") == "compress"
-    ] + [{**row, "variant": "budget-512"} for row in core_full]
+    ]
     figure1 = aggregate(
         figure1_rows,
-        ("variant", "max_expansions", "workers"),
+        ("variant", "max_expansions", "calibration_tensors", "workers"),
     )
     figure2_rows = [
         row
         for row in verified_records
         if row.get("stage") == "workers"
         and row.get("operation") == "compress"
-    ] + core_full
+    ]
     figure2 = aggregate(
         figure2_rows,
-        ("workers", "max_expansions"),
+        ("workers", "max_expansions", "calibration_tensors"),
     )
     table4_rows = [
         row
         for row in verified_records
         if row.get("stage") == "ablation"
         and row.get("operation") == "compress"
-    ] + [
-        {
-            **row,
-            "variant": "full",
-            "phog": True,
-            "astar_heuristic": True,
-        }
-        for row in core_full
     ]
     table4 = aggregate(
         table4_rows,
-        ("variant", "phog", "astar_heuristic"),
+        (
+            "variant",
+            "phog",
+            "astar_heuristic",
+            "max_expansions",
+            "calibration_tensors",
+            "workers",
+        ),
     )
     tables = results / "tables"
     write_csv(tables / "table2-compression-effectiveness.csv", table2)
@@ -2063,6 +2373,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models-root", type=Path)
     parser.add_argument("--core-model", type=Path)
+    parser.add_argument(
+        "--core-name",
+        default="qwen2.5-7b-local",
+        help="Result label for --core-model.",
+    )
     parser.add_argument("--results", type=Path, default=ROOT / "results")
     parser.add_argument(
         "--brevis-bin",
@@ -2071,11 +2386,70 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--methods", nargs="+", choices=ALL_METHODS, default=list(ALL_METHODS))
     parser.add_argument("--models", nargs="+")
+    parser.add_argument(
+        "--corpus-preset",
+        choices=tuple(CORPUS_PRESETS),
+        default="paper-v1",
+        help=(
+            "Expected frozen checkpoint set when --models is omitted. "
+            "corpus-v2 appends Voxtral Mini and Qwen-Image without removing "
+            "the paper-v1 Whisper or SDXL rows."
+        ),
+    )
     practical_default = min(32, physical_cores() or os.cpu_count() or 1)
     parser.add_argument("--workers", type=int, default=practical_default)
     parser.add_argument("--shard-jobs", type=int, default=practical_default)
     parser.add_argument("--search-budgets", type=parse_int_list, default=DEFAULT_BUDGETS)
     parser.add_argument("--worker-sweep", type=parse_int_list, default=DEFAULT_WORKERS)
+    parser.add_argument(
+        "--pareto-workers",
+        type=int,
+        default=1,
+        help="Brevis workers used for every Pareto search-budget point.",
+    )
+    parser.add_argument(
+        "--pareto-tensors",
+        type=int,
+        default=256,
+        help="Calibration tensors used for every Pareto search-budget point.",
+    )
+    parser.add_argument(
+        "--worker-sweep-max-expansions",
+        type=int,
+        default=512,
+        help="Search budget held fixed across the worker sweep.",
+    )
+    parser.add_argument(
+        "--worker-sweep-tensors",
+        type=int,
+        default=256,
+        help="Calibration tensors held fixed across the worker sweep.",
+    )
+    parser.add_argument(
+        "--ablation-max-expansions",
+        type=int,
+        default=512,
+        help="Search budget used by all four explicit ablation variants.",
+    )
+    parser.add_argument(
+        "--ablation-tensors",
+        type=int,
+        default=256,
+        help="Calibration tensors for full/no-A*; no-PHOG variants use zero.",
+    )
+    parser.add_argument(
+        "--ablation-workers",
+        type=int,
+        default=1,
+        help="Brevis workers used by all four explicit ablation variants.",
+    )
+    parser.add_argument("--corpus-max-expansions", type=int, default=512)
+    parser.add_argument("--corpus-tensors", type=int, default=256)
+    parser.add_argument(
+        "--corpus-cache",
+        choices=("unconditioned", "hot"),
+        default="unconditioned",
+    )
     parser.add_argument("--deadline-hours", type=float)
     parser.add_argument(
         "--progress-interval",
@@ -2084,14 +2458,46 @@ def parse_args() -> argparse.Namespace:
         help="Seconds between compression progress lines; 0 disables them.",
     )
     parser.add_argument("--drop-caches-command")
+    parser.add_argument(
+        "--discard-corpus-archives",
+        action="store_true",
+        help=(
+            "Delete each corpus archive after exactness verification; raw size "
+            "and timing records remain resumable."
+        ),
+    )
+    parser.add_argument(
+        "--discard-analysis-archives",
+        action="store_true",
+        help=(
+            "Delete Pareto, worker-sweep, and ablation archives only after "
+            "exactness verification; verified records remain resumable."
+        ),
+    )
     parser.add_argument("--specialized-config", type=Path)
     parser.add_argument("--allow-missing", action="store_true")
     parser.add_argument("--allow-custom-corpus", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rerun", action="store_true")
     args = parser.parse_args()
-    if args.workers < 1 or args.shard_jobs < 1:
-        parser.error("workers and shard-jobs must be positive")
+    if (
+        args.workers < 1
+        or args.shard_jobs < 1
+        or args.pareto_workers < 1
+        or args.ablation_workers < 1
+    ):
+        parser.error("worker counts must be positive")
+    search_limits = (
+        args.pareto_tensors,
+        args.worker_sweep_max_expansions,
+        args.worker_sweep_tensors,
+        args.ablation_max_expansions,
+        args.ablation_tensors,
+        args.corpus_max_expansions,
+        args.corpus_tensors,
+    )
+    if any(value < 0 for value in search_limits):
+        parser.error("search limits must be non-negative")
     if args.progress_interval < 0:
         parser.error("progress-interval must be non-negative")
     sweep_limit = max(
@@ -2119,7 +2525,7 @@ def main() -> int:
     versions = preflight(args, specialized)
     log = ResultLog(args.results / "raw" / "runs.jsonl")
     core = (
-        load_checkpoint(args.core_model, "qwen2.5-7b-local")
+        load_checkpoint(args.core_model, args.core_name)
         if args.core_model
         else None
     )
@@ -2128,6 +2534,7 @@ def main() -> int:
             args.models_root,
             args.models,
             args.allow_custom_corpus,
+            args.corpus_preset,
         )
         if args.models_root
         else []

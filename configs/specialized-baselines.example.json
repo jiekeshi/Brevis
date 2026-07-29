@@ -1,0 +1,118 @@
+{
+  "dfloat11": {
+    "repository": "https://github.com/LeanModels/DFloat11.git",
+    "expected_commit": "457733886ce6ebc6d8dda1621fad1ffa2661e028",
+    "upstream_checkout": "/opt/DFloat11",
+    "upstream_license": "Apache-2.0",
+    "checkpoint_pattern": "^(llama-3\\.1-(8b|70b)-bf16|qwen3-32b-bf16)$",
+    "workers": 1,
+    "cwd": "/workspace/Brevis",
+    "runtime_modules": [
+      "accelerate",
+      "cupy",
+      "dahuffman",
+      "dfloat11",
+      "pkg_resources",
+      "safetensors",
+      "torch",
+      "transformers"
+    ],
+    "runtime_import_modules": [
+      "dfloat11"
+    ],
+    "version_command": [
+      "git",
+      "-C",
+      "/opt/DFloat11",
+      "rev-parse",
+      "HEAD"
+    ],
+    "compress_command": [
+      "/opt/dfloat11-venv/bin/python",
+      "scripts/specialized_baselines.py",
+      "dfloat11",
+      "--source",
+      "{source_dir}",
+      "--output",
+      "{archive}",
+      "--workers",
+      "{workers}",
+      "--upstream",
+      "/opt/DFloat11",
+      "--validate-cuda"
+    ],
+    "validates_during_compression": true,
+    "protocol": {
+      "schema_version": 1,
+      "kind": "native_checkpoint_conversion",
+      "source_scope": "manifest_declared_weight_tensors",
+      "output_scope": "converter_native_model_directory",
+      "exactness_scope": "tensor_value_exact",
+      "publication_exactness_target": "tensor_bit_exact",
+      "original_checkpoint_byte_exact": false,
+      "offline_decompression_available": false,
+      "validation_evidence": "official_check_correctness_elementwise_value_equality",
+      "independent_bitwise_validation_performed": false,
+      "independent_bitwise_validation_required_before_publication": true,
+      "timing_scope": "conversion_including_official_validation",
+      "supported_checkpoints": [
+        "llama-3.1-8b-bf16",
+        "qwen3-32b-bf16",
+        "llama-3.1-70b-bf16"
+      ]
+    }
+  },
+  "ecf8": {
+    "repository": "https://github.com/zeyuyang8/ecf8.git",
+    "expected_commit": "9cbf3d5cf77d6db8cf6f29df1fe6d52bc88fa01e",
+    "upstream_checkout": "/opt/ecf8",
+    "upstream_license": null,
+    "checkpoint_pattern": "^qwen3-32b-fp8$",
+    "workers": 16,
+    "cwd": "/workspace/Brevis",
+    "runtime_modules": [
+      "safetensors",
+      "torch",
+      "transformers"
+    ],
+    "version_command": [
+      "git",
+      "-C",
+      "/opt/ecf8",
+      "rev-parse",
+      "HEAD"
+    ],
+    "compress_command": [
+      "/opt/ecf8-venv/bin/python",
+      "scripts/specialized_baselines.py",
+      "ecf8",
+      "--source",
+      "{source_dir}",
+      "--output",
+      "{archive}",
+      "--workers",
+      "{workers}",
+      "--upstream",
+      "/opt/ecf8",
+      "--validate-cuda"
+    ],
+    "validates_during_compression": true,
+    "protocol": {
+      "schema_version": 1,
+      "kind": "native_checkpoint_conversion",
+      "source_scope": "manifest_declared_weight_tensors",
+      "output_scope": "converter_native_model_directory",
+      "exactness_scope": "tensor_value_exact",
+      "publication_exactness_target": "tensor_bit_exact",
+      "original_checkpoint_byte_exact": false,
+      "offline_decompression_available": false,
+      "validation_evidence": "official_validate_cuda_elementwise_value_equality",
+      "independent_bitwise_validation_performed": false,
+      "independent_bitwise_validation_required_before_publication": true,
+      "timing_scope": "conversion_including_official_validation",
+      "supported_checkpoints": [
+        "qwen3-32b-fp8"
+      ]
+    }
+  }
+}

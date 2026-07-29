@@ -18,9 +18,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from benchmark_corpus import CHECKPOINTS, CheckpointSpec as Checkpoint
+from benchmark_corpus import (
+    ALL_CHECKPOINTS,
+    CORPUS_PRESETS,
+    CheckpointSpec as Checkpoint,
+)
 from benchmark_utils import human_bytes
 
 MODEL_SUPPORT_FILES = (
@@ -58,7 +62,7 @@ class DownloadPlan:
     checkpoint: Checkpoint
     revision: str
     directory: Path
-    index_file: str | None
+    index_files: tuple[str, ...]
     support_files: tuple[str, ...]
     weights: tuple[WeightFile, ...]
 
@@ -68,7 +72,7 @@ class DownloadPlan:
 
 
 def parse_args() -> argparse.Namespace:
-    names = ", ".join(item.name for item in CHECKPOINTS)
+    names = ", ".join(item.name for item in ALL_CHECKPOINTS)
     parser = argparse.ArgumentParser(
         description=(
             "Download the canonical safetensors shards and model configuration "
@@ -80,6 +84,16 @@ def parse_args() -> argparse.Namespace:
         required=True,
         type=Path,
         help="Destination directory on a large local filesystem.",
+    )
+    parser.add_argument(
+        "--corpus",
+        choices=tuple(CORPUS_PRESETS),
+        default="paper-v1",
+        help=(
+            "Corpus preset used when --models is omitted (default: paper-v1). "
+            "corpus-v2 preserves paper-v1 and appends the two larger "
+            "multimodal checkpoints."
+        ),
     )
     parser.add_argument(
         "--models",
@@ -111,10 +125,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def select_checkpoints(names: list[str] | None) -> tuple[Checkpoint, ...]:
+def select_checkpoints(
+    names: list[str] | None,
+    corpus: str = "paper-v1",
+) -> tuple[Checkpoint, ...]:
     if not names:
-        return CHECKPOINTS
-    by_name = {item.name: item for item in CHECKPOINTS}
+        return CORPUS_PRESETS[corpus]
+    by_name = {item.name: item for item in ALL_CHECKPOINTS}
     unknown = sorted(set(names) - by_name.keys())
     if unknown:
         sys.exit(f"Unknown model name(s): {', '.join(unknown)}")
@@ -128,6 +145,42 @@ def file_metadata(sibling: object) -> WeightFile:
     if size is None or sha256 is None:
         raise RuntimeError(f"Missing LFS metadata for {sibling.rfilename}")
     return WeightFile(sibling.rfilename, size, sha256)
+
+
+def indexed_weight_names(
+    index_file: str,
+    index: object,
+    sibling_names: set[str],
+) -> set[str]:
+    if not isinstance(index, dict) or not isinstance(index.get("weight_map"), dict):
+        raise RuntimeError(f"{index_file} has no valid weight_map")
+    weight_map = index["weight_map"]
+    if not weight_map:
+        raise RuntimeError(f"{index_file} has an empty weight_map")
+
+    index_parent = PurePosixPath(index_file).parent
+    names = set()
+    for value in weight_map.values():
+        if not isinstance(value, str) or not value:
+            raise RuntimeError(f"{index_file} contains an invalid shard path")
+        relative = PurePosixPath(value)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise RuntimeError(
+                f"{index_file} contains an unsafe shard path: {value}"
+            )
+
+        # Hugging Face component indexes name shards relative to the index
+        # directory. Accept an already repo-relative path as well, but prefer
+        # the component-relative interpretation when both are possible.
+        component_path = (index_parent / relative).as_posix()
+        repo_path = relative.as_posix()
+        if component_path in sibling_names:
+            names.add(component_path)
+        elif repo_path in sibling_names:
+            names.add(repo_path)
+        else:
+            names.add(component_path)
+    return names
 
 
 def resolve_plan(
@@ -149,14 +202,16 @@ def resolve_plan(
             f"{checkpoint.repo_id} is gated and no Hugging Face token is configured"
         )
     revision = info.sha
+    if not latest and revision != checkpoint.revision:
+        raise RuntimeError(
+            f"{checkpoint.repo_id}: expected frozen revision "
+            f"{checkpoint.revision}, resolved {revision}"
+        )
     directory = output / checkpoint.name
     siblings = {item.rfilename: item for item in info.siblings or ()}
-
-    if checkpoint.single_file:
-        names = [checkpoint.single_file]
-        index_file = None
-    else:
-        index_file = checkpoint.index_file
+    sibling_names = set(siblings)
+    names = set(checkpoint.weight_files)
+    for index_file in checkpoint.index_files:
         if index_file not in siblings:
             raise RuntimeError(f"{checkpoint.repo_id} has no {index_file}")
         index_path = hf_hub_download(
@@ -167,32 +222,35 @@ def resolve_plan(
             token=token,
         )
         index = json.loads(Path(index_path).read_text())
-        names = sorted(set(index["weight_map"].values()))
+        names.update(indexed_weight_names(index_file, index, sibling_names))
+    if not names:
+        raise RuntimeError(f"{checkpoint.repo_id} declares no weight files")
 
+    support_candidates = tuple(
+        dict.fromkeys((*MODEL_SUPPORT_FILES, *checkpoint.required_support_files))
+    )
     support_files = tuple(
         name
-        for name in MODEL_SUPPORT_FILES
+        for name in support_candidates
         if name in siblings
     )
     required_support = set(checkpoint.required_support_files)
-    if not checkpoint.single_file:
-        required_support.add("config.json")
     missing_support = sorted(required_support - set(support_files))
     if missing_support:
         raise RuntimeError(
             f"{checkpoint.repo_id} is missing support files: {missing_support}"
         )
-    missing = [name for name in names if name not in siblings]
+    missing = sorted(name for name in names if name not in siblings)
     if missing:
         raise RuntimeError(
             f"{checkpoint.repo_id} index references missing files: {missing}"
         )
-    weights = tuple(file_metadata(siblings[name]) for name in names)
+    weights = tuple(file_metadata(siblings[name]) for name in sorted(names))
     return DownloadPlan(
         checkpoint,
         revision,
         directory,
-        index_file,
+        checkpoint.index_files,
         support_files,
         weights,
     )
@@ -276,12 +334,21 @@ def verify_hashes(plan: DownloadPlan, workers: int) -> None:
 
 
 def write_manifest(plan: DownloadPlan, sha256_verified: bool) -> dict[str, object]:
+    memberships = [
+        name
+        for name, checkpoints in CORPUS_PRESETS.items()
+        if plan.checkpoint in checkpoints
+    ]
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "name": plan.checkpoint.name,
         "repo_id": plan.checkpoint.repo_id,
         "revision": plan.revision,
-        "index_file": plan.index_file,
+        "corpus_membership": memberships,
+        "index_file": (
+            plan.index_files[0] if len(plan.index_files) == 1 else None
+        ),
+        "index_files": list(plan.index_files),
         "support_files": list(plan.support_files),
         "source_bytes": plan.total_bytes,
         "sha256_verified": sha256_verified,
@@ -292,6 +359,68 @@ def write_manifest(plan: DownloadPlan, sha256_verified: bool) -> dict[str, objec
     return manifest
 
 
+def write_root_manifest(
+    output: Path,
+    downloaded: list[dict[str, object]],
+    requested_corpus: str,
+    explicit_models: bool,
+) -> Path:
+    path = output / "corpus-manifest.json"
+    if path.exists():
+        existing = json.loads(path.read_text())
+        if not isinstance(existing, dict) or not isinstance(
+            existing.get("checkpoints", []),
+            list,
+        ):
+            raise RuntimeError(f"{path} is not a valid corpus manifest")
+        existing_checkpoints = existing.get("checkpoints", [])
+    else:
+        existing_checkpoints = []
+
+    by_name = {}
+    for checkpoint in (*existing_checkpoints, *downloaded):
+        if not isinstance(checkpoint, dict) or not isinstance(
+            checkpoint.get("name"),
+            str,
+        ):
+            raise RuntimeError(f"{path} contains an invalid checkpoint entry")
+        by_name[checkpoint["name"]] = checkpoint
+
+    canonical_order = {
+        checkpoint.name: position
+        for position, checkpoint in enumerate(ALL_CHECKPOINTS)
+    }
+    checkpoints = sorted(
+        by_name.values(),
+        key=lambda item: (
+            canonical_order.get(item["name"], len(canonical_order)),
+            item["name"],
+        ),
+    )
+    available = set(by_name)
+    complete_presets = [
+        name
+        for name, preset in CORPUS_PRESETS.items()
+        if {checkpoint.name for checkpoint in preset} <= available
+    ]
+    root_manifest = {
+        "schema_version": 2,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "last_requested_corpus": requested_corpus,
+        "last_selection": "explicit-models" if explicit_models else "preset",
+        "last_requested_models": [
+            checkpoint["name"] for checkpoint in downloaded
+        ],
+        "complete_presets": complete_presets,
+        "source_bytes": sum(
+            int(checkpoint["source_bytes"]) for checkpoint in checkpoints
+        ),
+        "checkpoints": checkpoints,
+    }
+    path.write_text(json.dumps(root_manifest, indent=2, sort_keys=True) + "\n")
+    return path
+
+
 def main() -> int:
     args = parse_args()
     if args.workers < 1:
@@ -300,7 +429,7 @@ def main() -> int:
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     token = get_token()
-    checkpoints = select_checkpoints(args.models)
+    checkpoints = select_checkpoints(args.models, args.corpus)
     api = HfApi(token=token)
 
     plans = []
@@ -360,16 +489,13 @@ def main() -> int:
             verify_hashes(plan, args.workers)
         corpus.append(write_manifest(plan, args.verify_sha256))
 
-    root_manifest = {
-        "schema_version": 1,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_bytes": sum(item["source_bytes"] for item in corpus),
-        "checkpoints": corpus,
-    }
-    (output / "corpus-manifest.json").write_text(
-        json.dumps(root_manifest, indent=2, sort_keys=True) + "\n"
+    manifest_path = write_root_manifest(
+        output,
+        corpus,
+        args.corpus,
+        bool(args.models),
     )
-    print(f"\nDone. Manifest: {output / 'corpus-manifest.json'}")
+    print(f"\nDone. Manifest: {manifest_path}")
     return 0
 
 

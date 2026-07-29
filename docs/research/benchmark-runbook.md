@@ -46,6 +46,59 @@ zig build -Doptimize=ReleaseFast
 python3 -m pip install zipnn==0.5.4 python-snappy==0.7.3 safetensors torch
 ```
 
+## Corpus v2：只追加，不替换
+
+原始 `paper-v1` 十模型清单保持固定，仍包含
+`whisper-large-v3-f16` 和 `sdxl-base-1.0-f16`。`corpus-v2` 在这十项之后追加：
+
+- `voxtral-mini-3b-2507-bf16`
+  (`mistralai/Voxtral-Mini-3B-2507`,
+  revision `3060fe34b35ba5d44202ce9ff3c097642914f8f3`)；
+- `qwen-image-bf16`
+  (`Qwen/Qwen-Image`,
+  revision `75e0b4be04f60ec59a75f475837eced720f823b6`)。
+
+先做只解析 metadata 和小型 index JSON、但不下载权重的检查：
+
+```bash
+python3 scripts/download_benchmark_checkpoints.py \
+  --output /data/brevis-checkpoints \
+  --corpus extensions \
+  --dry-run
+```
+
+确认后只补两个扩展模型：
+
+```bash
+python3 scripts/download_benchmark_checkpoints.py \
+  --output /data/brevis-checkpoints \
+  --corpus extensions \
+  --workers 8
+```
+
+也可用 `--corpus corpus-v2` 检查或补齐完整十二模型集合；下载器按已有文件大小断点
+续传，不会重复下载已经存在的 v1 权重。Voxtral 只采用 index 引用的两个 shard，
+不会同时纳入重复的 `consolidated.safetensors`。Qwen-Image 的 canonical checkpoint
+由 text encoder index、transformer index 和 VAE 单文件共同组成；各组件 shard 路径
+相对于其 index 所在目录解析，并全部写入同一 `download-manifest.json`。增量下载在
+更新根 `corpus-manifest.json` 时按模型名合并已有条目，不会用扩展子集覆盖 v1 清单。
+
+若 v1 结果目录已经存在，扩展实验使用同一目录并只选择扩展 preset，append-only raw
+记录和 environment 中的旧 Whisper/SDXL 条目都会保留：
+
+```bash
+python3 scripts/run_benchmarks.py corpus \
+  --models-root /data/brevis-checkpoints \
+  --results /data/brevis-results \
+  --corpus-preset extensions \
+  --methods brevis zstd-9 zipnn lz4-hc-9 libdeflate-1 snappy \
+  --workers 32 \
+  --shard-jobs 32
+```
+
+在全新 results 目录生成完整 v2 时改用 `--corpus-preset corpus-v2`。下载器和 harness
+的默认 preset 仍是 `paper-v1`，因此现有自动化不会静默扩大或改写正式语料范围。
+
 `preflight` 会记录 Brevis revision、执行脚本摘要、主机/CPU/RAM、方法版本和
 cache-control 状态；这些 provenance 也会进入 run ID，换版本或换机器后不会误复用旧结果：
 
@@ -108,9 +161,19 @@ python3 scripts/run_benchmarks.py corpus   --models-root /data/brevis-checkpoint
 python3 scripts/run_benchmarks.py summarize --results /data/brevis-results
 ```
 
+若研究控制需要改用其他 core checkpoint，必须同时传入准确标签，例如
+`--core-model /data/Llama-3.1-8B --core-name llama-3.1-8b-bf16`，避免结果被
+错误标记为默认的 `qwen2.5-7b-local`。
+
 默认 Brevis 配置为 `--max-expansions 512 --tensors 256`。Pareto budgets 为
 `0,1,8,32,128,512`，worker sweep 为 `1,2,4,8,16,32`。完整配置的 worker-1 run
 直接复用 core hot measurement，不重复运行。
+
+Corpus 可独立覆盖 Brevis 搜索参数，例如复现 CLI 快路径时传
+`--corpus-max-expansions 1 --corpus-tensors 32`。这两个值会进入 run identity，
+不会与 manuscript 的 `512/256` 记录混用。
+需要稳定的热页缓存 timing 时再加 `--corpus-cache hot`；harness 会在每次压缩和
+解压计时前预读对应输入。默认仍标记为 `unconditioned`。
 
 ## DFloat11 和 ECF8
 
@@ -119,41 +182,19 @@ DFloat11 还要求为模型结构提供 block pattern；ECF8 只应用于 FP8 ch
 仓库内的 `scripts/specialized_baselines.py` 把两个官方入口统一成显式
 source/output。正式环境固定 DFloat11 `457733886ce6ebc6d8dda1621fad1ffa2661e028`
 和 ECF8 `9cbf3d5cf77d6db8cf6f29df1fe6d52bc88fa01e`，按各自 README 安装 CUDA
-依赖后创建配置：
+依赖后复制已冻结的配置模板，只修改安装路径：
 
-```json
-{
-  "dfloat11": {
-    "checkpoint_pattern": "^(llama-3\\.1-(8b|70b)-bf16|qwen3-32b-bf16)$",
-    "workers": 32,
-    "cwd": "/path/to/Brevis",
-    "version_command": ["git", "-C", "/opt/DFloat11", "rev-parse", "HEAD"],
-    "compress_command": [
-      "/opt/dfloat11-venv/bin/python", "scripts/specialized_baselines.py", "dfloat11",
-      "--source", "{source_dir}",
-      "--output", "{archive}",
-      "--workers", "{workers}",
-      "--validate-cuda"
-    ],
-    "validates_during_compression": true
-  },
-  "ecf8": {
-    "checkpoint_pattern": "^qwen3-32b-fp8$",
-    "workers": 32,
-    "cwd": "/path/to/Brevis",
-    "version_command": ["git", "-C", "/opt/ecf8", "rev-parse", "HEAD"],
-    "compress_command": [
-      "/opt/ecf8-venv/bin/python", "scripts/specialized_baselines.py", "ecf8",
-      "--source", "{source_dir}",
-      "--output", "{archive}",
-      "--workers", "{workers}",
-      "--upstream", "/opt/ecf8",
-      "--validate-cuda"
-    ],
-    "validates_during_compression": true
-  }
-}
+```bash
+cp configs/specialized-baselines.example.json /data/specialized-baselines.json
+python3 scripts/preflight_specialized_baselines.py \
+  --config /data/specialized-baselines.json \
+  --models-root /data/brevis-checkpoints
 ```
+
+模板固定 DFloat11 为单 worker、ECF8 为官方 16 进程，并把 native conversion、
+tensor exactness 的目标和实际验证证据写入 run identity。它们不是原始
+safetensors byte-exact。完整语义和 publication-ready guardrail 见
+`docs/research/specialized-native-baselines.md`。
 
 可用占位符为 `{source_dir}`、`{archive}`、`{workers}`、`{checkpoint}`、
 `{repo_id}` 和 `{revision}`。若 converter 自行决定输出目录，增加
@@ -199,6 +240,10 @@ exactness verification 在计时区间之外。Peak RSS 是周期性汇总主进
 `checkpoint × requested method`，只有全部 canonical shards 都通过才写 `ok` 和
 archive size；依赖、配置、支持范围、deadline 或失败造成的空 cell 都保留明确状态。
 `--rerun` 仍追加 raw record，但汇总只使用同一 run ID 的最后一条记录。
+
+空间不足以同时保留全部 corpus archive 时可加
+`--discard-corpus-archives`。每个分片完成解压和精确校验后会删除对应 archive，
+但 `runs.jsonl` 中的体积、timing 和 exactness 记录仍会保留并可用于断点续跑和汇总。
 
 如果 specialized wrapper 在转换命令内部做 correctness check，其 raw wall time
 也会包含该验证，不与六个通用方法的 compression wall time直接比较；它在本计划中

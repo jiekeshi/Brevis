@@ -1,4 +1,5 @@
 import csv
+import importlib.util
 import io
 import json
 import shutil
@@ -10,6 +11,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_benchmarks as bench
@@ -17,9 +19,13 @@ import benchmark_codecs
 import specialized_baselines
 
 
-def write_safetensors(path: Path, tensors: list[tuple[str, str, list[int], bytes]]) -> None:
+def write_safetensors(
+    path: Path,
+    tensors: list[tuple[str, str, list[int], bytes]],
+    metadata: dict[str, str] | None = None,
+) -> None:
     offset = 0
-    header = {}
+    header = {"__metadata__": metadata} if metadata is not None else {}
     payload = bytearray()
     for name, dtype, shape, data in tensors:
         header[name] = {
@@ -45,6 +51,15 @@ class BenchmarkHarnessTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_read_only_linux_drop_caches_is_not_advertised(self):
+        with (
+            patch.object(bench.sys, "platform", "linux"),
+            patch.object(bench.os, "geteuid", return_value=0),
+            patch.object(bench.Path, "exists", return_value=True),
+            patch.object(bench.os, "access", return_value=False),
+        ):
+            self.assertFalse(bench.cache_control_available(None))
 
     def test_manifest_loads_only_declared_shards(self):
         model = self.root / "model"
@@ -163,6 +178,18 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertEqual("libdeflate-1", libdeflate[2])
         self.assertEqual("compress", libdeflate[3])
 
+        missing_archive = self.root / "dry-run-only.brv"
+        dry_run_decompress = bench.command_for(
+            "brevis",
+            "decompress",
+            missing_archive,
+            restored,
+            4,
+            Path("/bin/brevis"),
+            config,
+        )
+        self.assertEqual(str(missing_archive), dry_run_decompress[2])
+
     def test_measure_displays_live_compression_progress(self):
         output = self.root / "archive.brv"
         logs = self.root / "logs"
@@ -208,6 +235,229 @@ class BenchmarkHarnessTests(unittest.TestCase):
 
         self.assertEqual(source.read_bytes(), restored.read_bytes())
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("zipnn"),
+        "zipnn is not installed",
+    )
+    def test_zipnn_round_trip_preserves_raw_fallback_tensors(self):
+        source = self.root / "source.safetensors"
+        archive = self.root / "archive.safetensors"
+        restored = self.root / "restored.safetensors"
+        write_safetensors(
+            source,
+            [
+                ("tiny_float", "F32", [2], struct.pack("<ff", 0.0211, -0.0021)),
+                ("integer", "U8", [4], b"\x01\x02\x03\x04"),
+            ],
+            metadata={"format": "pt"},
+        )
+
+        benchmark_codecs.CODECS["zipnn"].compress(source, archive, 2)
+        benchmark_codecs.CODECS["zipnn"].decompress(archive, restored, 2)
+
+        self.assertTrue(bench.tensor_exact(source, restored))
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("zipnn"),
+        "zipnn is not installed",
+    )
+    def test_zipnn_round_trip_preserves_absent_metadata(self):
+        source = self.root / "source.safetensors"
+        archive = self.root / "archive.safetensors"
+        restored = self.root / "restored.safetensors"
+        write_safetensors(
+            source,
+            [
+                ("tiny_float", "F32", [2], struct.pack("<ff", 0.0211, -0.0021)),
+                ("integer", "U8", [4], b"\x01\x02\x03\x04"),
+            ],
+        )
+
+        benchmark_codecs.CODECS["zipnn"].compress(source, archive, 2)
+        benchmark_codecs.CODECS["zipnn"].decompress(archive, restored, 2)
+
+        source_header, _ = bench.safetensors_header(source)
+        restored_header, _ = bench.safetensors_header(restored)
+        self.assertNotIn("__metadata__", source_header)
+        self.assertNotIn("__metadata__", restored_header)
+        self.assertTrue(bench.tensor_exact(source, restored))
+
+    def test_corpus_archive_can_be_discarded_after_verification(self):
+        source = self.root / "model.safetensors"
+        source.write_bytes(b"fixture")
+        checkpoint = bench.Checkpoint("fixture", self.root, (source,))
+        args = SimpleNamespace(
+            corpus_cache="hot",
+            corpus_max_expansions=1,
+            corpus_tensors=32,
+            discard_corpus_archives=True,
+            results=self.root / "results",
+            workers=4,
+        )
+
+        with patch.object(bench, "run_pair") as run_pair:
+            bench.size_shard(args, object(), checkpoint, source, "zstd-9")
+
+        self.assertFalse(run_pair.call_args.kwargs["keep_archive"])
+        self.assertEqual("hot", run_pair.call_args.args[5])
+        self.assertEqual(1, run_pair.call_args.args[9].max_expansions)
+        self.assertEqual(32, run_pair.call_args.args[9].tensors)
+
+    def test_analysis_sweeps_use_explicit_quick_controls(self):
+        args = SimpleNamespace(
+            search_budgets=(0, 32),
+            pareto_workers=4,
+            pareto_tensors=16,
+            worker_sweep=(1, 8),
+            worker_sweep_max_expansions=32,
+            worker_sweep_tensors=8,
+            discard_analysis_archives=True,
+        )
+        checkpoint = bench.Checkpoint("fixture", self.root, ())
+
+        with patch.object(bench, "run_brevis_variant") as run_variant:
+            bench.run_sweeps(args, object(), checkpoint)
+
+        calls = run_variant.call_args_list
+        self.assertEqual(
+            ["budget-0", "budget-32", "workers-1", "workers-8"],
+            [call.args[4] for call in calls],
+        )
+        self.assertEqual(
+            [
+                bench.BrevisConfig(4, 0, 16, True),
+                bench.BrevisConfig(4, 32, 16, True),
+                bench.BrevisConfig(1, 32, 8, True),
+                bench.BrevisConfig(8, 32, 8, True),
+            ],
+            [call.args[5] for call in calls],
+        )
+        self.assertEqual(
+            [False, False, False, False],
+            [call.kwargs["keep"] for call in calls],
+        )
+
+    def test_ablation_runs_all_four_explicit_variants(self):
+        args = SimpleNamespace(
+            ablation_workers=4,
+            ablation_max_expansions=32,
+            ablation_tensors=16,
+            discard_analysis_archives=False,
+        )
+        checkpoint = bench.Checkpoint("fixture", self.root, ())
+
+        with patch.object(bench, "run_brevis_variant") as run_variant:
+            bench.run_ablation(args, object(), checkpoint)
+
+        calls = run_variant.call_args_list
+        self.assertEqual(
+            ["full", "no-phog", "no-astar", "no-phog-no-astar"],
+            [call.args[4] for call in calls],
+        )
+        self.assertEqual(
+            [
+                bench.BrevisConfig(4, 32, 16, True),
+                bench.BrevisConfig(4, 32, 0, True),
+                bench.BrevisConfig(4, 32, 16, False),
+                bench.BrevisConfig(4, 32, 0, False),
+            ],
+            [call.args[5] for call in calls],
+        )
+        self.assertTrue(all(call.kwargs["keep"] for call in calls))
+
+    def test_discard_analysis_archives_removes_verified_kept_archive(self):
+        source = self.root / "model.safetensors"
+        source.write_bytes(b"fixture")
+        checkpoint = bench.Checkpoint("fixture", self.root, (source,))
+        results = self.root / "results"
+        archive = (
+            results
+            / "archives"
+            / "fixture"
+            / "budget-32"
+            / "model.budget-32.brv"
+        )
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b"verified")
+        config = bench.BrevisConfig(4, 32, 16, True)
+        provenance = {"method_version": "fixture"}
+        identity = bench.operation_identity(
+            checkpoint,
+            source,
+            "brevis",
+            "compress",
+            "hot",
+            4,
+            "pareto",
+            provenance,
+            config,
+            "budget-32",
+        )
+        log = bench.ResultLog(results / "raw" / "runs.jsonl")
+        log.append(
+            {
+                "run_id": f"{bench.run_id(identity)}-verify",
+                "status": "ok",
+                "exact": True,
+            }
+        )
+        args = SimpleNamespace(
+            results=results,
+            run_provenance={"brevis": provenance},
+            rerun=False,
+            dry_run=False,
+        )
+
+        with patch.object(bench, "execute_operation") as execute:
+            bench.run_brevis_variant(
+                args,
+                log,
+                checkpoint,
+                "pareto",
+                "budget-32",
+                config,
+                keep=False,
+            )
+
+        execute.assert_not_called()
+        self.assertFalse(archive.exists())
+
+    def test_parse_args_exposes_quick_analysis_controls(self):
+        arguments = [
+            "run_benchmarks.py",
+            "preflight",
+            "--pareto-workers",
+            "4",
+            "--pareto-tensors",
+            "16",
+            "--worker-sweep",
+            "1,8",
+            "--worker-sweep-max-expansions",
+            "32",
+            "--worker-sweep-tensors",
+            "8",
+            "--ablation-max-expansions",
+            "32",
+            "--ablation-tensors",
+            "16",
+            "--ablation-workers",
+            "4",
+            "--discard-analysis-archives",
+        ]
+
+        with patch.object(sys, "argv", arguments):
+            args = bench.parse_args()
+
+        self.assertEqual((1, 8), args.worker_sweep)
+        self.assertEqual(4, args.pareto_workers)
+        self.assertEqual(16, args.pareto_tensors)
+        self.assertEqual(32, args.worker_sweep_max_expansions)
+        self.assertEqual(8, args.worker_sweep_tensors)
+        self.assertEqual(32, args.ablation_max_expansions)
+        self.assertEqual(16, args.ablation_tensors)
+        self.assertEqual(4, args.ablation_workers)
+        self.assertTrue(args.discard_analysis_archives)
+
     def test_one_click_launcher_exposes_progress_and_current_methods(self):
         launcher = Path(__file__).with_name("run_paper_benchmark.sh")
         result = subprocess.run(
@@ -227,20 +477,22 @@ class BenchmarkHarnessTests(unittest.TestCase):
 
     def test_specialized_config_requires_explicit_python_environment(self):
         config = self.root / "specialized.json"
-        config.write_text(json.dumps({
-            "dfloat11": {
-                "compress_command": ["python3", "convert.py"],
-            },
-        }))
+        example = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "configs"
+                / "specialized-baselines.example.json"
+            ).read_text()
+        )
+        settings = example["dfloat11"]
+        settings["compress_command"][0] = "python3"
+        config.write_text(json.dumps({"dfloat11": settings}))
 
         with self.assertRaisesRegex(bench.BenchmarkError, "environment-specific"):
             bench.load_specialized_config(config)
 
-        config.write_text(json.dumps({
-            "dfloat11": {
-                "compress_command": [sys.executable, "convert.py"],
-            },
-        }))
+        settings["compress_command"][0] = sys.executable
+        config.write_text(json.dumps({"dfloat11": settings}))
         self.assertIn("dfloat11", bench.load_specialized_config(config))
 
     def test_run_identity_is_bound_to_method_provenance(self):
@@ -353,7 +605,7 @@ class BenchmarkHarnessTests(unittest.TestCase):
         self.assertEqual({"brevis"}, set(migrated["run_provenance"]))
         self.assertEqual({"brevis"}, set(migrated["method_versions"]))
 
-    def test_summary_reuses_core_full_for_all_three_sweeps(self):
+    def test_summary_uses_only_explicit_analysis_stage_records(self):
         results = self.root / "results"
         log = bench.ResultLog(results / "raw" / "runs.jsonl")
         log.append(
@@ -427,6 +679,58 @@ class BenchmarkHarnessTests(unittest.TestCase):
                 "verified_attempts": [["full", "latest"]],
             }
         )
+        analysis_rows = (
+            ("pareto-full", "pareto", "budget-512", 1, 512, 32, 70),
+            ("workers-one", "workers", "workers-1", 1, 32, 16, 80),
+            ("ablation-full", "ablation", "full", 4, 32, 16, 90),
+        )
+        for (
+            identifier,
+            stage,
+            variant,
+            workers,
+            max_expansions,
+            calibration_tensors,
+            output_bytes,
+        ) in analysis_rows:
+            log.append(
+                {
+                    "run_id": identifier,
+                    "attempt_id": identifier,
+                    "status": "ok",
+                    "stage": stage,
+                    "checkpoint": "qwen2.5-7b-local",
+                    "shard": "model.safetensors",
+                    "method": "brevis",
+                    "operation": "compress",
+                    "cache": "hot",
+                    "variant": variant,
+                    "workers": workers,
+                    "max_expansions": max_expansions,
+                    "calibration_tensors": calibration_tensors,
+                    "phog": calibration_tensors > 0,
+                    "astar_heuristic": True,
+                    "source_bytes": 100,
+                    "output_bytes": output_bytes,
+                    "wall_seconds": 1,
+                    "peak_rss_bytes": 1024,
+                }
+            )
+            log.append(
+                {
+                    "run_id": f"{identifier}-verify",
+                    "status": "ok",
+                    "stage": stage,
+                    "checkpoint": "qwen2.5-7b-local",
+                    "shard": "model.safetensors",
+                    "method": "brevis",
+                    "operation": "verify",
+                    "cache": "hot",
+                    "workers": workers,
+                    "exact": True,
+                    "verified_attempts": [[identifier, identifier]],
+                }
+            )
 
         bench.summarize(results)
 
@@ -439,9 +743,14 @@ class BenchmarkHarnessTests(unittest.TestCase):
         table4 = read_csv(results / "tables" / "table4-ablation.csv")
         table3 = read_csv(results / "tables" / "table3-end-to-end.csv")
         self.assertEqual("budget-512", figure1[0]["variant"])
-        self.assertEqual("60.0", figure1[0]["archive_percent"])
+        self.assertEqual("32", figure1[0]["calibration_tensors"])
+        self.assertEqual("70.0", figure1[0]["archive_percent"])
         self.assertEqual("1", figure2[0]["workers"])
+        self.assertEqual("16", figure2[0]["calibration_tensors"])
+        self.assertEqual("80.0", figure2[0]["archive_percent"])
         self.assertEqual("full", table4[0]["variant"])
+        self.assertEqual("4", table4[0]["workers"])
+        self.assertEqual("90.0", table4[0]["archive_percent"])
         self.assertEqual({"brevis"}, {row["method"] for row in table3})
 
     def test_summary_uses_only_current_method_provenance(self):

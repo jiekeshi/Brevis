@@ -45,8 +45,12 @@ def run_dfloat11(
     output: Path,
     workers: int,
     validate: bool,
+    upstream: Path,
 ) -> None:
     require_model_config(source)
+    if not upstream.is_dir():
+        raise SystemExit(f"invalid DFloat11 checkout: {upstream}")
+    sys.path.insert(0, str(upstream))
     os.environ["OMP_NUM_THREADS"] = str(workers)
     import torch
     from dfloat11 import compress_model
@@ -139,7 +143,15 @@ def main() -> None:
     source = args.source.expanduser().resolve()
     output = args.output.expanduser().resolve()
     if args.method == "dfloat11":
-        run_dfloat11(source, output, args.workers, args.validate_cuda)
+        if args.upstream is None:
+            parser.error("dfloat11 requires --upstream")
+        run_dfloat11(
+            source,
+            output,
+            args.workers,
+            args.validate_cuda,
+            args.upstream.expanduser().resolve(),
+        )
     elif args.upstream is None:
         parser.error("ecf8 requires --upstream")
     else:
