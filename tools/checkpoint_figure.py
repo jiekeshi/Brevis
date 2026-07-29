@@ -487,13 +487,128 @@ def render(data: dict, title: str, width: float) -> str:
             + legends + "\n" + body + "\n" + "\n".join(notes) + "\n</svg>\n")
 
 
+# ==================== single-column contribution figure ====================
+
+
+def contribution_rows(models: list[tuple[str, str, pathlib.Path, pathlib.Path]]
+                      ) -> list[dict]:
+    """Per checkpoint: what entropy coding alone removes, and what the
+    synthesised program removes on top. Both as a share of raw bytes, so the
+    two segments stack to the reported storage reduction."""
+    rows = []
+    for label, dtype, search, literal in models:
+        run = json.loads(search.read_text())
+        raw = run["raw_bytes"]
+        encoded = run["projected_archive_bytes"]
+        lit = json.loads(literal.read_text())["projected_archive_bytes"]
+        rows.append({
+            "label": label, "dtype": dtype, "raw": raw,
+            # Negative when the entropy coders cannot legally touch the stream
+            # at all, which is what happens above 16-bit elements.
+            "entropy": (raw - lit) / raw,
+            "structure": (lit - encoded) / raw,
+            "total": (raw - encoded) / raw,
+        })
+    return rows
+
+
+def render_contribution(rows: list[dict], width: float, title: str | None) -> str:
+    margin = 6.0
+    inner = width - margin * 2
+    parts, y = [], margin
+
+    if title:
+        parts.append(text(margin, y + 8, title, size=8.6, weight="bold"))
+        y += 18
+
+    scale = max(0.40, max(r["total"] for r in rows) * 1.12)
+    bar_h, row_h = 10.0, 26.0
+    top = y + 12
+
+    for i, row in enumerate(rows):
+        cy = top + i * row_h
+        # One <text> with two <tspan>s: estimating the advance width from the
+        # character count put the dtype on top of the neighbouring label.
+        parts.append(
+            f'<text x="{margin:.2f}" y="{cy - 3:.2f}" font-family="{SANS}" '
+            f'font-size="7.6" fill="{INK}">'
+            f'<tspan font-weight="bold">{esc(row["label"])}</tspan>'
+            f'<tspan dx="5" fill="{INK_SOFT}" font-size="7.0">'
+            f'· {esc(row["dtype"])}</tspan></text>')
+        parts.append(text(margin + inner, cy - 3, f"{100 * row['total']:.1f}%",
+                          size=7.6, anchor="end", family=MONO))
+        w1 = max(0.0, inner * row["entropy"] / scale)
+        w2 = max(0.0, inner * row["structure"] / scale)
+        parts.append(rect(margin, cy, w1, bar_h, "#b9c9cf"))
+        parts.append(rect(margin + w1, cy, w2, bar_h, "#16414f"))
+        if w1 > 22:
+            parts.append(text(margin + w1 / 2, cy + bar_h - 2.8,
+                              f"{100 * row['entropy']:.1f}", size=6.4,
+                              anchor="middle", fill="#20343a", family=MONO))
+        if w2 > 22:
+            parts.append(text(margin + w1 + w2 / 2, cy + bar_h - 2.8,
+                              f"{100 * row['structure']:.1f}", size=6.4,
+                              anchor="middle", fill="#ffffff", family=MONO))
+
+    # Axis under the bars, so nothing competes with the first row's label.
+    axis_y = top + len(rows) * row_h - (row_h - bar_h) + 1
+    parts.insert(1 if title else 0,
+                 f'<g>' + "".join(
+                     f'<line x1="{margin + inner * t / scale:.2f}" '
+                     f'y1="{top - 3:.2f}" '
+                     f'x2="{margin + inner * t / scale:.2f}" '
+                     f'y2="{axis_y:.2f}" stroke="{RULE}" stroke-width="0.5"/>'
+                     for t in [k / 10 for k in range(1, int(scale * 10) + 1)]
+                 ) + '</g>')
+    for k in range(1, int(scale * 10) + 1):
+        gx = margin + inner * (k / 10) / scale
+        parts.append(text(gx, axis_y + 8, f"{k * 10}%", size=6.3,
+                          anchor="middle", fill=INK_SOFT))
+
+    legend_y = axis_y + 16
+    parts.append(rect(margin, legend_y, 7, 7, "#b9c9cf", rx=1.1))
+    parts.append(text(margin + 10, legend_y + 6, "entropy coding alone",
+                      size=6.9, fill=INK_SOFT))
+    parts.append(rect(margin + 106, legend_y, 7, 7, "#16414f", rx=1.1))
+    parts.append(text(margin + 116, legend_y + 6, "added by the DSL program",
+                      size=6.9, fill=INK_SOFT))
+    height = legend_y + 18
+
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" '
+            f'height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">\n'
+            f'{rect(0, 0, width, height, PAPER)}\n'
+            + "\n".join(parts) + "\n</svg>\n")
+
+
+def emit(svg_text: str, out: pathlib.Path) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    svg = out.with_suffix(".svg")
+    svg.write_text(svg_text)
+    print(f"wrote {svg}")
+    converter = shutil.which("rsvg-convert")
+    if not converter:
+        print("rsvg-convert not found; SVG only")
+        return
+    for fmt, zoom in (("pdf", None), ("png", "4")):
+        target = out.with_suffix(f".{fmt}")
+        cmd = [converter, "-f", fmt, "-o", str(target)]
+        if zoom:
+            cmd += ["-z", zoom]
+        subprocess.run(cmd + [str(svg)], check=True)
+        print(f"wrote {target}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--search", type=pathlib.Path, required=True,
+    parser.add_argument("--contribution", action="append", default=[],
+                        metavar="LABEL|DTYPE|SEARCH|LITERAL",
+                        help="draw the single-column contribution figure "
+                             "instead of the map; repeat once per checkpoint")
+    parser.add_argument("--title", default=None)
+    parser.add_argument("--search", type=pathlib.Path, required=False,
                         help="bench --format json with the full operator set")
-    parser.add_argument("--literal", type=pathlib.Path, required=True,
+    parser.add_argument("--literal", type=pathlib.Path, required=False,
                         help="bench --format json with every transform disabled")
-    parser.add_argument("--title", required=True)
     parser.add_argument("--out", type=pathlib.Path, required=True,
                         help="path without extension")
     parser.add_argument("--width", type=float, default=DEFAULT_WIDTH_PT,
@@ -501,23 +616,20 @@ def main(argv: list[str] | None = None) -> int:
                              "two-column AAAI figure")
     args = parser.parse_args(argv)
 
-    data = load(args.search, args.literal)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    svg = args.out.with_suffix(".svg")
-    svg.write_text(render(data, args.title, args.width))
-    print(f"wrote {svg}")
+    if args.contribution:
+        models = []
+        for spec in args.contribution:
+            label, dtype, search, literal = spec.split("|")
+            models.append((label, dtype, pathlib.Path(search),
+                           pathlib.Path(literal)))
+        emit(render_contribution(contribution_rows(models), args.width,
+                                 args.title), args.out)
+        return 0
 
-    converter = shutil.which("rsvg-convert")
-    if converter:
-        for fmt, scale in (("pdf", None), ("png", "3")):
-            target = args.out.with_suffix(f".{fmt}")
-            cmd = [converter, "-f", fmt, "-o", str(target)]
-            if scale:
-                cmd += ["-z", scale]
-            subprocess.run(cmd + [str(svg)], check=True)
-            print(f"wrote {target}")
-    else:
-        print("rsvg-convert not found; SVG only")
+    if not (args.search and args.literal and args.title):
+        parser.error("--search, --literal and --title are required for the map")
+    emit(render(load(args.search, args.literal), args.title, args.width),
+         args.out)
     return 0
 
 
