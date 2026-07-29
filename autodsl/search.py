@@ -324,6 +324,24 @@ def _accept_one_at_a_time(
                      best_by_round, evaluator.trace)
 
 
+def arm_greedy_pool(evaluator, baseline, pool, patience) -> ArmResult:
+    """Greedy acceptance over a fixed pool, in order, one macro at a time.
+
+    The control for the search arm once the proposer's variance is removed:
+    both arms see exactly the same macros, so any difference between them is
+    the selection procedure and nothing else. Without this, an arm comparison
+    measures which run got the luckier reply — the same seed produced greedy
+    results of 0 and -38,042 bytes on two runs.
+    """
+    queue = list(pool)
+
+    def next_batch(library: Library):
+        return [queue.pop(0)] if queue else []
+
+    return _accept_one_at_a_time("greedy", next_batch, evaluator, baseline,
+                                 patience=patience)
+
+
 def arm_mining(evaluator, baseline, table, report, rng, patience) -> ArmResult:
     pool = mine_mod.diversify(
         mine_mod.mine(report, table, Library()), per_family=1)
@@ -424,8 +442,8 @@ def arm_search(
     join is a different library. That is the part greedy cannot do, and it is
     where the multi-round behaviour comes from.
     """
-    pool: list = []
-    pool_shapes: set[str] = set()
+    pool: list = list(context.get("fixed_pool") or [])
+    pool_shapes: set[str] = {m.shape() for m in pool}
 
     def offer(macro) -> None:
         if macro is None or macro.shape() in pool_shapes:
@@ -433,10 +451,12 @@ def arm_search(
         pool_shapes.add(macro.shape())
         pool.append(macro)
 
-    for candidate in mine_mod.diversify(
-            mine_mod.mine(report, table, Library()), per_family=1)[:6]:
-        offer(mine_mod.to_macro(
-            candidate, mine_mod.suggest_name(candidate.shape, pool_shapes), "mined"))
+    if not pool:
+        for candidate in mine_mod.diversify(
+                mine_mod.mine(report, table, Library()), per_family=1)[:3]:
+            offer(mine_mod.to_macro(
+                candidate, mine_mod.suggest_name(candidate.shape, pool_shapes),
+                "mined"))
 
     best = Scored(Library(), baseline, "empty", 0)
     population: list[Scored] = [best]
@@ -454,29 +474,50 @@ def arm_search(
                                  marginals=marginals(best.library,
                                                      evaluator.cache)).macros:
                 offer(proposed)
-        # Draw until the pool actually grows, not a fixed number of times: a
-        # sampler that misses is common, and six consecutive misses used to
-        # leave the pool empty and end the run at "nothing new".
-        added, attempts = 0, 0
-        while added < 3 and attempts < 40:
-            attempts += 1
-            before = len(pool)
-            offer(variation.random_macro(table, rng, pool_shapes))
-            added += len(pool) > before
-        # Mutations feed the pool rather than the incumbent, so a local move is
-        # a candidate among all the others instead of the only thing on offer.
-        child = variation.mutate(best.library, table, rng)
-        if child is not None:
-            for macro in child.macros:
-                offer(macro)
+        if not context.get("fixed_pool"):
+            # Draw until the pool actually grows, not a fixed number of times:
+            # a sampler that misses is common, and six consecutive misses used
+            # to leave the pool empty and end the run at "nothing new".
+            added, attempts = 0, 0
+            while added < 3 and attempts < 40:
+                attempts += 1
+                before = len(pool)
+                offer(variation.random_macro(table, rng, pool_shapes))
+                added += len(pool) > before
+            # Mutations feed the pool rather than the incumbent, so a local
+            # move is a candidate among the others, not the only thing offered.
+            child = variation.mutate(best.library, table, rng)
+            if child is not None:
+                for macro in child.macros:
+                    offer(macro)
 
         candidates: list[tuple[Library, str]] = []
         for macro in best.library.macros:              # leave-one-out
             candidates.append((best.library.without(macro.name), "drop"))
-        for macro in pool:                             # forward selection
-            grown = variation.add(best.library, macro)
-            if grown is not None:
-                candidates.append((grown, macro.origin))
+
+        # Round-robin the pool by origin. Iterating it in insertion order let
+        # the six mined macros fill an entire round's six slots, so the model's
+        # proposals were never measured until the incumbent had already taken a
+        # mined macro — the arm scored -16,531 against greedy's -38,042 purely
+        # from that ordering.
+        by_origin: dict[str, list] = {}
+        for macro in pool:
+            by_origin.setdefault(macro.origin, []).append(macro)
+        order = [o for o in ("proposed", "mutated", "mined", "random")
+                 if o in by_origin] + [o for o in by_origin
+                                       if o not in ("proposed", "mutated",
+                                                    "mined", "random")]
+        index = 0
+        while any(index < len(by_origin[o]) for o in order):
+            for origin in order:
+                bucket = by_origin[origin]
+                if index >= len(bucket):
+                    continue
+                grown = variation.add(best.library, bucket[index])
+                if grown is not None:
+                    candidates.append((grown, origin))
+            index += 1
+
         for other in population[1:]:                   # union with a rival
             merged = variation.crossover(best.library, other.library, rng)
             if merged is not None:
@@ -579,6 +620,10 @@ def run(args) -> int:
     ledger = Ledger(workdir / "ledger.jsonl")
     out = workdir / "arms.jsonl"
 
+    fixed_pool = []
+    if args.pool:
+        fixed_pool = list(Library.read(pathlib.Path(args.pool)).macros)
+        print(f"fixed pool: {len(fixed_pool)} macros, no model will be called\n")
     report = engine.bench(
         loop.proposer_evidence_source(split), budget, None).report
     context = {
@@ -586,6 +631,7 @@ def run(args) -> int:
         "budget": budget.describe(),
         "mined": mine_mod.mine(report, table, Library()),
         "rejected": ledger.rejected(evaluate.VERSION),
+        "fixed_pool": fixed_pool,
     }
 
     shared_cache: dict[str, Fitness] = {}
@@ -610,7 +656,8 @@ def run(args) -> int:
                               cache=shared_cache, mode=args.fitness)
         evaluator.baseline = baseline
         llm = None
-        if name in ("search", "greedy", "one_shot") and not args.no_llm:
+        if name in ("search", "greedy", "one_shot") and not args.no_llm \
+                and not fixed_pool:
             llm = (backend.ScriptedBackend(replies=[args.dry_run_reply] * 20)
                    if args.dry_run_reply else backend.Backend(model=args.model_name))
 
@@ -623,7 +670,10 @@ def run(args) -> int:
                                 propose_every=args.propose_every,
                                 per_round=args.per_round)
         elif name == "greedy":
-            result = arm_greedy(evaluator, baseline, table, llm, context, args.patience)
+            result = (arm_greedy_pool(evaluator, baseline, fixed_pool, args.patience)
+                      if fixed_pool
+                      else arm_greedy(evaluator, baseline, table, llm, context,
+                                      args.patience))
         elif name == "one_shot":
             result = arm_one_shot(evaluator, baseline, table, llm, context)
         elif name == "mining":
@@ -769,6 +819,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-name", default=backend.DEFAULT_MODEL)
     parser.add_argument("--dry-run-reply", default=None)
     parser.add_argument("--no-llm", action="store_true")
+    parser.add_argument("--pool", default=None,
+                        help="a macro library to use as a fixed candidate pool. "
+                             "Both arms then see exactly the same macros and no "
+                             "model is called, so the comparison is selection "
+                             "procedure against selection procedure.")
     parser.add_argument("--max-depth", type=int, default=2)
     parser.add_argument("--max-expansions", type=int, default=256)
     parser.add_argument("--max-nodes", type=int, default=12)
