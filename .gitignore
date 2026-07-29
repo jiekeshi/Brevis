@@ -13,3 +13,4 @@ llm.credential
 .toolchain/
 autodsl/runs/
 .ipynb_checkpoints/
+figures/*.png

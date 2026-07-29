@@ -1,0 +1,768 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="504" height="681" viewBox="0 0 504 681">
+<rect x="0.00" y="0.00" width="504.00" height="681.47" fill="#ffffff" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="18.00" y="22.00" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="12.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">ViT-Base/16 (F32)</text>
+<text x="18.00" y="34.00" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="8.0" fill="#5c5c5c" text-anchor="start" font-weight="normal">200 tensors, 346.3 MB raw → 288.1 MB archived (1.202×). One column per transformer layer, one row per tensor role.</text>
+<line x1="18.0" y1="42.0" x2="486.0" y2="42.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="18.00" y="52.00" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="9.0" fill="#1a1a1a" text-anchor="start" font-weight="bold">(a)  Compression achieved</text>
+<text x="18.00" y="62.50" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="start" font-weight="normal">darker is a smaller archive for that tensor</text>
+<text x="85.90" y="84.17" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">K proj</text>
+<rect x="90.90" y="76.00" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="76.00" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="76.00" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="76.00" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="76.00" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="76.00" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="76.00" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="76.00" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="76.00" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="76.00" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="76.00" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="76.00" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="96.51" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">K proj · bias</text>
+<rect x="90.90" y="88.34" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="88.34" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="88.34" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="88.34" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="88.34" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="88.34" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="88.34" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="88.34" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="88.34" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="88.34" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="88.34" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="88.34" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="108.85" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Q proj</text>
+<rect x="90.90" y="100.68" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="100.68" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="100.68" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="100.68" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="100.68" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="100.68" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="100.68" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="100.68" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="100.68" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="100.68" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="100.68" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="100.68" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="121.20" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Q proj · bias</text>
+<rect x="90.90" y="113.03" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="113.03" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="113.03" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="113.03" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="113.03" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="113.03" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="113.03" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="113.03" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="113.03" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="113.03" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="113.03" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="113.03" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="133.54" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">V proj</text>
+<rect x="90.90" y="125.37" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="125.37" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="125.37" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="125.37" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="125.37" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="125.37" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="125.37" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="125.37" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="125.37" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="125.37" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="125.37" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="125.37" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="145.88" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">V proj · bias</text>
+<rect x="90.90" y="137.71" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="137.71" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="137.71" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="137.71" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="137.71" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="137.71" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="137.71" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="137.71" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="137.71" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="137.71" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="137.71" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="137.71" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="158.22" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">O proj</text>
+<rect x="90.90" y="150.05" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="150.05" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="150.05" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="150.05" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="150.05" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="150.05" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="150.05" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="150.05" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="150.05" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="150.05" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="150.05" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="150.05" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="170.56" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">O proj · bias</text>
+<rect x="90.90" y="162.39" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="162.39" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="162.39" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="162.39" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="162.39" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="162.39" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="162.39" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="162.39" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="162.39" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="162.39" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="162.39" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="162.39" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="182.90" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP in</text>
+<rect x="90.90" y="174.73" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="174.73" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="174.73" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="174.73" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="174.73" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="174.73" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="174.73" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="174.73" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="174.73" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="174.73" width="10.74" height="10.74" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="174.73" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="174.73" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="195.25" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP in · bias</text>
+<rect x="90.90" y="187.07" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="187.07" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="187.07" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="187.07" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="207.59" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (post)</text>
+<rect x="90.90" y="199.42" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="199.42" width="10.74" height="10.74" fill="#265f6d" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="199.42" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="219.93" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (post) · bias</text>
+<rect x="90.90" y="211.76" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="211.76" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="211.76" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="211.76" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="211.76" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="211.76" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="211.76" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="211.76" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="211.76" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="211.76" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="211.76" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="211.76" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="232.27" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (pre)</text>
+<rect x="90.90" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="224.10" width="10.74" height="10.74" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="244.61" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (pre) · bias</text>
+<rect x="90.90" y="236.44" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="236.44" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="236.44" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="236.44" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="236.44" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="236.44" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="236.44" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="236.44" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="236.44" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="236.44" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="236.44" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="236.44" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="256.95" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP out</text>
+<rect x="90.90" y="248.78" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="248.78" width="10.74" height="10.74" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="248.78" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="248.78" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="85.90" y="269.30" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP out · bias</text>
+<rect x="90.90" y="261.12" width="10.74" height="10.74" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="103.24" y="261.12" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="115.58" y="261.12" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="127.93" y="261.12" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="140.27" y="261.12" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="152.61" y="261.12" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="164.95" y="261.12" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="177.29" y="261.12" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="189.63" y="261.12" width="10.74" height="10.74" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="201.98" y="261.12" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="214.32" y="261.12" width="10.74" height="10.74" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="226.66" y="261.12" width="10.74" height="10.74" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="96.27" y="280.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.8" fill="#5c5c5c" text-anchor="middle" font-weight="normal">0</text>
+<text x="145.64" y="280.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.8" fill="#5c5c5c" text-anchor="middle" font-weight="normal">4</text>
+<text x="195.00" y="280.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.8" fill="#5c5c5c" text-anchor="middle" font-weight="normal">8</text>
+<text x="232.03" y="280.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.8" fill="#5c5c5c" text-anchor="middle" font-weight="normal">11</text>
+<text x="90.90" y="289.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="start" font-weight="normal" opacity="0.85">transformer layer</text>
+<text x="265.00" y="52.00" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="9.0" fill="#1a1a1a" text-anchor="start" font-weight="bold">(b)  Program the search selected</text>
+<text x="265.00" y="62.50" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="start" font-weight="normal">colour is the program's outermost operator</text>
+<text x="332.90" y="84.17" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">K proj</text>
+<rect x="337.90" y="76.00" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="76.00" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="76.00" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="76.00" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="76.00" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="76.00" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="76.00" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="76.00" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="76.00" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="76.00" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="76.00" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="76.00" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="96.51" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">K proj · bias</text>
+<rect x="337.90" y="88.34" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="88.34" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="88.34" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="88.34" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="88.34" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="88.34" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="88.34" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="88.34" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="88.34" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="88.34" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="88.34" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="88.34" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="108.85" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Q proj</text>
+<rect x="337.90" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="100.68" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="100.68" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="100.68" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="100.68" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="121.20" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Q proj · bias</text>
+<rect x="337.90" y="113.03" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="113.03" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="113.03" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="113.03" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="113.03" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="113.03" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="113.03" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="113.03" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="113.03" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="113.03" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="113.03" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="113.03" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="133.54" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">V proj</text>
+<rect x="337.90" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="125.37" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="125.37" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="125.37" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="145.88" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">V proj · bias</text>
+<rect x="337.90" y="137.71" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="137.71" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="137.71" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="137.71" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="137.71" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="137.71" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="137.71" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="137.71" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="137.71" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="137.71" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="137.71" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="137.71" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="158.22" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">O proj</text>
+<rect x="337.90" y="150.05" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="150.05" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="150.05" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="170.56" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">O proj · bias</text>
+<rect x="337.90" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="162.39" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="162.39" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="162.39" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="182.90" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP in</text>
+<rect x="337.90" y="174.73" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="174.73" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="174.73" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="174.73" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="174.73" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="174.73" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="174.73" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="174.73" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="174.73" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="174.73" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="174.73" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="174.73" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="195.25" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP in · bias</text>
+<rect x="337.90" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="187.07" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="187.07" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="207.59" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (post)</text>
+<rect x="337.90" y="199.42" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="199.42" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="199.42" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="199.42" width="10.74" height="10.74" fill="#cc79a7" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="199.42" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="199.42" width="10.74" height="10.74" fill="#cc79a7" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="199.42" width="10.74" height="10.74" fill="#cc79a7" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="199.42" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="199.42" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="199.42" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="199.42" width="10.74" height="10.74" fill="#cc79a7" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="199.42" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="219.93" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (post) · bias</text>
+<rect x="337.90" y="211.76" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="211.76" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="211.76" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="211.76" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="211.76" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="211.76" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="211.76" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="211.76" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="211.76" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="211.76" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="211.76" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="211.76" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="232.27" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (pre)</text>
+<rect x="337.90" y="224.10" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="224.10" width="10.74" height="10.74" fill="#cc79a7" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="224.10" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="224.10" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="224.10" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="224.10" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="224.10" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="224.10" width="10.74" height="10.74" fill="#cc79a7" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="224.10" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="224.10" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="224.10" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="224.10" width="10.74" height="10.74" fill="#cc79a7" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="244.61" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (pre) · bias</text>
+<rect x="337.90" y="236.44" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="236.44" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="236.44" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="236.44" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="236.44" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="236.44" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="236.44" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="236.44" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="236.44" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="236.44" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="236.44" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="236.44" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="256.95" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP out</text>
+<rect x="337.90" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="248.78" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="248.78" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="248.78" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="332.90" y="269.30" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP out · bias</text>
+<rect x="337.90" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="350.24" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="362.58" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="374.92" y="261.12" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="387.27" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="399.61" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="411.95" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="424.29" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="436.63" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="448.97" y="261.12" width="10.74" height="10.74" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="461.32" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<rect x="473.66" y="261.12" width="10.74" height="10.74" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.4"/>
+<text x="343.27" y="280.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.8" fill="#5c5c5c" text-anchor="middle" font-weight="normal">0</text>
+<text x="392.64" y="280.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.8" fill="#5c5c5c" text-anchor="middle" font-weight="normal">4</text>
+<text x="442.00" y="280.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.8" fill="#5c5c5c" text-anchor="middle" font-weight="normal">8</text>
+<text x="479.03" y="280.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.8" fill="#5c5c5c" text-anchor="middle" font-weight="normal">11</text>
+<text x="337.90" y="289.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="start" font-weight="normal" opacity="0.85">transformer layer</text>
+<text x="90.90" y="299.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="start" font-weight="normal">compression ratio  (equal-count bins)</text>
+<rect x="90.90" y="304.47" width="18.51" height="6.50" fill="#f3f2ef" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="109.41" y="304.47" width="18.51" height="6.50" fill="#dbe6e4" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="127.93" y="304.47" width="18.51" height="6.50" fill="#b9d3d1" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="146.44" y="304.47" width="18.51" height="6.50" fill="#8fbcbb" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="164.95" y="304.47" width="18.51" height="6.50" fill="#5f9ea3" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="183.46" y="304.47" width="18.51" height="6.50" fill="#3d7f8a" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="201.97" y="304.47" width="18.51" height="6.50" fill="#265f6d" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="220.49" y="304.47" width="18.51" height="6.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="90.90" y="319.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.5" fill="#5c5c5c" text-anchor="start" font-weight="normal">1.124×</text>
+<text x="127.93" y="319.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.5" fill="#5c5c5c" text-anchor="middle" font-weight="normal">1.140</text>
+<text x="164.95" y="319.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.5" fill="#5c5c5c" text-anchor="middle" font-weight="normal">1.201</text>
+<text x="201.97" y="319.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.5" fill="#5c5c5c" text-anchor="middle" font-weight="normal">1.204</text>
+<text x="239.00" y="319.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.5" fill="#5c5c5c" text-anchor="end" font-weight="normal">1.326×</text>
+<text x="90.90" y="331.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="start" font-weight="normal">distribution of those ratios, one tick per tensor</text>
+<line x1="90.90" y1="353.47" x2="239.00" y2="353.47" stroke="#d8d8d8" stroke-width="0.6"/>
+<line x1="90.90" y1="337.47" x2="90.90" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="91.81" y1="337.47" x2="91.81" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="92.11" y1="337.47" x2="92.11" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="92.72" y1="337.47" x2="92.72" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="93.94" y1="337.47" x2="93.94" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="94.24" y1="337.47" x2="94.24" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="94.85" y1="337.47" x2="94.85" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="95.46" y1="337.47" x2="95.46" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="95.46" y1="337.47" x2="95.46" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="95.77" y1="337.47" x2="95.77" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="96.08" y1="337.47" x2="96.08" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="96.08" y1="337.47" x2="96.08" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="96.08" y1="337.47" x2="96.08" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="96.08" y1="337.47" x2="96.08" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="96.38" y1="337.47" x2="96.38" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="96.69" y1="337.47" x2="96.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="96.69" y1="337.47" x2="96.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="97.31" y1="337.47" x2="97.31" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="97.92" y1="337.47" x2="97.92" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="98.23" y1="337.47" x2="98.23" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="98.23" y1="337.47" x2="98.23" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="98.54" y1="337.47" x2="98.54" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="98.54" y1="337.47" x2="98.54" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="99.15" y1="337.47" x2="99.15" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="99.15" y1="337.47" x2="99.15" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="99.15" y1="337.47" x2="99.15" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="99.15" y1="337.47" x2="99.15" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="99.77" y1="337.47" x2="99.77" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="99.77" y1="337.47" x2="99.77" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="99.77" y1="337.47" x2="99.77" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="100.08" y1="337.47" x2="100.08" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="100.08" y1="337.47" x2="100.08" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="100.08" y1="337.47" x2="100.08" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="100.70" y1="337.47" x2="100.70" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.01" y1="337.47" x2="101.01" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.01" y1="337.47" x2="101.01" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.01" y1="337.47" x2="101.01" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.01" y1="337.47" x2="101.01" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.32" y1="337.47" x2="101.32" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.63" y1="337.47" x2="101.63" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.63" y1="337.47" x2="101.63" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.63" y1="337.47" x2="101.63" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.94" y1="337.47" x2="101.94" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.94" y1="337.47" x2="101.94" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.94" y1="337.47" x2="101.94" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="101.94" y1="337.47" x2="101.94" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="102.25" y1="337.47" x2="102.25" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="102.56" y1="337.47" x2="102.56" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="102.56" y1="337.47" x2="102.56" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="102.56" y1="337.47" x2="102.56" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="102.87" y1="337.47" x2="102.87" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="102.87" y1="337.47" x2="102.87" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="103.19" y1="337.47" x2="103.19" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="103.19" y1="337.47" x2="103.19" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="103.50" y1="337.47" x2="103.50" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="103.50" y1="337.47" x2="103.50" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="103.81" y1="337.47" x2="103.81" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="103.81" y1="337.47" x2="103.81" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="103.81" y1="337.47" x2="103.81" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="104.12" y1="337.47" x2="104.12" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="104.43" y1="337.47" x2="104.43" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="104.43" y1="337.47" x2="104.43" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="104.75" y1="337.47" x2="104.75" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="104.75" y1="337.47" x2="104.75" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="104.75" y1="337.47" x2="104.75" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="105.06" y1="337.47" x2="105.06" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="105.69" y1="337.47" x2="105.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="105.69" y1="337.47" x2="105.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="105.69" y1="337.47" x2="105.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="105.69" y1="337.47" x2="105.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="105.69" y1="337.47" x2="105.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="106.00" y1="337.47" x2="106.00" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="106.00" y1="337.47" x2="106.00" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="106.32" y1="337.47" x2="106.32" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="106.32" y1="337.47" x2="106.32" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="106.63" y1="337.47" x2="106.63" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="106.63" y1="337.47" x2="106.63" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="106.94" y1="337.47" x2="106.94" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="107.89" y1="337.47" x2="107.89" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="108.83" y1="337.47" x2="108.83" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="109.15" y1="337.47" x2="109.15" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="109.47" y1="337.47" x2="109.47" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="110.73" y1="337.47" x2="110.73" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="112.01" y1="337.47" x2="112.01" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="141.66" y1="337.47" x2="141.66" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="143.38" y1="337.47" x2="143.38" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="143.81" y1="337.47" x2="143.81" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="144.10" y1="337.47" x2="144.10" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="144.62" y1="337.47" x2="144.62" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="144.76" y1="337.47" x2="144.76" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="145.65" y1="337.47" x2="145.65" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="146.29" y1="337.47" x2="146.29" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="146.33" y1="337.47" x2="146.33" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="146.63" y1="337.47" x2="146.63" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.09" y1="337.47" x2="147.09" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.29" y1="337.47" x2="147.29" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.51" y1="337.47" x2="147.51" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.51" y1="337.47" x2="147.51" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.55" y1="337.47" x2="147.55" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.60" y1="337.47" x2="147.60" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.66" y1="337.47" x2="147.66" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.69" y1="337.47" x2="147.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.75" y1="337.47" x2="147.75" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="147.97" y1="337.47" x2="147.97" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.18" y1="337.47" x2="148.18" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.24" y1="337.47" x2="148.24" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.25" y1="337.47" x2="148.25" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.33" y1="337.47" x2="148.33" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.37" y1="337.47" x2="148.37" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.41" y1="337.47" x2="148.41" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.45" y1="337.47" x2="148.45" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.46" y1="337.47" x2="148.46" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.47" y1="337.47" x2="148.47" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.50" y1="337.47" x2="148.50" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.54" y1="337.47" x2="148.54" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.55" y1="337.47" x2="148.55" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.58" y1="337.47" x2="148.58" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.61" y1="337.47" x2="148.61" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.63" y1="337.47" x2="148.63" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.69" y1="337.47" x2="148.69" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.74" y1="337.47" x2="148.74" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.76" y1="337.47" x2="148.76" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.80" y1="337.47" x2="148.80" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.84" y1="337.47" x2="148.84" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.88" y1="337.47" x2="148.88" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.89" y1="337.47" x2="148.89" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.90" y1="337.47" x2="148.90" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.91" y1="337.47" x2="148.91" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.94" y1="337.47" x2="148.94" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.97" y1="337.47" x2="148.97" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="148.99" y1="337.47" x2="148.99" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.07" y1="337.47" x2="149.07" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.11" y1="337.47" x2="149.11" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.11" y1="337.47" x2="149.11" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.13" y1="337.47" x2="149.13" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.13" y1="337.47" x2="149.13" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.16" y1="337.47" x2="149.16" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.17" y1="337.47" x2="149.17" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.19" y1="337.47" x2="149.19" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.21" y1="337.47" x2="149.21" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.23" y1="337.47" x2="149.23" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.26" y1="337.47" x2="149.26" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.26" y1="337.47" x2="149.26" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.27" y1="337.47" x2="149.27" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.28" y1="337.47" x2="149.28" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.29" y1="337.47" x2="149.29" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.29" y1="337.47" x2="149.29" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.31" y1="337.47" x2="149.31" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.31" y1="337.47" x2="149.31" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.34" y1="337.47" x2="149.34" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.36" y1="337.47" x2="149.36" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.40" y1="337.47" x2="149.40" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.40" y1="337.47" x2="149.40" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.45" y1="337.47" x2="149.45" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.46" y1="337.47" x2="149.46" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.47" y1="337.47" x2="149.47" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.52" y1="337.47" x2="149.52" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="149.62" y1="337.47" x2="149.62" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="161.89" y1="337.47" x2="161.89" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="161.98" y1="337.47" x2="161.98" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="163.85" y1="337.47" x2="163.85" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="163.85" y1="337.47" x2="163.85" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="165.56" y1="337.47" x2="165.56" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="168.99" y1="337.47" x2="168.99" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="169.35" y1="337.47" x2="169.35" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="170.99" y1="337.47" x2="170.99" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="172.17" y1="337.47" x2="172.17" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="172.36" y1="337.47" x2="172.36" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="173.27" y1="337.47" x2="173.27" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="174.19" y1="337.47" x2="174.19" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="183.45" y1="337.47" x2="183.45" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="183.45" y1="337.47" x2="183.45" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="190.99" y1="337.47" x2="190.99" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="196.73" y1="337.47" x2="196.73" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="197.12" y1="337.47" x2="197.12" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="205.67" y1="337.47" x2="205.67" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="212.00" y1="337.47" x2="212.00" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="212.79" y1="337.47" x2="212.79" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="213.59" y1="337.47" x2="213.59" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="218.00" y1="337.47" x2="218.00" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="220.02" y1="337.47" x2="220.02" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="226.13" y1="337.47" x2="226.13" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="230.66" y1="337.47" x2="230.66" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="231.90" y1="337.47" x2="231.90" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="233.14" y1="337.47" x2="233.14" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="233.56" y1="337.47" x2="233.56" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="235.23" y1="337.47" x2="235.23" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="236.48" y1="337.47" x2="236.48" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="237.32" y1="337.47" x2="237.32" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="237.32" y1="337.47" x2="237.32" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="237.74" y1="337.47" x2="237.74" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<line x1="239.00" y1="337.47" x2="239.00" y2="353.47" stroke="#265f6d" stroke-width="0.7" opacity="0.30"/>
+<text x="90.90" y="361.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.5" fill="#5c5c5c" text-anchor="start" font-weight="normal">1.12×</text>
+<text x="239.00" y="361.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.5" fill="#5c5c5c" text-anchor="end" font-weight="normal">1.33×</text>
+<text x="164.95" y="361.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.5" fill="#5c5c5c" text-anchor="middle" font-weight="normal">192 of 192 below 1.55×</text>
+<text x="337.90" y="299.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="start" font-weight="normal">root operator of the selected program</text>
+<rect x="337.90" y="307.47" width="6.40" height="6.40" fill="#0072b2" stroke="none" stroke-width="0.5" rx="1.1"/>
+<text x="347.40" y="313.07" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.8" fill="#5c5c5c" text-anchor="start" font-weight="normal">add_const_mod</text>
+<text x="486.00" y="313.07" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.8" fill="#5c5c5c" text-anchor="end" font-weight="normal">107</text>
+<rect x="337.90" y="316.87" width="6.40" height="6.40" fill="#56b4e9" stroke="none" stroke-width="0.5" rx="1.1"/>
+<text x="347.40" y="322.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.8" fill="#5c5c5c" text-anchor="start" font-weight="normal">xor_const</text>
+<text x="486.00" y="322.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.8" fill="#5c5c5c" text-anchor="end" font-weight="normal">78</text>
+<rect x="337.90" y="326.27" width="6.40" height="6.40" fill="#cc79a7" stroke="none" stroke-width="0.5" rx="1.1"/>
+<text x="347.40" y="331.87" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.8" fill="#5c5c5c" text-anchor="start" font-weight="normal">gray</text>
+<text x="486.00" y="331.87" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.8" fill="#5c5c5c" text-anchor="end" font-weight="normal">7</text>
+<text x="18.00" y="381.87" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="9.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">(c)  Where the bytes go, by tensor role</text>
+<text x="18.00" y="392.87" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.6" fill="#5c5c5c" text-anchor="start" font-weight="normal">share of raw bytes removed — entropy coding alone, then what the structural operators add on top</text>
+<line x1="187.37" y1="403.87" x2="187.37" y2="630.87" stroke="#d8d8d8" stroke-width="0.5"/>
+<text x="187.37" y="400.87" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.4" fill="#5c5c5c" text-anchor="middle" font-weight="normal">10%</text>
+<line x1="260.73" y1="403.87" x2="260.73" y2="630.87" stroke="#d8d8d8" stroke-width="0.5"/>
+<text x="260.73" y="400.87" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.4" fill="#5c5c5c" text-anchor="middle" font-weight="normal">20%</text>
+<text x="108.00" y="415.37" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">K proj</text>
+<rect x="114.00" y="407.87" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="407.87" width="123.66" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="415.37" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">16.8%</text>
+<text x="418.00" y="415.37" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+16.9% from structure</text>
+<text x="480.00" y="415.37" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">28.3 MB</text>
+<text x="108.00" y="429.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">K proj · bias</text>
+<rect x="114.00" y="421.97" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="421.97" width="98.10" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="429.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">12.6%</text>
+<text x="418.00" y="429.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+13.4% from structure</text>
+<text x="480.00" y="429.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<text x="108.00" y="443.57" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">Q proj</text>
+<rect x="114.00" y="436.07" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="436.07" width="123.71" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="443.57" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">16.9%</text>
+<text x="418.00" y="443.57" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+16.9% from structure</text>
+<text x="480.00" y="443.57" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">28.3 MB</text>
+<text x="108.00" y="457.67" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">Q proj · bias</text>
+<rect x="114.00" y="450.17" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="450.17" width="92.84" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="457.67" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">11.9%</text>
+<text x="418.00" y="457.67" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+12.7% from structure</text>
+<text x="480.00" y="457.67" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<text x="108.00" y="471.77" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">V proj</text>
+<rect x="114.00" y="464.27" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="464.27" width="123.60" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="471.77" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">16.8%</text>
+<text x="418.00" y="471.77" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+16.8% from structure</text>
+<text x="480.00" y="471.77" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">28.3 MB</text>
+<text x="108.00" y="485.87" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">V proj · bias</text>
+<rect x="114.00" y="478.37" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="478.37" width="95.93" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="485.87" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">12.3%</text>
+<text x="418.00" y="485.87" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+13.1% from structure</text>
+<text x="480.00" y="485.87" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<text x="108.00" y="499.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">O proj</text>
+<rect x="114.00" y="492.47" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="492.47" width="123.87" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="499.97" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">16.9%</text>
+<text x="418.00" y="499.97" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+16.9% from structure</text>
+<text x="480.00" y="499.97" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">28.3 MB</text>
+<text x="108.00" y="514.07" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">O proj · bias</text>
+<rect x="114.00" y="506.57" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="506.57" width="95.11" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="514.07" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">12.2%</text>
+<text x="418.00" y="514.07" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+13.0% from structure</text>
+<text x="480.00" y="514.07" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<text x="108.00" y="528.17" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP in</text>
+<rect x="114.00" y="520.67" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="520.67" width="123.63" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="528.17" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">16.8%</text>
+<text x="418.00" y="528.17" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+16.9% from structure</text>
+<text x="480.00" y="528.17" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">113.2 MB</text>
+<text x="108.00" y="542.27" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP in · bias</text>
+<rect x="114.00" y="534.77" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="534.77" width="137.52" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="542.27" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">18.5%</text>
+<text x="418.00" y="542.27" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+18.7% from structure</text>
+<text x="480.00" y="542.27" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">147.5 kB</text>
+<text x="108.00" y="556.37" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (post)</text>
+<rect x="114.00" y="548.87" width="24.84" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="138.84" y="548.87" width="136.25" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="556.37" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">22.0%</text>
+<text x="418.00" y="556.37" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+18.6% from structure</text>
+<text x="480.00" y="556.37" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<text x="108.00" y="570.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (post) · bias</text>
+<rect x="114.00" y="562.97" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="562.97" width="95.19" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="570.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">12.2%</text>
+<text x="418.00" y="570.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+13.0% from structure</text>
+<text x="480.00" y="570.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<text x="108.00" y="584.57" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (pre)</text>
+<rect x="114.00" y="577.07" width="40.12" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="154.12" y="577.07" width="128.51" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="584.57" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">23.0%</text>
+<text x="418.00" y="584.57" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+17.5% from structure</text>
+<text x="480.00" y="584.57" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<text x="108.00" y="598.67" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">Norm (pre) · bias</text>
+<rect x="114.00" y="591.17" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="591.17" width="92.11" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="598.67" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">11.8%</text>
+<text x="418.00" y="598.67" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+12.6% from structure</text>
+<text x="480.00" y="598.67" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<text x="108.00" y="612.77" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP out</text>
+<rect x="114.00" y="605.27" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="605.27" width="123.23" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="612.77" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">16.8%</text>
+<text x="418.00" y="612.77" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+16.8% from structure</text>
+<text x="480.00" y="612.77" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">113.2 MB</text>
+<text x="108.00" y="626.87" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.4" fill="#5c5c5c" text-anchor="end" font-weight="normal">MLP out · bias</text>
+<rect x="114.00" y="619.37" width="0.00" height="9.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="0.0"/>
+<rect x="114.00" y="619.37" width="96.48" height="9.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="0.0"/>
+<text x="326.00" y="626.87" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="7.3" fill="#1a1a1a" text-anchor="end" font-weight="normal">12.4%</text>
+<text x="418.00" y="626.87" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">+13.2% from structure</text>
+<text x="480.00" y="626.87" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="end" font-weight="normal">36.9 kB</text>
+<rect x="114.00" y="639.47" width="8.00" height="6.50" fill="#b9c9cf" stroke="none" stroke-width="0.5" rx="1.2"/>
+<text x="126.00" y="645.07" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="start" font-weight="normal">entropy coding only (all structural operators disabled)</text>
+<rect x="372.00" y="639.47" width="8.00" height="6.50" fill="#16414f" stroke="none" stroke-width="0.5" rx="1.2"/>
+<text x="384.00" y="645.07" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="6.9" fill="#5c5c5c" text-anchor="start" font-weight="normal">added by the synthesised program</text>
+<line x1="18.0" y1="657.4666666666667" x2="486.0" y2="657.4666666666667" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="18.00" y="667.47" font-family="Liberation Sans, Helvetica, Arial, sans-serif" font-size="7.0" fill="#5c5c5c" text-anchor="start" font-weight="normal">Outside the layer stack:</text>
+<text x="122.00" y="667.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="start" font-weight="normal">classifier  3.1 MB  1.20×</text>
+<text x="243.33" y="667.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="start" font-weight="normal">projection  2.4 MB  1.19×</text>
+<text x="364.67" y="667.47" font-family="Liberation Mono, DejaVu Sans Mono, monospace" font-size="6.9" fill="#5c5c5c" text-anchor="start" font-weight="normal">embeddings  605.2 kB  1.18×</text>
+</svg>
