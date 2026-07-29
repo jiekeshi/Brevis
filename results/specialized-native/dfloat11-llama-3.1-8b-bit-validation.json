@@ -1,0 +1,248 @@
+{
+  "converted": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv",
+  "decoder_source_sha256": "6f7deb141ec640935400b4a4d9d798753642acf38c73b44ebf3d2dc170e4bc51",
+  "exact": true,
+  "exactness_scope": "manifest_declared_tensor_bit_patterns",
+  "finished_at": "2026-07-29T00:33:19.987810+00:00",
+  "method": "dfloat11",
+  "official_decoder_used": false,
+  "parallel_metadata_checks": "shape_length_endpoints_monotonicity_and_unused_thread_padding",
+  "parallel_metadata_validation": "structural_only",
+  "provenance": {
+    "converted_files": [
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/lm_head.safetensors",
+        "sha256": "1b68a70833ddcff6f343289213ba0e689d23d59b36a18d965d066b0bb37d7175",
+        "size": 710744506
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model.safetensors",
+        "sha256": "bd097e0614e829b14d343c323b959298701d3a5210cb4bd9ed12b85472176681",
+        "size": 8312
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_embed_tokens.safetensors",
+        "sha256": "0ebb311deb218ace58427df4f62a8c352c2e216c6470ea74870a3d78dae41ce1",
+        "size": 712176325
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_0.safetensors",
+        "sha256": "e9f2c834b5f206b5828856a08acb4fe872d58432c1f5bdab602c93a9aae74703",
+        "size": 299806609
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_1.safetensors",
+        "sha256": "4bfb96b1d45af44b0f88f13369fc0d7edb74412fca9e3c306adafed8c9dd0f63",
+        "size": 296462501
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_10.safetensors",
+        "sha256": "4bb8a88074bdacdd9cfaf9fb13c2ca3f9ea882af6420b0fbff3d41caf4fd8832",
+        "size": 296332924
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_11.safetensors",
+        "sha256": "cb23b958cdbec59d55ec4128fb8369ae8beed7eee9105e3629b6cfdede0a53c7",
+        "size": 296172411
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_12.safetensors",
+        "sha256": "0147998986c6e45edd09f6e026ffe3edc33683eb51d993370dd10e81603e7f47",
+        "size": 295990673
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_13.safetensors",
+        "sha256": "27c9b8a929c8c08f6260e0fbd336d3e662b10543b7974cb38a8bec946512ea0c",
+        "size": 296095504
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_14.safetensors",
+        "sha256": "93aee1f895844f42e1c092e8fe910670f1deb060c4edb3f53b8f9cb2a6e4e9f1",
+        "size": 296093186
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_15.safetensors",
+        "sha256": "c34c702de3f137b7ac953ebeec6dac4252ea813ed0b8d3ca48b8c6d032772cba",
+        "size": 296192742
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_16.safetensors",
+        "sha256": "c3891cf5f9eb40201ca74daff5955af2df3b14e4512247893175427f9e6eacb1",
+        "size": 296077770
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_17.safetensors",
+        "sha256": "71523c0192c1209de836e5daf2704f35f8104ee00b5af000f3f205e5d0e8574d",
+        "size": 296072609
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_18.safetensors",
+        "sha256": "13e8164121c4dd3ef0280ec762bd878b6ad62ab0a63f593d90f67107ff11344f",
+        "size": 295880951
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_19.safetensors",
+        "sha256": "efdb6d52501cd028c29c269426040a52f150fa07db0e81157491f1c817e3d4de",
+        "size": 295747247
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_2.safetensors",
+        "sha256": "013832f6ec1c17b189e559aae36ff277e6b05069b9da14ed029ebbc4a0073b37",
+        "size": 296349085
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_20.safetensors",
+        "sha256": "369b0239ac388ebf69e64506ee9ed0854a3c70cb8c0f9f64d97b01a39c1550ed",
+        "size": 295668319
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_21.safetensors",
+        "sha256": "0ad2c3df60cd8eb4646588ee76cb2557ebfb0177135252c8d74a2ba218412fcd",
+        "size": 295598117
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_22.safetensors",
+        "sha256": "07139867bd205f2a3f3a4d63cbb9326ed6488ec3f8f03bbfc1bcddd71847320b",
+        "size": 295381391
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_23.safetensors",
+        "sha256": "44151ef4d23ff99db079368975279ccbf27f4f411dc8d0a0d89ae0fcdfe41093",
+        "size": 295331020
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_24.safetensors",
+        "sha256": "44b0bbc8c81265b51b22930a1069643ce0358745e210d7e06cb15262510dc2cb",
+        "size": 295254142
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_25.safetensors",
+        "sha256": "28fa83c2e2213d633659550c949b2ad5ba8d29acc70ba292d3299863ad3900ab",
+        "size": 295213476
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_26.safetensors",
+        "sha256": "f7f9f42e09f45f034d5d058c625e4c3804f40b2d6ad145f88effac4bd03eccc5",
+        "size": 295301072
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_27.safetensors",
+        "sha256": "51eaed57612050406f8de16204d30c91c33879df12f7c2e802194e3c892124c6",
+        "size": 295306467
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_28.safetensors",
+        "sha256": "475475cac5f5dee0f1b4e73ed8fd680a450491f6877c049afa98130fe4c4f6a3",
+        "size": 295249535
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_29.safetensors",
+        "sha256": "1b6b0b761d6f54eb93a4a014df9dbc13dfb8f6af5009324a6dcdcaac96956d5f",
+        "size": 295252422
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_3.safetensors",
+        "sha256": "0cd1050a877062f433f74e1d2322a2bcf3505fe8c0277360ce4fcfde4c9600b5",
+        "size": 296001914
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_30.safetensors",
+        "sha256": "52dea13da445f00c547be0065e4d57c7efd529bef0cf01e752e59cd4fe493536",
+        "size": 295547456
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_31.safetensors",
+        "sha256": "ce48def563d278a38e62132935cb56ad52b85dc2746fec41ea566458e7820261",
+        "size": 296211364
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_4.safetensors",
+        "sha256": "e3154898b7c870f811ece04feb8c86d6338fe1835bb4c5291fc4c16ce44f9738",
+        "size": 296299396
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_5.safetensors",
+        "sha256": "9f315134a6d568a401a1040eb39c09af88164b3129ae4a5343a0330b34ece5c0",
+        "size": 296384734
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_6.safetensors",
+        "sha256": "6edc6cc6881f8b793df222ab91ea214c7412c245adacbb85ff737bb92dddda97",
+        "size": 296298793
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_7.safetensors",
+        "sha256": "912217d8d19c99042c067dc6159880a677a3aeb8ea4a58b6fc19d0fbf3005a55",
+        "size": 296311902
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_8.safetensors",
+        "sha256": "7ed98ce0a6ec40379271a0f5a65ff80cc5e5c23c34110236017d0b949d788e2b",
+        "size": 296336818
+      },
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/model_layers_9.safetensors",
+        "sha256": "cac3d114d315c60b99e3ad51f14e0d5cd5fca7bee3a1c7d9460c19793f18173b",
+        "size": 296348904
+      }
+    ],
+    "converted_metadata_files": [
+      {
+        "path": "/workspace/Brevis/results/specialized-native/archives/llama-3.1-8b-bf16/dfloat11.brv/config.json",
+        "sha256": "fbf44268fc9907bf7e777fe77a299db5601ab6869ad6231469ecbc7bffea6dfa",
+        "size": 1265
+      }
+    ],
+    "decoder_library": "/tmp/brevis-specialized-validator-0/build-arozs91e/specialized-decoder.so",
+    "decoder_library_sha256": "98aa2a1195790a2e89787167fea7320a296314d6412c3c3f82c1d2dc11e311e0",
+    "decoder_source_sha256": "6f7deb141ec640935400b4a4d9d798753642acf38c73b44ebf3d2dc170e4bc51",
+    "dfloat11_format_version": "0.5.0",
+    "format_reference_commit": "457733886ce6ebc6d8dda1621fad1ffa2661e028",
+    "source_files": [
+      {
+        "path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+        "sha256": "f8b9704ab09cdeb097aa4a0a24bca96f906eec36bad63ab495bc21475058601b",
+        "size": 4976698672
+      },
+      {
+        "path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00002-of-00004.safetensors",
+        "sha256": "c28b25e7541751056ee126627e007f8d4288319733285e9f7b17b9ff6eb313f0",
+        "size": 4999802720
+      },
+      {
+        "path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00003-of-00004.safetensors",
+        "sha256": "d8e9504dd4e4a146d484c52a97584ec14dac92237c46b064934af67a85e7d383",
+        "size": 4915916176
+      },
+      {
+        "path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00004-of-00004.safetensors",
+        "sha256": "e4486f35c040f683f7d790354f66c169c109eb9fa0954a4a35d7c458a108405d",
+        "size": 1168138808
+      }
+    ],
+    "source_manifest": {
+      "path": "/workspace/checkpoints/llama-3.1-8b-bf16/download-manifest.json",
+      "sha256": "dae9b64d40a47adce7edbec54dee7fe261a686f8edb6b02a3a2798cb0014f13b",
+      "size": 1245
+    },
+    "source_manifest_declared_sha256_verified": true,
+    "source_repo_id": "meta-llama/Llama-3.1-8B",
+    "source_revision": "d04e592bb4f6aa9cfee91e2e20afa771667e1d4b",
+    "validator_sha256": "905e07285c19a6f0d188d8c1e116577d8e9100331e99abc43a2a970081914788"
+  },
+  "schema_version": 1,
+  "source": "/workspace/checkpoints/llama-3.1-8b-bf16",
+  "started_at": "2026-07-29T00:32:02.396378+00:00",
+  "stats": {
+    "compared_bytes": 16060522496,
+    "decoded_groups": 34,
+    "decoded_tensors": 226,
+    "direct_tensors": 65,
+    "ignored_output_tensors": [],
+    "source_tensors": 291
+  },
+  "status": "ok",
+  "validation": "independent_cpu_huffman_decode_and_bit_pattern_compare",
+  "validator_sha256": "905e07285c19a6f0d188d8c1e116577d8e9100331e99abc43a2a970081914788",
+  "wall_seconds": 77.59146019798936
+}

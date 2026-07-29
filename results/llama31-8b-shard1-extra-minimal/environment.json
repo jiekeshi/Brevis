@@ -1,0 +1,62 @@
+{
+  "ablation_max_expansions": 32,
+  "ablation_tensors": 32,
+  "ablation_workers": 32,
+  "brevis_revision": "d8d25085605d23faf1c6784a30c0cc4b4fcaa34e",
+  "cold_cache_available": false,
+  "corpus": [],
+  "corpus_cache": "unconditioned",
+  "corpus_max_expansions": 512,
+  "corpus_preset": "paper-v1",
+  "corpus_tensors": 256,
+  "discard_analysis_archives": false,
+  "discard_corpus_archives": false,
+  "drop_caches_command": null,
+  "frozen_corpus": true,
+  "generated_at": "2026-07-29T02:33:14.233716+00:00",
+  "host": {
+    "cold_cache_available": false,
+    "cpu_model": "AMD EPYC 9654 96-Core Processor",
+    "drop_caches_command": null,
+    "hostname": "a519c7a2338f",
+    "logical_cpus": 384,
+    "physical_cores": 192,
+    "platform": "Linux-6.8.0-101-generic-x86_64-with-glibc2.39",
+    "python": "3.12.13",
+    "ram_bytes": 777266130944
+  },
+  "logical_cpus": 384,
+  "method_versions": {
+    "brevis": "d8d25085605d23faf1c6784a30c0cc4b4fcaa34e"
+  },
+  "pareto_tensors": 32,
+  "pareto_workers": 32,
+  "physical_cores": 192,
+  "platform": "Linux-6.8.0-101-generic-x86_64-with-glibc2.39",
+  "python": "3.12.13",
+  "ram_bytes": 777266130944,
+  "run_provenance": {
+    "brevis": {
+      "binary_sha256": "b98d06d6774e7542c3ede62aada92786012a030f0120ff5e16aefc5a78f2955e",
+      "brevis_revision": "d8d25085605d23faf1c6784a30c0cc4b4fcaa34e",
+      "harness_revision": "d8d25085605d23faf1c6784a30c0cc4b4fcaa34e",
+      "harness_sha256": "458886a0935c4719808934faa397a1fb8577c152f6c96a92b9d50a56ca6477aa",
+      "host": {
+        "cold_cache_available": false,
+        "cpu_model": "AMD EPYC 9654 96-Core Processor",
+        "drop_caches_command": null,
+        "hostname": "a519c7a2338f",
+        "logical_cpus": 384,
+        "physical_cores": 192,
+        "platform": "Linux-6.8.0-101-generic-x86_64-with-glibc2.39",
+        "python": "3.12.13",
+        "ram_bytes": 777266130944
+      },
+      "method_version": "d8d25085605d23faf1c6784a30c0cc4b4fcaa34e"
+    }
+  },
+  "shard_jobs": 32,
+  "worker_sweep_max_expansions": 1,
+  "worker_sweep_tensors": 32,
+  "workers": 32
+}

@@ -1,0 +1,4 @@
+group,tensor_count,source_tensor_bytes,archive_record_bytes,saved_bytes_vs_record,source_over_record_ratio,record_percent_of_source,program_bytes,record_framing_bytes,literal_fallback_tensors,literal_fallback_source_bytes,literal_fallback_record_bytes
+literal_fallback,1,1050673152,691938594,358734558,1.51844854603,65.8566931765,691938542,52,1,1050673152,691938594
+synthesized:merge.byte_planes,1,8192,5906,2286,1.38706400271,72.0947265625,5851,55,0,0,0
+synthesized:merge.fields,80,3926007808,2585337275,1340670533,1.51856697614,65.8515571398,2585332452,4823,0,0,0

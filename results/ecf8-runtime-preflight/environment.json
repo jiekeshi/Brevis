@@ -1,0 +1,133 @@
+{
+  "brevis_revision": null,
+  "cold_cache_available": false,
+  "corpus": [],
+  "corpus_cache": "unconditioned",
+  "corpus_max_expansions": 512,
+  "corpus_preset": "paper-v1",
+  "corpus_tensors": 256,
+  "discard_corpus_archives": false,
+  "drop_caches_command": null,
+  "frozen_corpus": true,
+  "generated_at": "2026-07-28T23:48:34.117402+00:00",
+  "host": {
+    "cold_cache_available": false,
+    "cpu_model": "AMD EPYC 9654 96-Core Processor",
+    "drop_caches_command": null,
+    "hostname": "a519c7a2338f",
+    "logical_cpus": 384,
+    "physical_cores": 192,
+    "platform": "Linux-6.8.0-101-generic-x86_64-with-glibc2.39",
+    "python": "3.12.13",
+    "ram_bytes": 777266130944
+  },
+  "logical_cpus": 384,
+  "method_versions": {
+    "ecf8": "9cbf3d5cf77d6db8cf6f29df1fe6d52bc88fa01e"
+  },
+  "physical_cores": 192,
+  "platform": "Linux-6.8.0-101-generic-x86_64-with-glibc2.39",
+  "python": "3.12.13",
+  "ram_bytes": 777266130944,
+  "run_provenance": {
+    "ecf8": {
+      "adapter_sha256": "5b466c075869ee9d2dda4781929b76c053180171e9ba3301d77086bdba4f6526",
+      "config": {
+        "checkpoint_pattern": "^qwen3-32b-fp8$",
+        "compress_command": [
+          "/opt/ecf8-venv/bin/python",
+          "scripts/specialized_baselines.py",
+          "ecf8",
+          "--source",
+          "{source_dir}",
+          "--output",
+          "{archive}",
+          "--workers",
+          "{workers}",
+          "--upstream",
+          "/opt/ecf8",
+          "--validate-cuda"
+        ],
+        "cwd": "/workspace/Brevis",
+        "expected_commit": "9cbf3d5cf77d6db8cf6f29df1fe6d52bc88fa01e",
+        "local_patch": {
+          "description": "Use the DiffSynth import path present at the README-pinned DiffSynth commit.",
+          "diff_sha256": "5ffa23741205bb153187e04f387ce820dc21e6ce153eeae2f5c48f348e9a2346",
+          "dirty_checkout": true,
+          "patched_file": "scripts/compress.py",
+          "patched_file_sha256": "f5d5c947674a9b3f0a2b0ec7a996569ed30d9dd2a345ed7b631f1bbeb17bfb44"
+        },
+        "protocol": {
+          "exactness_scope": "tensor_value_exact",
+          "independent_bitwise_validation_performed": false,
+          "independent_bitwise_validation_required_before_publication": true,
+          "kind": "native_checkpoint_conversion",
+          "offline_decompression_available": false,
+          "original_checkpoint_byte_exact": false,
+          "output_scope": "converter_native_model_directory",
+          "publication_exactness_target": "tensor_bit_exact",
+          "schema_version": 1,
+          "source_scope": "manifest_declared_weight_tensors",
+          "supported_checkpoints": [
+            "qwen3-32b-fp8"
+          ],
+          "timing_scope": "conversion_including_official_validation",
+          "validation_evidence": "official_validate_cuda_elementwise_value_equality"
+        },
+        "repository": "https://github.com/zeyuyang8/ecf8.git",
+        "runtime_import_modules": [
+          "dfloat.run",
+          "diffsynth.vram_management.layers",
+          "transformers.integrations.finegrained_fp8"
+        ],
+        "runtime_lock": {
+          "cupy": "14.1.1",
+          "diffsynth_commit": "084bc2fc78422fd15b37f7a8db02ad924eaf2917",
+          "path": "/opt/ecf8-runtime.requirements.lock.txt",
+          "python": "3.12.13",
+          "sha256": "c89d1c7136d387b41caba810b515e02ff9ec2c31a260c30fba77d3bdca7bf9fb",
+          "torch": "2.7.1+cu128"
+        },
+        "runtime_modules": [
+          "accelerate",
+          "cupy",
+          "dahuffman",
+          "dfloat",
+          "diffsynth",
+          "numpy",
+          "pandas",
+          "safetensors",
+          "torch",
+          "transformers"
+        ],
+        "upstream_checkout": "/opt/ecf8",
+        "upstream_license": null,
+        "validates_during_compression": true,
+        "version_command": [
+          "git",
+          "-C",
+          "/opt/ecf8",
+          "rev-parse",
+          "HEAD"
+        ],
+        "workers": 16
+      },
+      "harness_revision": "d8d25085605d23faf1c6784a30c0cc4b4fcaa34e",
+      "harness_sha256": "bffc77a9d0ce67a55f11a1abe82d46a515f3d384d21e676732f04778772cf5e2",
+      "host": {
+        "cold_cache_available": false,
+        "cpu_model": "AMD EPYC 9654 96-Core Processor",
+        "drop_caches_command": null,
+        "hostname": "a519c7a2338f",
+        "logical_cpus": 384,
+        "physical_cores": 192,
+        "platform": "Linux-6.8.0-101-generic-x86_64-with-glibc2.39",
+        "python": "3.12.13",
+        "ram_bytes": 777266130944
+      },
+      "method_version": "9cbf3d5cf77d6db8cf6f29df1fe6d52bc88fa01e"
+    }
+  },
+  "shard_jobs": 32,
+  "workers": 32
+}

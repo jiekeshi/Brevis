@@ -1,0 +1,4022 @@
+{
+  "archives": [
+    {
+      "archive_file_bytes": 3277291303,
+      "archive_header_bytes": 9528,
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_percent_of_source": 65.85271721269284,
+      "archive_record_bytes": 3277281775,
+      "embedded_prefix_sha256": "a6239c5b959b8f0e8b9609c03dc5ebbae46f7ce4339076a85a4ef66c174c8093",
+      "saved_bytes": 1699407369,
+      "source_file_bytes": 4976698672,
+      "source_over_archive_ratio": 1.518540224802226,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_payload_bytes": 4976689152,
+      "source_prefix_bytes": 9520,
+      "source_prefix_matched": true,
+      "tensor_count": 82
+    }
+  ],
+  "format": {
+    "archive": "BRTA v3",
+    "program": "BRPG v2"
+  },
+  "groups": {
+    "dtype": [
+      {
+        "archive_record_bytes": 3277281775,
+        "group": "BF16",
+        "literal_fallback_record_bytes": 691938594,
+        "literal_fallback_source_bytes": 1050673152,
+        "literal_fallback_tensors": 1,
+        "program_bytes": 3277276845,
+        "record_framing_bytes": 4930,
+        "record_percent_of_source": 65.85265173097956,
+        "saved_bytes_vs_record": 1699407377,
+        "source_over_record_ratio": 1.5185417347887336,
+        "source_tensor_bytes": 4976689152,
+        "tensor_count": 82
+      }
+    ],
+    "program": [
+      {
+        "archive_record_bytes": 691938594,
+        "group": "literal_fallback",
+        "literal_fallback_record_bytes": 691938594,
+        "literal_fallback_source_bytes": 1050673152,
+        "literal_fallback_tensors": 1,
+        "program_bytes": 691938542,
+        "record_framing_bytes": 52,
+        "record_percent_of_source": 65.85669317645227,
+        "saved_bytes_vs_record": 358734558,
+        "source_over_record_ratio": 1.51844854602806,
+        "source_tensor_bytes": 1050673152,
+        "tensor_count": 1
+      },
+      {
+        "archive_record_bytes": 5906,
+        "group": "synthesized:merge.byte_planes",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 5851,
+        "record_framing_bytes": 55,
+        "record_percent_of_source": 72.0947265625,
+        "saved_bytes_vs_record": 2286,
+        "source_over_record_ratio": 1.3870640027091095,
+        "source_tensor_bytes": 8192,
+        "tensor_count": 1
+      },
+      {
+        "archive_record_bytes": 2585337275,
+        "group": "synthesized:merge.fields",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 2585332452,
+        "record_framing_bytes": 4823,
+        "record_percent_of_source": 65.85155713984764,
+        "saved_bytes_vs_record": 1340670533,
+        "source_over_record_ratio": 1.5185669761404728,
+        "source_tensor_bytes": 3926007808,
+        "tensor_count": 80
+      }
+    ],
+    "role": [
+      {
+        "archive_record_bytes": 502137370,
+        "group": "attention",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 502135138,
+        "record_framing_bytes": 2232,
+        "record_percent_of_source": 66.51048792733087,
+        "saved_bytes_vs_record": 252837350,
+        "source_over_record_ratio": 1.5035222731978701,
+        "source_tensor_bytes": 754974720,
+        "tensor_count": 36
+      },
+      {
+        "archive_record_bytes": 691938594,
+        "group": "embedding",
+        "literal_fallback_record_bytes": 691938594,
+        "literal_fallback_source_bytes": 1050673152,
+        "literal_fallback_tensors": 1,
+        "program_bytes": 691938542,
+        "record_framing_bytes": 52,
+        "record_percent_of_source": 65.85669317645227,
+        "saved_bytes_vs_record": 358734558,
+        "source_over_record_ratio": 1.51844854602806,
+        "source_tensor_bytes": 1050673152,
+        "tensor_count": 1
+      },
+      {
+        "archive_record_bytes": 2083144099,
+        "group": "mlp",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 2083142524,
+        "record_framing_bytes": 1575,
+        "record_percent_of_source": 65.69580107769639,
+        "saved_bytes_vs_record": 1087749725,
+        "source_over_record_ratio": 1.5221672977506295,
+        "source_tensor_bytes": 3170893824,
+        "tensor_count": 27
+      },
+      {
+        "archive_record_bytes": 61712,
+        "group": "norm",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 60641,
+        "record_framing_bytes": 1071,
+        "record_percent_of_source": 41.85112847222222,
+        "saved_bytes_vs_record": 85744,
+        "source_over_record_ratio": 2.3894218304381645,
+        "source_tensor_bytes": 147456,
+        "tensor_count": 18
+      }
+    ],
+    "role_program": [
+      {
+        "archive_record_bytes": 502137370,
+        "group": "attention/synthesized:merge.fields",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 502135138,
+        "record_framing_bytes": 2232,
+        "record_percent_of_source": 66.51048792733087,
+        "saved_bytes_vs_record": 252837350,
+        "source_over_record_ratio": 1.5035222731978701,
+        "source_tensor_bytes": 754974720,
+        "tensor_count": 36
+      },
+      {
+        "archive_record_bytes": 691938594,
+        "group": "embedding/literal_fallback",
+        "literal_fallback_record_bytes": 691938594,
+        "literal_fallback_source_bytes": 1050673152,
+        "literal_fallback_tensors": 1,
+        "program_bytes": 691938542,
+        "record_framing_bytes": 52,
+        "record_percent_of_source": 65.85669317645227,
+        "saved_bytes_vs_record": 358734558,
+        "source_over_record_ratio": 1.51844854602806,
+        "source_tensor_bytes": 1050673152,
+        "tensor_count": 1
+      },
+      {
+        "archive_record_bytes": 2083144099,
+        "group": "mlp/synthesized:merge.fields",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 2083142524,
+        "record_framing_bytes": 1575,
+        "record_percent_of_source": 65.69580107769639,
+        "saved_bytes_vs_record": 1087749725,
+        "source_over_record_ratio": 1.5221672977506295,
+        "source_tensor_bytes": 3170893824,
+        "tensor_count": 27
+      },
+      {
+        "archive_record_bytes": 5906,
+        "group": "norm/synthesized:merge.byte_planes",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 5851,
+        "record_framing_bytes": 55,
+        "record_percent_of_source": 72.0947265625,
+        "saved_bytes_vs_record": 2286,
+        "source_over_record_ratio": 1.3870640027091095,
+        "source_tensor_bytes": 8192,
+        "tensor_count": 1
+      },
+      {
+        "archive_record_bytes": 55806,
+        "group": "norm/synthesized:merge.fields",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 54790,
+        "record_framing_bytes": 1016,
+        "record_percent_of_source": 40.072093290441174,
+        "saved_bytes_vs_record": 83458,
+        "source_over_record_ratio": 2.49550227574096,
+        "source_tensor_bytes": 139264,
+        "tensor_count": 17
+      }
+    ],
+    "selection": [
+      {
+        "archive_record_bytes": 691938594,
+        "group": "literal_fallback",
+        "literal_fallback_record_bytes": 691938594,
+        "literal_fallback_source_bytes": 1050673152,
+        "literal_fallback_tensors": 1,
+        "program_bytes": 691938542,
+        "record_framing_bytes": 52,
+        "record_percent_of_source": 65.85669317645227,
+        "saved_bytes_vs_record": 358734558,
+        "source_over_record_ratio": 1.51844854602806,
+        "source_tensor_bytes": 1050673152,
+        "tensor_count": 1
+      },
+      {
+        "archive_record_bytes": 2585343181,
+        "group": "synthesized",
+        "literal_fallback_record_bytes": 0,
+        "literal_fallback_source_bytes": 0,
+        "literal_fallback_tensors": 0,
+        "program_bytes": 2585338303,
+        "record_framing_bytes": 4878,
+        "record_percent_of_source": 65.85157016680523,
+        "saved_bytes_vs_record": 1340672819,
+        "source_over_record_ratio": 1.5185666757329421,
+        "source_tensor_bytes": 3926016000,
+        "tensor_count": 81
+      }
+    ]
+  },
+  "literal_codecs": [
+    {
+      "body_bytes": 550940,
+      "body_share_percent": 0.01681091950991331,
+      "codec": "bitpack",
+      "literal_count": 14,
+      "payload_bytes": 550912,
+      "semantic_storage_bytes": 4247552,
+      "tensors_containing": 14
+    },
+    {
+      "body_bytes": 691963231,
+      "body_share_percent": 21.113983700875867,
+      "codec": "huffman",
+      "literal_count": 17,
+      "payload_bytes": 691915295,
+      "semantic_storage_bytes": 1050783744,
+      "tensors_containing": 16
+    },
+    {
+      "body_bytes": 2584756361,
+      "body_share_percent": 78.8690803672041,
+      "codec": "rans",
+      "literal_count": 132,
+      "payload_bytes": 2584545381,
+      "semantic_storage_bytes": 5888851968,
+      "tensors_containing": 69
+    },
+    {
+      "body_bytes": 4097,
+      "body_share_percent": 0.00012501241012109271,
+      "codec": "raw",
+      "literal_count": 1,
+      "payload_bytes": 4096,
+      "semantic_storage_bytes": 4096,
+      "tensors_containing": 1
+    }
+  ],
+  "operators": [
+    {
+      "exclusive_program_bytes": 3277276108,
+      "exclusive_share_of_all_program_bytes_percent": 99.99997751181743,
+      "node_count": 164,
+      "operator": "literal",
+      "root_selected_record_bytes": 691938594,
+      "root_selected_source_bytes": 1050673152,
+      "root_selected_source_over_record_ratio": 1.51844854602806,
+      "root_selected_tensors": 1,
+      "tensors_containing": 82
+    },
+    {
+      "exclusive_program_bytes": 3,
+      "exclusive_share_of_all_program_bytes_percent": 9.153941341809346e-08,
+      "node_count": 1,
+      "operator": "merge.byte_planes",
+      "root_selected_record_bytes": 5906,
+      "root_selected_source_bytes": 8192,
+      "root_selected_source_over_record_ratio": 1.3870640027091095,
+      "root_selected_tensors": 1,
+      "tensors_containing": 1
+    },
+    {
+      "exclusive_program_bytes": 324,
+      "exclusive_share_of_all_program_bytes_percent": 9.886256649154094e-06,
+      "node_count": 81,
+      "operator": "merge.fields",
+      "root_selected_record_bytes": 2585337275,
+      "root_selected_source_bytes": 3926007808,
+      "root_selected_source_over_record_ratio": 1.5185669761404728,
+      "root_selected_tensors": 80,
+      "tensors_containing": 80
+    }
+  ],
+  "schema_version": 1,
+  "tensors": [
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 691938594,
+      "dtype": "BF16",
+      "literal_body_bytes": 691938525,
+      "literal_codec_body_bytes": {
+        "huffman": 691938525
+      },
+      "literal_codec_counts": {
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "huffman": 691892722
+      },
+      "literal_codec_semantic_bytes": {
+        "huffman": 1050673152
+      },
+      "literal_count": 1,
+      "literal_semantic_storage_bytes": 1050673152,
+      "max_depth": 1,
+      "node_count": 1,
+      "operator_counts": {
+        "literal": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 691938537
+      },
+      "program_bytes": 691938542,
+      "program_selection": "literal_fallback",
+      "record_framing_bytes": 52,
+      "record_percent_of_source": 65.85669317645227,
+      "role": "embedding",
+      "root_operator": "literal",
+      "saved_bytes_vs_record": 358734558,
+      "shape": "128256x4096",
+      "source_over_record_ratio": 1.51844854602806,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 1050673152,
+      "stored_xxh3_64_le_bytes_hex": "9540b151e4754fe7",
+      "tensor_index": 0,
+      "tensor_name": "model.embed_tokens.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5906,
+      "dtype": "BF16",
+      "literal_body_bytes": 5831,
+      "literal_codec_body_bytes": {
+        "huffman": 1734,
+        "raw": 4097
+      },
+      "literal_codec_counts": {
+        "huffman": 1,
+        "raw": 1
+      },
+      "literal_codec_payload_bytes": {
+        "huffman": 1606,
+        "raw": 4096
+      },
+      "literal_codec_semantic_bytes": {
+        "huffman": 4096,
+        "raw": 4096
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 8192,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.byte_planes": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5843,
+        "merge.byte_planes": 3
+      },
+      "program_bytes": 5851,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 72.0947265625,
+      "role": "norm",
+      "root_operator": "merge.byte_planes",
+      "saved_bytes_vs_record": 2286,
+      "shape": "4096",
+      "source_over_record_ratio": 1.3870640027091095,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "4f44f9795ff94f4c",
+      "tensor_index": 1,
+      "tensor_name": "model.layers.0.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77123952,
+      "dtype": "BF16",
+      "literal_body_bytes": 77123864,
+      "literal_codec_body_bytes": {
+        "rans": 77123864
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77120222
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77123884,
+        "merge.fields": 4
+      },
+      "program_bytes": 77123893,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.67065375191825,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40316560,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.5227501827188523,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "5f99ac0cd4d70e73",
+      "tensor_index": 2,
+      "tensor_name": "model.layers.0.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77202071,
+      "dtype": "BF16",
+      "literal_body_bytes": 77201983,
+      "literal_codec_body_bytes": {
+        "rans": 77201983
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77198325
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77202003,
+        "merge.fields": 4
+      },
+      "program_bytes": 77202012,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.73717168399266,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40238441,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5212093468321595,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "bf92c4261210aaca",
+      "tensor_index": 3,
+      "tensor_name": "model.layers.0.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77144851,
+      "dtype": "BF16",
+      "literal_body_bytes": 77144765,
+      "literal_codec_body_bytes": {
+        "rans": 77144765
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77141323
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77144785,
+        "merge.fields": 4
+      },
+      "program_bytes": 77144794,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.6884491443634,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40295661,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5223376606171681,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "2b085bdef3ff3dc2",
+      "tensor_index": 4,
+      "tensor_name": "model.layers.0.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 2751,
+      "dtype": "BF16",
+      "literal_body_bytes": 2666,
+      "literal_codec_body_bytes": {
+        "huffman": 1930,
+        "rans": 736
+      },
+      "literal_codec_counts": {
+        "huffman": 1,
+        "rans": 1
+      },
+      "literal_codec_payload_bytes": {
+        "huffman": 1837,
+        "rans": 411
+      },
+      "literal_codec_semantic_bytes": {
+        "huffman": 4096,
+        "rans": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 2678,
+        "merge.fields": 4
+      },
+      "program_bytes": 2687,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 33.58154296875,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 5441,
+      "shape": "4096",
+      "source_over_record_ratio": 2.9778262450018174,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "1ec96f123ab00d94",
+      "tensor_index": 5,
+      "tensor_name": "model.layers.0.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5945050,
+      "dtype": "BF16",
+      "literal_body_bytes": 5944960,
+      "literal_codec_body_bytes": {
+        "rans": 5944960
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5941478
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5944979,
+        "merge.fields": 4
+      },
+      "program_bytes": 5944988,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 70.8705186843872,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2443558,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.4110239611105038,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "0faf4a48653f6698",
+      "tensor_index": 6,
+      "tensor_name": "model.layers.0.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22183214,
+      "dtype": "BF16",
+      "literal_body_bytes": 22183123,
+      "literal_codec_body_bytes": {
+        "rans": 22183123
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22179673
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22183143,
+        "merge.fields": 4
+      },
+      "program_bytes": 22183152,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.11112952232361,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11371218,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5126046207731665,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "ee0860d5689facc0",
+      "tensor_index": 7,
+      "tensor_name": "model.layers.0.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 23992104,
+      "dtype": "BF16",
+      "literal_body_bytes": 23992013,
+      "literal_codec_body_bytes": {
+        "rans": 23992013
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 23988139
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 23992033,
+        "merge.fields": 4
+      },
+      "program_bytes": 23992042,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 71.50204181671143,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 9562328,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.398561460053691,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "57d15de45443ba37",
+      "tensor_index": 8,
+      "tensor_name": "model.layers.0.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5718620,
+      "dtype": "BF16",
+      "literal_body_bytes": 5718530,
+      "literal_codec_body_bytes": {
+        "rans": 5718530
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5715496
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5718549,
+        "merge.fields": 4
+      },
+      "program_bytes": 5718558,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 68.17126274108887,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2669988,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.466893761082219,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "2b7afea7500b0428",
+      "tensor_index": 9,
+      "tensor_name": "model.layers.0.self_attn.v_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 4519,
+      "dtype": "BF16",
+      "literal_body_bytes": 4443,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 2393
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 2060
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 4455,
+        "merge.fields": 4
+      },
+      "program_bytes": 4464,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 55.16357421875,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 3673,
+      "shape": "4096",
+      "source_over_record_ratio": 1.8127904403629123,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "33255fae79e9cf88",
+      "tensor_index": 10,
+      "tensor_name": "model.layers.1.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77087664,
+      "dtype": "BF16",
+      "literal_body_bytes": 77087576,
+      "literal_codec_body_bytes": {
+        "rans": 77087576
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77083966
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77087596,
+        "merge.fields": 4
+      },
+      "program_bytes": 77087605,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.63975470406669,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40352848,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.523466997261715,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "d8e906a71e340ea5",
+      "tensor_index": 11,
+      "tensor_name": "model.layers.1.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77138790,
+      "dtype": "BF16",
+      "literal_body_bytes": 77138702,
+      "literal_codec_body_bytes": {
+        "rans": 77138702
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77135140
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77138722,
+        "merge.fields": 4
+      },
+      "program_bytes": 77138731,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.68328823362079,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40301722,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.52245727473817,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "692f4f190d2c74e2",
+      "tensor_index": 12,
+      "tensor_name": "model.layers.1.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77121062,
+      "dtype": "BF16",
+      "literal_body_bytes": 77120976,
+      "literal_codec_body_bytes": {
+        "rans": 77120976
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77117382
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77120996,
+        "merge.fields": 4
+      },
+      "program_bytes": 77121005,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.66819293158395,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40319450,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.522807245574497,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "84621a62aa16648c",
+      "tensor_index": 13,
+      "tensor_name": "model.layers.1.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3241,
+      "dtype": "BF16",
+      "literal_body_bytes": 3156,
+      "literal_codec_body_bytes": {
+        "huffman": 3156
+      },
+      "literal_codec_counts": {
+        "huffman": 2
+      },
+      "literal_codec_payload_bytes": {
+        "huffman": 2820
+      },
+      "literal_codec_semantic_bytes": {
+        "huffman": 12288
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3168,
+        "merge.fields": 4
+      },
+      "program_bytes": 3177,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 39.56298828125,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4951,
+      "shape": "4096",
+      "source_over_record_ratio": 2.52761493366245,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "05b1826d6844ab9c",
+      "tensor_index": 14,
+      "tensor_name": "model.layers.1.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5671188,
+      "dtype": "BF16",
+      "literal_body_bytes": 5671098,
+      "literal_codec_body_bytes": {
+        "rans": 5671098
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5668072
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5671117,
+        "merge.fields": 4
+      },
+      "program_bytes": 5671126,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 67.6058292388916,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2717420,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.479162390666647,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "ab968161579c3244",
+      "tensor_index": 15,
+      "tensor_name": "model.layers.1.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22131315,
+      "dtype": "BF16",
+      "literal_body_bytes": 22131224,
+      "literal_codec_body_bytes": {
+        "rans": 22131224
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22127758
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22131244,
+        "merge.fields": 4
+      },
+      "program_bytes": 22131253,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.95645844936371,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11423117,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5161517514887841,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "63413989d10a4086",
+      "tensor_index": 16,
+      "tensor_name": "model.layers.1.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22592650,
+      "dtype": "BF16",
+      "literal_body_bytes": 22592559,
+      "literal_codec_body_bytes": {
+        "rans": 22592559
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22589085
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22592579,
+        "merge.fields": 4
+      },
+      "program_bytes": 22592588,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 67.33134388923645,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 10961782,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.4851923966422709,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "99654169a169f697",
+      "tensor_index": 17,
+      "tensor_name": "model.layers.1.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5552983,
+      "dtype": "BF16",
+      "literal_body_bytes": 5552893,
+      "literal_codec_body_bytes": {
+        "rans": 5552893
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5549979
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5552912,
+        "merge.fields": 4
+      },
+      "program_bytes": 5552921,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.19671583175659,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2835625,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5106489611079306,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "c25c5ac09a8f36f3",
+      "tensor_index": 18,
+      "tensor_name": "model.layers.1.self_attn.v_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3788,
+      "dtype": "BF16",
+      "literal_body_bytes": 3712,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 1662
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 1489
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3724,
+        "merge.fields": 4
+      },
+      "program_bytes": 3733,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 46.240234375,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4404,
+      "shape": "4096",
+      "source_over_record_ratio": 2.1626187961985215,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "81957455b171cc7f",
+      "tensor_index": 19,
+      "tensor_name": "model.layers.2.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77057164,
+      "dtype": "BF16",
+      "literal_body_bytes": 77057076,
+      "literal_codec_body_bytes": {
+        "rans": 77057076
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77053490
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77057096,
+        "merge.fields": 4
+      },
+      "program_bytes": 77057105,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.61378410884312,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40383348,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.5240700008113457,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "6da3fe43732e5d5a",
+      "tensor_index": 20,
+      "tensor_name": "model.layers.2.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77132264,
+      "dtype": "BF16",
+      "literal_body_bytes": 77132176,
+      "literal_codec_body_bytes": {
+        "rans": 77132176
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77128678
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77132196,
+        "merge.fields": 4
+      },
+      "program_bytes": 77132205,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.67773137773786,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40308248,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5225860866731462,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "7ada23e635e98629",
+      "tensor_index": 21,
+      "tensor_name": "model.layers.2.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77103276,
+      "dtype": "BF16",
+      "literal_body_bytes": 77103190,
+      "literal_codec_body_bytes": {
+        "rans": 77103190
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77099700
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77103210,
+        "merge.fields": 4
+      },
+      "program_bytes": 77103219,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.65304824284145,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40337236,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5231585231216376,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "03b82428a6272df4",
+      "tensor_index": 22,
+      "tensor_name": "model.layers.2.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3303,
+      "dtype": "BF16",
+      "literal_body_bytes": 3218,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 1168
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 990
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3230,
+        "merge.fields": 4
+      },
+      "program_bytes": 3239,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 40.31982421875,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4889,
+      "shape": "4096",
+      "source_over_record_ratio": 2.4801695428398425,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "0c9e5915293f68f6",
+      "tensor_index": 23,
+      "tensor_name": "model.layers.2.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5615147,
+      "dtype": "BF16",
+      "literal_body_bytes": 5615057,
+      "literal_codec_body_bytes": {
+        "rans": 5615057
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5612071
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5615076,
+        "merge.fields": 4
+      },
+      "program_bytes": 5615085,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.93776845932007,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2773461,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.4939249141652036,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "e56c29e882f21fa1",
+      "tensor_index": 24,
+      "tensor_name": "model.layers.2.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22159093,
+      "dtype": "BF16",
+      "literal_body_bytes": 22159002,
+      "literal_codec_body_bytes": {
+        "rans": 22159002
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22155608
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22159022,
+        "merge.fields": 4
+      },
+      "program_bytes": 22159031,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.03924334049225,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11395339,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.514251147373225,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "898e3a8be2d359e1",
+      "tensor_index": 25,
+      "tensor_name": "model.layers.2.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22351094,
+      "dtype": "BF16",
+      "literal_body_bytes": 22351003,
+      "literal_codec_body_bytes": {
+        "rans": 22351003
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22347713
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22351023,
+        "merge.fields": 4
+      },
+      "program_bytes": 22351032,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.61145091056824,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11203338,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5012433843283017,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "19c428cccf7940fe",
+      "tensor_index": 26,
+      "tensor_name": "model.layers.2.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5544440,
+      "dtype": "BF16",
+      "literal_body_bytes": 5544350,
+      "literal_codec_body_bytes": {
+        "rans": 5544350
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5541484
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5544369,
+        "merge.fields": 4
+      },
+      "program_bytes": 5544378,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.09487533569336,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2844168,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5129766035884598,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "84ee806ad4fd71f9",
+      "tensor_index": 27,
+      "tensor_name": "model.layers.2.self_attn.v_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3271,
+      "dtype": "BF16",
+      "literal_body_bytes": 3195,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 1145
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 1037
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3207,
+        "merge.fields": 4
+      },
+      "program_bytes": 3216,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 39.92919921875,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4921,
+      "shape": "4096",
+      "source_over_record_ratio": 2.504432895139101,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "d5205040f5ae258c",
+      "tensor_index": 28,
+      "tensor_name": "model.layers.3.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77085582,
+      "dtype": "BF16",
+      "literal_body_bytes": 77085494,
+      "literal_codec_body_bytes": {
+        "rans": 77085494
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77081892
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77085514,
+        "merge.fields": 4
+      },
+      "program_bytes": 77085523,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.63798189163208,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40354930,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.5235081444932206,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "8b20d25379d61934",
+      "tensor_index": 29,
+      "tensor_name": "model.layers.3.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77191944,
+      "dtype": "BF16",
+      "literal_body_bytes": 77191856,
+      "literal_codec_body_bytes": {
+        "rans": 77191856
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77188238
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77191876,
+        "merge.fields": 4
+      },
+      "program_bytes": 77191885,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.7285485948835,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40248568,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5214089180083352,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "501e81510cd87c30",
+      "tensor_index": 30,
+      "tensor_name": "model.layers.3.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77074723,
+      "dtype": "BF16",
+      "literal_body_bytes": 77074637,
+      "literal_codec_body_bytes": {
+        "rans": 77074637
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77071219
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77074657,
+        "merge.fields": 4
+      },
+      "program_bytes": 77074666,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.62873550823757,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40365789,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5237227904146993,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "485e15f5008108f1",
+      "tensor_index": 31,
+      "tensor_name": "model.layers.3.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3154,
+      "dtype": "BF16",
+      "literal_body_bytes": 3069,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "rans": 1019
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "rans": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "rans": 766
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "rans": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3081,
+        "merge.fields": 4
+      },
+      "program_bytes": 3090,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 38.5009765625,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 5038,
+      "shape": "4096",
+      "source_over_record_ratio": 2.5973367152821814,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "cddb9b2092ee9161",
+      "tensor_index": 32,
+      "tensor_name": "model.layers.3.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5583004,
+      "dtype": "BF16",
+      "literal_body_bytes": 5582914,
+      "literal_codec_body_bytes": {
+        "rans": 5582914
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5580008
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5582933,
+        "merge.fields": 4
+      },
+      "program_bytes": 5582942,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.55459403991699,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2805604,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5025258803325234,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "d171fac75cbee8dc",
+      "tensor_index": 33,
+      "tensor_name": "model.layers.3.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22040003,
+      "dtype": "BF16",
+      "literal_body_bytes": 22039912,
+      "literal_codec_body_bytes": {
+        "rans": 22039912
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22036582
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22039932,
+        "merge.fields": 4
+      },
+      "program_bytes": 22039941,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.68432748317719,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11514429,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5224331866016534,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "2def2ce986e49b5e",
+      "tensor_index": 34,
+      "tensor_name": "model.layers.3.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22252215,
+      "dtype": "BF16",
+      "literal_body_bytes": 22252124,
+      "literal_codec_body_bytes": {
+        "rans": 22252124
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22248962
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22252144,
+        "merge.fields": 4
+      },
+      "program_bytes": 22252153,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.31676852703094,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11302217,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5079142458402455,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "1170ff0329b3d96e",
+      "tensor_index": 35,
+      "tensor_name": "model.layers.3.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5524459,
+      "dtype": "BF16",
+      "literal_body_bytes": 5524369,
+      "literal_codec_body_bytes": {
+        "rans": 5524369
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5521471
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5524388,
+        "merge.fields": 4
+      },
+      "program_bytes": 5524397,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.85668325424194,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2864149,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5184487748031075,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "100eb76b55b67157",
+      "tensor_index": 36,
+      "tensor_name": "model.layers.3.self_attn.v_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3396,
+      "dtype": "BF16",
+      "literal_body_bytes": 3320,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 1270
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 1162
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3332,
+        "merge.fields": 4
+      },
+      "program_bytes": 3341,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 41.455078125,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4796,
+      "shape": "4096",
+      "source_over_record_ratio": 2.4122497055359244,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "8e7e7872262fd72d",
+      "tensor_index": 37,
+      "tensor_name": "model.layers.4.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77116459,
+      "dtype": "BF16",
+      "literal_body_bytes": 77116371,
+      "literal_codec_body_bytes": {
+        "rans": 77116371
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77112793
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77116391,
+        "merge.fields": 4
+      },
+      "program_bytes": 77116400,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.6642735004425,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40324053,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.5228981403308468,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "b47504254623b15c",
+      "tensor_index": 38,
+      "tensor_name": "model.layers.4.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77267454,
+      "dtype": "BF16",
+      "literal_body_bytes": 77267366,
+      "literal_codec_body_bytes": {
+        "rans": 77267366
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77263844
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77267386,
+        "merge.fields": 4
+      },
+      "program_bytes": 77267395,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.79284497669765,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40173058,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.519922113649558,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "04b72177e527ee9d",
+      "tensor_index": 39,
+      "tensor_name": "model.layers.4.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77106794,
+      "dtype": "BF16",
+      "literal_body_bytes": 77106708,
+      "literal_codec_body_bytes": {
+        "rans": 77106708
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77103170
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77106728,
+        "merge.fields": 4
+      },
+      "program_bytes": 77106737,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.65604380198887,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40333718,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5230890289641663,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "5e28d618bbeb327a",
+      "tensor_index": 40,
+      "tensor_name": "model.layers.4.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 2706,
+      "dtype": "BF16",
+      "literal_body_bytes": 2621,
+      "literal_codec_body_bytes": {
+        "huffman": 1916,
+        "rans": 705
+      },
+      "literal_codec_counts": {
+        "huffman": 1,
+        "rans": 1
+      },
+      "literal_codec_payload_bytes": {
+        "huffman": 1823,
+        "rans": 524
+      },
+      "literal_codec_semantic_bytes": {
+        "huffman": 4096,
+        "rans": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 2633,
+        "merge.fields": 4
+      },
+      "program_bytes": 2642,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 33.0322265625,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 5486,
+      "shape": "4096",
+      "source_over_record_ratio": 3.0273466371027347,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "1f524884a5ba1dcf",
+      "tensor_index": 41,
+      "tensor_name": "model.layers.4.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5572709,
+      "dtype": "BF16",
+      "literal_body_bytes": 5572619,
+      "literal_codec_body_bytes": {
+        "rans": 5572619
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5569657
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5572638,
+        "merge.fields": 4
+      },
+      "program_bytes": 5572647,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.43186807632446,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2815899,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5053016405486093,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "3bc3134447a8b3ff",
+      "tensor_index": 42,
+      "tensor_name": "model.layers.4.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22085869,
+      "dtype": "BF16",
+      "literal_body_bytes": 22085778,
+      "literal_codec_body_bytes": {
+        "rans": 22085778
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22082432
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22085798,
+        "merge.fields": 4
+      },
+      "program_bytes": 22085807,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.82101881504059,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11468563,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5192715305881783,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "8253ddfcea860635",
+      "tensor_index": 43,
+      "tensor_name": "model.layers.4.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22274486,
+      "dtype": "BF16",
+      "literal_body_bytes": 22274395,
+      "literal_codec_body_bytes": {
+        "rans": 22274395
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22271145
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22274415,
+        "merge.fields": 4
+      },
+      "program_bytes": 22274424,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.38314127922058,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11279946,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5064065675858918,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "6e284c98e622bee2",
+      "tensor_index": 44,
+      "tensor_name": "model.layers.4.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5535891,
+      "dtype": "BF16",
+      "literal_body_bytes": 5535801,
+      "literal_codec_body_bytes": {
+        "rans": 5535801
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5532943
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5535820,
+        "merge.fields": 4
+      },
+      "program_bytes": 5535829,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.9929633140564,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2852717,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.515313072457532,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "1de9164546371123",
+      "tensor_index": 45,
+      "tensor_name": "model.layers.4.self_attn.v_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3578,
+      "dtype": "BF16",
+      "literal_body_bytes": 3502,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 1452
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 1339
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3514,
+        "merge.fields": 4
+      },
+      "program_bytes": 3523,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 43.6767578125,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4614,
+      "shape": "4096",
+      "source_over_record_ratio": 2.2895472330911124,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "2f74656e7963e726",
+      "tensor_index": 46,
+      "tensor_name": "model.layers.5.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77120953,
+      "dtype": "BF16",
+      "literal_body_bytes": 77120865,
+      "literal_codec_body_bytes": {
+        "rans": 77120865
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77117223
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77120885,
+        "merge.fields": 4
+      },
+      "program_bytes": 77120894,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.66810011863708,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40319559,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.522809397855859,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "57b4c9086ab559e2",
+      "tensor_index": 47,
+      "tensor_name": "model.layers.5.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77214894,
+      "dtype": "BF16",
+      "literal_body_bytes": 77214806,
+      "literal_codec_body_bytes": {
+        "rans": 77214806
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77211284
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77214826,
+        "merge.fields": 4
+      },
+      "program_bytes": 77214835,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.74809040342059,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40225618,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5209567211217048,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "87962a770d74c41e",
+      "tensor_index": 48,
+      "tensor_name": "model.layers.5.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77078542,
+      "dtype": "BF16",
+      "literal_body_bytes": 77078456,
+      "literal_codec_body_bytes": {
+        "rans": 77078456
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77074950
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77078476,
+        "merge.fields": 4
+      },
+      "program_bytes": 77078485,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.63198736735752,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40361970,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.523647294729576,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "cf7bd68bd1e2e3d0",
+      "tensor_index": 49,
+      "tensor_name": "model.layers.5.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 2953,
+      "dtype": "BF16",
+      "literal_body_bytes": 2868,
+      "literal_codec_body_bytes": {
+        "huffman": 1995,
+        "rans": 873
+      },
+      "literal_codec_counts": {
+        "huffman": 1,
+        "rans": 1
+      },
+      "literal_codec_payload_bytes": {
+        "huffman": 1902,
+        "rans": 740
+      },
+      "literal_codec_semantic_bytes": {
+        "huffman": 4096,
+        "rans": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 2880,
+        "merge.fields": 4
+      },
+      "program_bytes": 2889,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 36.04736328125,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 5239,
+      "shape": "4096",
+      "source_over_record_ratio": 2.774128005418219,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "050b6c2b68c415a8",
+      "tensor_index": 50,
+      "tensor_name": "model.layers.5.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5582401,
+      "dtype": "BF16",
+      "literal_body_bytes": 5582311,
+      "literal_codec_body_bytes": {
+        "rans": 5582311
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5579325
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5582330,
+        "merge.fields": 4
+      },
+      "program_bytes": 5582339,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.54740571975708,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2806207,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5026881802292598,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "e652606529dd83f5",
+      "tensor_index": 51,
+      "tensor_name": "model.layers.5.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22108537,
+      "dtype": "BF16",
+      "literal_body_bytes": 22108446,
+      "literal_codec_body_bytes": {
+        "rans": 22108446
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22105060
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22108466,
+        "merge.fields": 4
+      },
+      "program_bytes": 22108475,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.88857471942902,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11445895,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5177138134468147,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "410c6d897e93804b",
+      "tensor_index": 52,
+      "tensor_name": "model.layers.5.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22300280,
+      "dtype": "BF16",
+      "literal_body_bytes": 22300189,
+      "literal_codec_body_bytes": {
+        "rans": 22300189
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22296979
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22300209,
+        "merge.fields": 4
+      },
+      "program_bytes": 22300218,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.4600133895874,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11254152,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5046641566832344,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "649601f455cec966",
+      "tensor_index": 53,
+      "tensor_name": "model.layers.5.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5524705,
+      "dtype": "BF16",
+      "literal_body_bytes": 5524615,
+      "literal_codec_body_bytes": {
+        "rans": 5524615
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5521749
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5524634,
+        "merge.fields": 4
+      },
+      "program_bytes": 5524643,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.85961580276489,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2863903,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5183811624331074,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "b0a96d55e752af65",
+      "tensor_index": 54,
+      "tensor_name": "model.layers.5.self_attn.v_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3435,
+      "dtype": "BF16",
+      "literal_body_bytes": 3359,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 1309
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 1211
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3371,
+        "merge.fields": 4
+      },
+      "program_bytes": 3380,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 41.93115234375,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4757,
+      "shape": "4096",
+      "source_over_record_ratio": 2.3848617176128095,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "7b74ceda5fd822ed",
+      "tensor_index": 55,
+      "tensor_name": "model.layers.6.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77146016,
+      "dtype": "BF16",
+      "literal_body_bytes": 77145928,
+      "literal_codec_body_bytes": {
+        "rans": 77145928
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77142326
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77145948,
+        "merge.fields": 4
+      },
+      "program_bytes": 77145957,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.68944113595145,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40294496,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.5223146714407132,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "18f758e88c2dbe45",
+      "tensor_index": 56,
+      "tensor_name": "model.layers.6.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77269220,
+      "dtype": "BF16",
+      "literal_body_bytes": 77269132,
+      "literal_codec_body_bytes": {
+        "rans": 77269132
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77265538
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77269152,
+        "merge.fields": 4
+      },
+      "program_bytes": 77269161,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.79434871673584,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40171292,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5198873755940594,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "0eb59350929fee96",
+      "tensor_index": 57,
+      "tensor_name": "model.layers.6.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77077908,
+      "dtype": "BF16",
+      "literal_body_bytes": 77077822,
+      "literal_codec_body_bytes": {
+        "rans": 77077822
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77074324
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77077842,
+        "merge.fields": 4
+      },
+      "program_bytes": 77077851,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.63144751957485,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40362604,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5236598274047604,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "01df7e0500753461",
+      "tensor_index": 58,
+      "tensor_name": "model.layers.6.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 2838,
+      "dtype": "BF16",
+      "literal_body_bytes": 2753,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "rans": 703
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "rans": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "rans": 586
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "rans": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 2765,
+        "merge.fields": 4
+      },
+      "program_bytes": 2774,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 34.6435546875,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 5354,
+      "shape": "4096",
+      "source_over_record_ratio": 2.886539816772375,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "79884507e8b06bcf",
+      "tensor_index": 59,
+      "tensor_name": "model.layers.6.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5550376,
+      "dtype": "BF16",
+      "literal_body_bytes": 5550286,
+      "literal_codec_body_bytes": {
+        "rans": 5550286
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5547380
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5550305,
+        "merge.fields": 4
+      },
+      "program_bytes": 5550314,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.1656379699707,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2838232,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5113585097658249,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "40bd158604d7e6fc",
+      "tensor_index": 60,
+      "tensor_name": "model.layers.6.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22068207,
+      "dtype": "BF16",
+      "literal_body_bytes": 22068116,
+      "literal_codec_body_bytes": {
+        "rans": 22068116
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22064778
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22068136,
+        "merge.fields": 4
+      },
+      "program_bytes": 22068145,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.76838195323944,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11486225,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5204874596291398,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "0eab53839eacad4e",
+      "tensor_index": 61,
+      "tensor_name": "model.layers.6.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22236760,
+      "dtype": "BF16",
+      "literal_body_bytes": 22236669,
+      "literal_codec_body_bytes": {
+        "rans": 22236669
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22233435
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22236689,
+        "merge.fields": 4
+      },
+      "program_bytes": 22236698,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.27070903778076,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11317672,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.508962276878466,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "591c853bbf3e0ab7",
+      "tensor_index": 62,
+      "tensor_name": "model.layers.6.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5522876,
+      "dtype": "BF16",
+      "literal_body_bytes": 5522786,
+      "literal_codec_body_bytes": {
+        "rans": 5522786
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5519944
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5522805,
+        "merge.fields": 4
+      },
+      "program_bytes": 5522814,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.83781242370605,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2865732,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5188840017411218,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "1c46c34eab0f65ea",
+      "tensor_index": 63,
+      "tensor_name": "model.layers.6.self_attn.v_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3400,
+      "dtype": "BF16",
+      "literal_body_bytes": 3324,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 1274
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 1171
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3336,
+        "merge.fields": 4
+      },
+      "program_bytes": 3345,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 41.50390625,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4792,
+      "shape": "4096",
+      "source_over_record_ratio": 2.409411764705882,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "e898370499df6658",
+      "tensor_index": 64,
+      "tensor_name": "model.layers.7.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77207129,
+      "dtype": "BF16",
+      "literal_body_bytes": 77207041,
+      "literal_codec_body_bytes": {
+        "rans": 77207041
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77203367
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77207061,
+        "merge.fields": 4
+      },
+      "program_bytes": 77207070,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.74147854532514,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40233383,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.5211096892360807,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "d48c2567ad70e40a",
+      "tensor_index": 65,
+      "tensor_name": "model.layers.7.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77320660,
+      "dtype": "BF16",
+      "literal_body_bytes": 77320572,
+      "literal_codec_body_bytes": {
+        "rans": 77320572
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77317026
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77320592,
+        "merge.fields": 4
+      },
+      "program_bytes": 77320601,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.8381496156965,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40119852,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5188762227327082,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "48d5e9d5afed81b2",
+      "tensor_index": 66,
+      "tensor_name": "model.layers.7.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77086581,
+      "dtype": "BF16",
+      "literal_body_bytes": 77086495,
+      "literal_codec_body_bytes": {
+        "rans": 77086495
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77083029
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77086515,
+        "merge.fields": 4
+      },
+      "program_bytes": 77086524,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.63883253506252,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40353931,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.523488400659513,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "39c4df9b42c56b63",
+      "tensor_index": 67,
+      "tensor_name": "model.layers.7.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 2910,
+      "dtype": "BF16",
+      "literal_body_bytes": 2825,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "rans": 775
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "rans": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "rans": 674
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "rans": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 2837,
+        "merge.fields": 4
+      },
+      "program_bytes": 2846,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 35.5224609375,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 5282,
+      "shape": "4096",
+      "source_over_record_ratio": 2.8151202749140896,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "acedcca79f18a9fa",
+      "tensor_index": 68,
+      "tensor_name": "model.layers.7.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5552056,
+      "dtype": "BF16",
+      "literal_body_bytes": 5551953,
+      "literal_codec_body_bytes": {
+        "bitpack": 524290,
+        "rans": 5027663
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 524288,
+        "rans": 5024789
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4194304,
+        "rans": 12582912
+      },
+      "literal_count": 3,
+      "literal_semantic_storage_bytes": 16777216,
+      "max_depth": 3,
+      "node_count": 5,
+      "operator_counts": {
+        "literal": 3,
+        "merge.fields": 2
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5551981,
+        "merge.fields": 8
+      },
+      "program_bytes": 5551994,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.18566513061523,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2836552,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5109011868756368,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "174bdf524b377008",
+      "tensor_index": 69,
+      "tensor_name": "model.layers.7.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22085868,
+      "dtype": "BF16",
+      "literal_body_bytes": 22085777,
+      "literal_codec_body_bytes": {
+        "rans": 22085777
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22082431
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22085797,
+        "merge.fields": 4
+      },
+      "program_bytes": 22085806,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.82101583480835,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11468564,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5192715993774843,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "3d930a095c7093b8",
+      "tensor_index": 70,
+      "tensor_name": "model.layers.7.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22257725,
+      "dtype": "BF16",
+      "literal_body_bytes": 22257634,
+      "literal_codec_body_bytes": {
+        "rans": 22257634
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22254464
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22257654,
+        "merge.fields": 4
+      },
+      "program_bytes": 22257663,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.33318960666656,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11296707,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5075409548819567,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "1d394ae7672c4975",
+      "tensor_index": 71,
+      "tensor_name": "model.layers.7.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5521798,
+      "dtype": "BF16",
+      "literal_body_bytes": 5521708,
+      "literal_codec_body_bytes": {
+        "rans": 5521708
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5518818
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5521727,
+        "merge.fields": 4
+      },
+      "program_bytes": 5521736,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.82496166229248,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2866810,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.5191805277918533,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "9d95a320d518ba43",
+      "tensor_index": 72,
+      "tensor_name": "model.layers.7.self_attn.v_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3475,
+      "dtype": "BF16",
+      "literal_body_bytes": 3399,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 1349
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 1246
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3411,
+        "merge.fields": 4
+      },
+      "program_bytes": 3420,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 55,
+      "record_percent_of_source": 42.41943359375,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 4717,
+      "shape": "4096",
+      "source_over_record_ratio": 2.357410071942446,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "040f03e6bcf874e1",
+      "tensor_index": 73,
+      "tensor_name": "model.layers.8.input_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77233130,
+      "dtype": "BF16",
+      "literal_body_bytes": 77233042,
+      "literal_codec_body_bytes": {
+        "rans": 77233042
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77229288
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77233062,
+        "merge.fields": 4
+      },
+      "program_bytes": 77233071,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.7636182648795,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40207382,
+      "shape": "4096x14336",
+      "source_over_record_ratio": 1.5205975984658398,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "d99e75915ad90d56",
+      "tensor_index": 74,
+      "tensor_name": "model.layers.8.mlp.down_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77346596,
+      "dtype": "BF16",
+      "literal_body_bytes": 77346508,
+      "literal_codec_body_bytes": {
+        "rans": 77346508
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77343018
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77346528,
+        "merge.fields": 4
+      },
+      "program_bytes": 77346537,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 59,
+      "record_percent_of_source": 65.86023398808071,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40093916,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.5183669104196906,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "defee3eeefc3a94c",
+      "tensor_index": 75,
+      "tensor_name": "model.layers.8.mlp.gate_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 77088420,
+      "dtype": "BF16",
+      "literal_body_bytes": 77088334,
+      "literal_codec_body_bytes": {
+        "rans": 77088334
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 77084796
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 176160768
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 176160768,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 77088354,
+        "merge.fields": 4
+      },
+      "program_bytes": 77088363,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 57,
+      "record_percent_of_source": 65.64039843423026,
+      "role": "mlp",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 40352092,
+      "shape": "14336x4096",
+      "source_over_record_ratio": 1.523452056742115,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 117440512,
+      "stored_xxh3_64_le_bytes_hex": "3d8bd13cd4bdc7d7",
+      "tensor_index": 76,
+      "tensor_name": "model.layers.8.mlp.up_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 3088,
+      "dtype": "BF16",
+      "literal_body_bytes": 3003,
+      "literal_codec_body_bytes": {
+        "bitpack": 2050,
+        "huffman": 953
+      },
+      "literal_codec_counts": {
+        "bitpack": 1,
+        "huffman": 1
+      },
+      "literal_codec_payload_bytes": {
+        "bitpack": 2048,
+        "huffman": 880
+      },
+      "literal_codec_semantic_bytes": {
+        "bitpack": 4096,
+        "huffman": 8192
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12288,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 3015,
+        "merge.fields": 4
+      },
+      "program_bytes": 3024,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 64,
+      "record_percent_of_source": 37.6953125,
+      "role": "norm",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 5104,
+      "shape": "4096",
+      "source_over_record_ratio": 2.6528497409326426,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8192,
+      "stored_xxh3_64_le_bytes_hex": "93d8a85ca36c6184",
+      "tensor_index": 77,
+      "tensor_name": "model.layers.8.post_attention_layernorm.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5570963,
+      "dtype": "BF16",
+      "literal_body_bytes": 5570873,
+      "literal_codec_body_bytes": {
+        "rans": 5570873
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5567903
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5570892,
+        "merge.fields": 4
+      },
+      "program_bytes": 5570901,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.4110541343689,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2817645,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.505773418347959,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "04ecf32aa22a4a54",
+      "tensor_index": 78,
+      "tensor_name": "model.layers.8.self_attn.k_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22125410,
+      "dtype": "BF16",
+      "literal_body_bytes": 22125319,
+      "literal_codec_body_bytes": {
+        "rans": 22125319
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22121869
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22125339,
+        "merge.fields": 4
+      },
+      "program_bytes": 22125348,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 65.93886017799377,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11429022,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.516556393757223,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "4a4be3194e7a320a",
+      "tensor_index": 79,
+      "tensor_name": "model.layers.8.self_attn.o_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 22261420,
+      "dtype": "BF16",
+      "literal_body_bytes": 22261329,
+      "literal_codec_body_bytes": {
+        "rans": 22261329
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 22257959
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 50331648
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 50331648,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 22261349,
+        "merge.fields": 4
+      },
+      "program_bytes": 22261358,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.34420156478882,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 11293012,
+      "shape": "4096x4096",
+      "source_over_record_ratio": 1.5072907298815619,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 33554432,
+      "stored_xxh3_64_le_bytes_hex": "210446e841a8a093",
+      "tensor_index": 80,
+      "tensor_name": "model.layers.8.self_attn.q_proj.weight"
+    },
+    {
+      "archive_path": "/workspace/Brevis/results/llama31-8b-shard1-extra-minimal/archives/llama-3.1-8b-bf16-shard1/budget-32/model-00001-of-00004.budget-32.brv",
+      "archive_record_bytes": 5542454,
+      "dtype": "BF16",
+      "literal_body_bytes": 5542364,
+      "literal_codec_body_bytes": {
+        "rans": 5542364
+      },
+      "literal_codec_counts": {
+        "rans": 2
+      },
+      "literal_codec_payload_bytes": {
+        "rans": 5539490
+      },
+      "literal_codec_semantic_bytes": {
+        "rans": 12582912
+      },
+      "literal_count": 2,
+      "literal_semantic_storage_bytes": 12582912,
+      "max_depth": 2,
+      "node_count": 3,
+      "operator_counts": {
+        "literal": 2,
+        "merge.fields": 1
+      },
+      "operator_exclusive_bytes": {
+        "literal": 5542383,
+        "merge.fields": 4
+      },
+      "program_bytes": 5542392,
+      "program_selection": "synthesized",
+      "record_framing_bytes": 62,
+      "record_percent_of_source": 66.07120037078857,
+      "role": "attention",
+      "root_operator": "merge.fields",
+      "saved_bytes_vs_record": 2846154,
+      "shape": "1024x4096",
+      "source_over_record_ratio": 1.51351874097647,
+      "source_path": "/workspace/checkpoints/llama-3.1-8b-bf16/model-00001-of-00004.safetensors",
+      "source_tensor_bytes": 8388608,
+      "stored_xxh3_64_le_bytes_hex": "2660eba2972a6231",
+      "tensor_index": 81,
+      "tensor_name": "model.layers.8.self_attn.v_proj.weight"
+    }
+  ],
+  "totals": {
+    "archive_count": 1,
+    "archive_file_bytes": 3277291303,
+    "archive_header_bytes": 9528,
+    "archive_record_bytes": 3277281775,
+    "saved_bytes": 1699407369,
+    "source_file_bytes": 4976698672,
+    "source_over_archive_ratio": 1.518540224802226,
+    "source_payload_bytes": 4976689152,
+    "source_prefix_bytes": 9520,
+    "tensor_count": 82
+  },
+  "validation_scope": {
+    "checksum_verification": false,
+    "embedded_metadata_cross_binding": true,
+    "literal_body_framing_check": true,
+    "literal_payload_and_table_validation": false,
+    "program_execution": false,
+    "source_prefix_match": true,
+    "source_tensor_content_verification": false,
+    "static_stream_type_check": true
+  }
+}

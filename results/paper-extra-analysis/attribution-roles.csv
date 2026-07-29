@@ -1,0 +1,5 @@
+status,measurement,scope,n,search_budget,role,tensor_count,source_tensor_bytes,archive_record_bytes,saved_bytes_vs_record,compression_ratio_x,record_percent_of_source,program_bytes,record_framing_bytes,literal_fallback_tensors,source_prefix_matched,program_execution_performed
+complete,measured archive accounting; n=1 archive; static attribution,representative single-shard archive,1,32,attention,36,754974720,502137370,252837350,1.5035222731978701,66.51048792733087,502135138,2232,0,True,False
+complete,measured archive accounting; n=1 archive; static attribution,representative single-shard archive,1,32,embedding,1,1050673152,691938594,358734558,1.51844854602806,65.85669317645227,691938542,52,1,True,False
+complete,measured archive accounting; n=1 archive; static attribution,representative single-shard archive,1,32,mlp,27,3170893824,2083144099,1087749725,1.5221672977506295,65.69580107769639,2083142524,1575,0,True,False
+complete,measured archive accounting; n=1 archive; static attribution,representative single-shard archive,1,32,norm,18,147456,61712,85744,2.3894218304381645,41.85112847222222,60641,1071,0,True,False
