@@ -65,6 +65,20 @@ class PromptTests(unittest.TestCase):
         self.assertIn("gray(?)", prompt)
         self.assertIn("never selected", prompt)
 
+    def test_member_values_are_shown_so_a_carried_macro_can_be_replaced(self):
+        library = lib.Library(macros=(lib.Macro("zigzag_split", zigzag_split()),))
+        prompt = propose.build_prompt(
+            EVIDENCE, library, table(), budget=BUDGET,
+            marginals={"zigzag_split": -4096},
+        )
+        self.assertIn("zigzag_split", prompt)
+        self.assertIn("-4096", prompt)
+        self.assertIn("pays for itself", prompt)
+
+    def test_unmeasured_member_values_say_so_rather_than_showing_zero(self):
+        prompt = propose.build_prompt(EVIDENCE, lib.EMPTY, table(), budget=BUDGET)
+        self.assertIn("not measured yet", prompt)
+
     def test_mined_shapes_are_shown_so_they_are_not_reproposed(self):
         class Fake:
             shape = "xor_const(split_field(?,?))"

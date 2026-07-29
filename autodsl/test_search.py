@@ -222,6 +222,44 @@ class EvaluatorTests(unittest.TestCase):
         self.assertEqual([], list(self.workdir.glob("lib-*.json")))
 
 
+class MarginalTests(unittest.TestCase):
+    """Library-level fitness says nothing about which member is carrying it.
+    Leave-one-out libraries are measured every round so it can."""
+
+    def library(self, *names):
+        out = lib.EMPTY
+        for index, name in enumerate(names):
+            out = out.with_macro(lib.Macro(
+                name, lib.node("zigzag" if index % 2 else "gray", [lib.HOLE])))
+        return out
+
+    def fitness(self, objective):
+        return search.Fitness(objective, objective, 0, True, "", {})
+
+    def test_a_member_that_pays_for_itself_scores_negative(self):
+        both = self.library("a", "b")
+        cache = {both.sha256(): self.fitness(100),
+                 both.without("a").sha256(): self.fitness(150)}
+        self.assertEqual({"a": -50}, marginals_of(both, cache))
+
+    def test_a_member_being_carried_scores_near_zero(self):
+        both = self.library("a", "b")
+        cache = {both.sha256(): self.fitness(100),
+                 both.without("b").sha256(): self.fitness(100)}
+        self.assertEqual({"b": 0}, marginals_of(both, cache))
+
+    def test_an_unmeasured_removal_is_simply_absent(self):
+        both = self.library("a", "b")
+        self.assertEqual({}, marginals_of(both, {both.sha256(): self.fitness(1)}))
+
+    def test_an_unmeasured_library_yields_nothing(self):
+        self.assertEqual({}, marginals_of(self.library("a"), {}))
+
+
+def marginals_of(library, cache):
+    return search.marginals(library, cache)
+
+
 class ArmTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -321,6 +359,43 @@ class ArmTests(unittest.TestCase):
         proposal = search._ask(llm, context, lib.EMPTY, table(), wanted=1)
         self.assertEqual(1, len(proposal.macros))
         self.assertEqual([], context.get("proposal_failures", []))
+
+    def test_the_search_measures_leave_one_out_libraries(self):
+        """Dropping a member is both a credit-assignment probe and a candidate:
+        a macro admitted early can become dead weight beside a better one."""
+        evaluator = self.evaluator(cap=40)
+        result = search.arm_search(
+            evaluator, self.baseline, table(), {"blocks": [], "tensors": []},
+            random.Random(9), None, {}, population_size=4, patience=6,
+            propose_every=99, per_round=6)
+        sizes = {len(row["macros"]) for row in result.trace}
+        self.assertGreater(len(sizes), 1, "every candidate was the same size")
+
+    def test_a_bounded_round_buys_more_rounds_from_one_budget(self):
+        """Refinement needs feedback cycles; an unbounded round spent the whole
+        budget in two or three of them."""
+        wide = self.evaluator(cap=24)
+        wide.baseline = self.baseline
+        narrow = _Evaluator(self.stub, workdir=self.workdir, cap=24)
+        narrow.baseline = self.baseline
+        many = search.arm_search(
+            narrow, self.baseline, table(), {"blocks": [], "tensors": []},
+            random.Random(10), None, {}, population_size=4, patience=99,
+            propose_every=99, per_round=2)
+        few = search.arm_search(
+            wide, self.baseline, table(), {"blocks": [], "tensors": []},
+            random.Random(10), None, {}, population_size=4, patience=99,
+            propose_every=99, per_round=12)
+        self.assertGreater(many.rounds, few.rounds)
+
+    def test_the_population_holds_distinct_libraries(self):
+        evaluator = self.evaluator(cap=30)
+        search.arm_search(
+            evaluator, self.baseline, table(), {"blocks": [], "tensors": []},
+            random.Random(11), None, {}, population_size=4, patience=6,
+            propose_every=99, per_round=6)
+        keys = [row["sha256"] for row in evaluator.trace]
+        self.assertEqual(len(keys), len(set(keys)), "a library was measured twice")
 
     def test_a_mining_arm_runs_without_a_model(self):
         report = {"blocks": [], "tensors": []}

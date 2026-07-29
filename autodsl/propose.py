@@ -111,6 +111,7 @@ def build_prompt(
     rejected: list[dict] | None = None,
     wanted: int = 4,
     history: list[dict] | None = None,
+    marginals: dict | None = None,
 ) -> str:
     current = (
         "\n".join(
@@ -144,6 +145,15 @@ def build_prompt(
         or "  (nothing measured yet)"
     )
 
+    marginal_text = (
+        "\n".join(
+            f"  {name:28s} {value:>+12d} bytes when removed from the current library"
+            for name, value in sorted((marginals or {}).items(),
+                                      key=lambda kv: kv[1])
+        )
+        or "  (not measured yet)"
+    )
+
     return f"""\
 OPERATORS
 {operator_reference(table)}
@@ -156,6 +166,11 @@ MEASURED BEHAVIOUR OF THE CURRENT SYSTEM
 
 CURRENT LIBRARY
 {current}
+
+WHAT EACH MEMBER IS WORTH, measured by removing it and re-running. A negative
+number means the member pays for itself; a number near zero means it is being
+carried by the others and could be replaced.
+{marginal_text}
 
 SHAPES THE SEARCH ALREADY FINDS ON ITS OWN, by encoded bytes they govern.
 Proposing one of these is usually pointless: the search reaches them anyway.
@@ -231,10 +246,11 @@ def propose(
     rejected: list[dict] | None = None,
     wanted: int = 4,
     history: list[dict] | None = None,
+    marginals: dict | None = None,
 ) -> Proposal:
     prompt = build_prompt(
         evidence, library, table, budget=budget, mined=mined,
-        rejected=rejected, wanted=wanted, history=history,
+        rejected=rejected, wanted=wanted, history=history, marginals=marginals,
     )
     reply = llm.complete(SYSTEM, prompt)
     return Proposal(

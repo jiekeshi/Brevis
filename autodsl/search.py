@@ -110,6 +110,28 @@ class BudgetExhausted(Exception):
     """The arm has spent its evaluations. Not an error — a stopping condition."""
 
 
+def marginals(library: Library, cache: dict) -> dict[str, float]:
+    """What each member is worth, from libraries already measured.
+
+    `fitness(L) - fitness(L without m)` is the marginal value of `m` inside
+    `L`, and it is free whenever both have been measured. Leave-one-out
+    libraries are generated as candidates every round precisely so that this
+    is usually the case: dropping a member is both a credit-assignment probe
+    and a real candidate, since a macro admitted early can become dead weight.
+
+    Negative means the member is paying for itself.
+    """
+    full = cache.get(library.sha256())
+    if full is None:
+        return {}
+    out: dict[str, float] = {}
+    for macro in library.macros:
+        without = cache.get(library.without(macro.name).sha256())
+        if without is not None:
+            out[macro.name] = full.objective - without.objective
+    return out
+
+
 class Evaluator:
     """Measures libraries, counts what that cost, and refuses to overspend.
 
@@ -384,6 +406,7 @@ def arm_search(
     population_size: int,
     patience: int,
     propose_every: int,
+    per_round: int = 6,
 ) -> ArmResult:
     """Keep several libraries alive, recombine them, stop when they stop paying."""
     population: list[Scored] = [Scored(Library(), baseline, "empty", 0)]
@@ -398,7 +421,13 @@ def arm_search(
         rounds += 1
         proposals: list[tuple[Library, str]] = []
 
-        for scored in population:
+        # Leave-one-out on the incumbent. Each is a candidate in its own right
+        # — an early acceptance can become dead weight — and measuring them is
+        # what makes `marginals` able to say which member is carrying the
+        # library.
+        for macro in best.library.macros:
+            proposals.append((best.library.without(macro.name), "drop"))
+        for scored in population[:2]:
             child = variation.mutate(scored.library, table, rng)
             if child is not None:
                 proposals.append((child, "mutation"))
@@ -409,6 +438,10 @@ def arm_search(
                 child = variation.crossover(first.library, second.library, rng)
                 if child is not None:
                     proposals.append((child, "crossover"))
+                    break
+            else:
+                continue
+            break
         if mined:
             candidate = mined.pop(0)
             macro = mine_mod.to_macro(
@@ -429,7 +462,9 @@ def arm_search(
                 break
         if llm is not None and (rounds - 1) % propose_every == 0:
             for proposed in _ask(llm, context, best.library, table, wanted=3,
-                                 history=_history(evaluator, best)).macros:
+                                 history=_history(evaluator, best),
+                                 marginals=marginals(best.library,
+                                                     evaluator.cache)).macros:
                 grown = variation.add(best.library, proposed)
                 if grown is not None:
                     proposals.append((grown, "proposed"))
@@ -441,6 +476,10 @@ def arm_search(
                 continue
             seen.add(library.sha256())
             fresh.append((library, origin))
+        # Bound the round so the budget buys rounds rather than one enormous
+        # sweep: refinement needs feedback cycles, and an unbounded round left
+        # only two or three of them inside a 30-evaluation budget.
+        fresh = fresh[:per_round]
         if not fresh:
             stopped = "no new candidates could be generated"
             break
@@ -458,7 +497,18 @@ def arm_search(
         # a tie broken toward fewer macros keeps branching cost down.
         population.sort(key=lambda s: (not s.fitness.feasible, s.fitness.score(),
                                        len(s.library.macros)))
-        population = population[:population_size]
+        # Diversity: two members with the same macro shapes explore the same
+        # neighbourhood, and a population of near-duplicates stops being a
+        # population at all.
+        deduped: list[Scored] = []
+        shapes_seen: set[frozenset] = set()
+        for scored in population:
+            shapes = frozenset(scored.library.shapes())
+            if shapes in shapes_seen:
+                continue
+            shapes_seen.add(shapes)
+            deduped.append(scored)
+        population = deduped[:population_size]
         if population[0].fitness.better_than(best.fitness):
             best, idle = population[0], 0
         else:
@@ -474,7 +524,8 @@ def arm_search(
 
 
 def _ask(llm, context: dict, library: Library, table: OperatorTable, *,
-         wanted: int, history: list | None = None):
+         wanted: int, history: list | None = None,
+         marginals: dict | None = None):
     """Ask for macros, treating a malformed reply as an empty round.
 
     A model is untrusted input and a single bad reply must not be able to end
@@ -487,6 +538,7 @@ def _ask(llm, context: dict, library: Library, table: OperatorTable, *,
             llm, context["evidence"], library, table,
             budget=context["budget"], mined=context["mined"],
             rejected=context["rejected"], wanted=wanted, history=history,
+            marginals=marginals,
         )
     except Exception as exc:            # noqa: BLE001 - any bad reply, not just ours
         context.setdefault("proposal_failures", []).append(
@@ -558,7 +610,8 @@ def run(args) -> int:
             result = arm_search(evaluator, baseline, table, report, rng, llm, context,
                                 population_size=args.population,
                                 patience=args.patience,
-                                propose_every=args.propose_every)
+                                propose_every=args.propose_every,
+                                per_round=args.per_round)
         elif name == "greedy":
             result = arm_greedy(evaluator, baseline, table, llm, context, args.patience)
         elif name == "one_shot":
@@ -693,7 +746,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="identical evaluation budget for every arm")
     parser.add_argument("--population", type=int, default=DEFAULT_POPULATION)
     parser.add_argument("--patience", type=int, default=DEFAULT_PATIENCE)
-    parser.add_argument("--propose-every", type=int, default=2)
+    # Every round: greedy asks its model once per round, so anything larger
+    # starves the search arm of proposals relative to the baseline it is being
+    # compared against.
+    parser.add_argument("--propose-every", type=int, default=1)
+    parser.add_argument("--per-round", type=int, default=6,
+                        help="candidates measured per round; smaller buys more "
+                             "feedback cycles from the same budget")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--fitness", choices=("sum", "minimax"), default="minimax",
                         help="how the develop tier is summarised; `sum` overfits")

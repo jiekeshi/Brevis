@@ -542,6 +542,58 @@ refines its way to a better library.
   through to library size. The search was silently optimising "fewest macros".
   Ordering is now lexicographic: worst model first, tier total second.
 
+---
+
+## 2026-07-29 — The ceiling, and what it settles
+
+The remaining question was not "which search method wins" but "how much is
+there to win at all". `ceiling.py` answers it by cheating on purpose: pool
+**every macro this project has ever produced** — 9 distinct bodies from mining,
+from the model, from mutation, including ones whose libraries were later
+rejected — and greedily forward-select the best subset on develop. That is an
+optimistic bound on macro-level self-evolution over the current operator set,
+because no search has to find it; it is handed the answer key.
+
+Forward selection stopped at two macros:
+
+```
+split_field(rans, split_field(rans, bitpack))          [proposed]
+split_float(?, rans, split_field(?, bitpack))          [mutated]
+```
+
+Adding the mined `zigzag(split_field(?,?))` made it 126 bytes *worse*, which is
+consistent with that macro measuring +7,954,920 on the test tier alone.
+
+**On the frozen test tier**, 10 files, 26.4 GB, bit-exact on every one:
+
+| Library | test Δ | share | % of ceiling |
+| --- | ---: | ---: | ---: |
+| **ceiling — best subset of every macro ever found** | **−8,608,409** | **0.0444%** | 100.0% |
+| search arm, fully automated, 30 evaluations, one seed | −8,430,498 | 0.0435% | **97.9%** |
+| first hand-assembled 2-macro library | −7,357,344 | 0.0379% | 85.5% |
+| greedy arm, fully automated | −5,882,844 | 0.0303% | 68.3% |
+| mining alone | +7,954,920 | −0.0410% | worse than nothing |
+
+### What this settles
+
+**The search is not the bottleneck.** A fully automated 30-evaluation run
+already captures 97.9% of what is available even when every macro ever
+discovered is handed over and optimally combined. No amount of better
+evolution, more seeds, larger populations or longer budgets can recover more
+than the remaining 2.1%.
+
+**The ceiling itself is 0.044%.** That is the whole prize for macro-level
+self-extension over this operator set. It is real, it is verified bit-exact on
+unseen checkpoints, and it is roughly a thousandth of what a compression result
+needs to be interesting.
+
+**So the direction is bounded by the operator set, not by the loop.** Macros
+rearrange which program a bounded search reaches; they cannot change how the
+residual bits are modelled, and the residual bits are 99.87% of an archive.
+Going further needs new `forward`/`inverse` primitives in `ops.zig` — a
+different kind of work, with a real proof obligation, that no automatic gate
+should be making decisions about.
+
 ### Open
 
 - **The library is BF16-shaped.** It never fires on F32 and makes one F16 model
